@@ -1,0 +1,1 @@
+"""Core application modules including configuration, security, and dependencies."""

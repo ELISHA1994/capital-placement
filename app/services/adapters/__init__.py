@@ -1,0 +1,1 @@
+"""Infrastructure adapters following Hexagonal Architecture patterns"""
