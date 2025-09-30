@@ -2,6 +2,9 @@ __pycache__/
 *.pyc
 .env
 venv/
+.claude
+.cadence
+.idea
 docs
 scripts
 CLAUDE.md
