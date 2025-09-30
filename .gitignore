@@ -4,3 +4,5 @@ __pycache__/
 venv/
 docs
 scripts
+CLAUDE.md
+SQLModel_Migration_Plan.md
