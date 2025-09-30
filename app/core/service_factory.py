@@ -160,7 +160,7 @@ class ServiceFactory:
         from app.services.search.vector_search import VectorSearchService
         from app.services.ai.embedding_service import EmbeddingService
         from app.database.repositories.postgres import VectorRepository
-        from app.models.base import EmbeddingTable
+        from app.models.embedding import EmbeddingTable
         from app.database.sqlmodel_engine import get_sqlmodel_db_manager
         
         # Get SQLModel database manager for session management

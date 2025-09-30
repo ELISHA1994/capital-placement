@@ -7,6 +7,7 @@ and startup/shutdown management for PostgreSQL with SQLModel/SQLAlchemy.
 
 from typing import Optional, Dict, Any, List
 import structlog
+import asyncio
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.sql import text
@@ -21,8 +22,7 @@ from .error_handling import (
     handle_database_errors,
     log_database_operation,
 )
-from .sqlmodel_migration import initialize_sqlmodel_tables
-from .sqlmodel_engine import SQLModelDatabaseManager, get_sqlmodel_db_manager, init_sqlmodel_database
+from .sqlmodel_engine import SQLModelDatabaseManager, init_sqlmodel_database
 from app.core.config import Settings
 from app.core.environment import get_current_environment
 
@@ -74,23 +74,24 @@ class DatabaseManager:
         # Verify database connectivity and extensions
         await self._verify_database_setup()
         
-        
-        # Initialize SQLModel tables (auto-migration in dev, validation in prod)
-        try:
-            sqlmodel_result = await initialize_sqlmodel_tables()
-            logger.info(
-                "SQLModel initialization completed", 
-                status=sqlmodel_result['status'],
-                environment=get_current_environment().value
-            )
-        except Exception as e:
-            logger.error("SQLModel initialization failed", error=str(e))
-            if get_current_environment().value == "production":
-                # In production, SQLModel errors are more critical
-                raise DatabaseError(f"SQLModel initialization failed: {str(e)}") from e
-            else:
-                # In development, log but continue (might be first run)
-                logger.warning("SQLModel auto-migration failed, continuing...")
+        # Run Alembic migrations (industry standard FastAPI + SQLModel + Alembic)
+        if run_migrations:
+            try:
+                await self._run_alembic_upgrade()
+                logger.info(
+                    "Alembic migrations completed successfully",
+                    environment=get_current_environment().value
+                )
+            except Exception as e:
+                logger.error("Alembic migration execution failed", error=str(e))
+                if get_current_environment().value == "production":
+                    # In production, migration failures are critical
+                    raise DatabaseError(f"Alembic migration failed: {str(e)}") from e
+                else:
+                    # In development, log but continue (might be first run or recoverable)
+                    logger.warning("Alembic migration failed, continuing in development mode...")
+        else:
+            logger.info("Alembic migrations skipped (run_migrations=False)")
         
         self._initialized = True
         logger.info("Database manager initialized successfully")
@@ -141,6 +142,47 @@ class DatabaseManager:
                 logger.info("pgvector functionality verified", test_distance=float(distance))
             else:
                 logger.warning("pgvector extension not available - vector operations will not work")
+    
+    async def _run_alembic_upgrade(self) -> None:
+        """
+        Run Alembic migrations programmatically.
+        
+        Uses Alembic to upgrade the database to the latest migration,
+        following the industry standard FastAPI + SQLModel + Alembic pattern.
+        
+        Runs in a separate thread to avoid event loop conflicts.
+        """
+        try:
+            def run_alembic_sync():
+                """Run Alembic upgrade synchronously in a separate thread."""
+                # Import Alembic inside the sync function to avoid import issues
+                from alembic.config import Config
+                from alembic import command
+                
+                # Configure Alembic
+                alembic_cfg = Config("alembic.ini")
+                # Convert asyncpg URL to sync URL for Alembic
+                postgres_url = self.settings.get_postgres_url()
+                if postgres_url.startswith("postgresql+asyncpg://"):
+                    # Convert to psycopg2 for sync Alembic operations
+                    alembic_url = postgres_url.replace("postgresql+asyncpg://", "postgresql://")
+                else:
+                    alembic_url = postgres_url
+                alembic_cfg.set_main_option("sqlalchemy.url", alembic_url)
+                
+                # Run upgrade to head
+                command.upgrade(alembic_cfg, "head")
+                return "Alembic upgrade completed successfully"
+            
+            # Run Alembic in a separate thread to avoid event loop conflicts
+            result = await asyncio.to_thread(run_alembic_sync)
+            logger.info(result)
+            
+        except ImportError as e:
+            raise DatabaseError("Alembic not installed. Install with: pip install alembic") from e
+        except Exception as e:
+            logger.error("Alembic upgrade failed", error=str(e))
+            raise DatabaseError(f"Alembic upgrade failed: {str(e)}") from e
     
     @handle_database_errors(context={"operation": "database_shutdown"})
     @log_database_operation("shutdown_database")

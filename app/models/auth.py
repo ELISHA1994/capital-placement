@@ -18,6 +18,16 @@ from pydantic import field_validator
 from .base import AuditableModel, BaseModel, TenantModel
 
 
+def create_tenant_id_column():
+    """Create a unique tenant_id Column instance for each table."""
+    return Column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+
 # Validation and data models (non-table models)
 class UserRole(BaseModel):
     """User role definition for validation and API responses."""
@@ -42,6 +52,15 @@ class UserTable(TenantModel, table=True):
     Matches the actual database schema for the users table.
     """
     __tablename__ = "users"
+    
+    # Tenant isolation field (each table model must define its own)
+    tenant_id: UUID = Field(
+        sa_column=create_tenant_id_column(),
+        description="Tenant identifier for multi-tenant isolation"
+    )
+    
+    # Relationship to tenant (required for SQLModel to create foreign key constraints)
+    tenant: Optional["TenantTable"] = Relationship(back_populates="users")
     
     # Core user fields
     email: str = Field(
@@ -191,6 +210,12 @@ class UserSessionTable(AuditableModel, table=True):
     """
     __tablename__ = "user_sessions"
     
+    # Tenant isolation field (each table model must define its own)
+    tenant_id: UUID = Field(
+        sa_column=create_tenant_id_column(),
+        description="Tenant identifier for multi-tenant isolation"
+    )
+    
     user_id: UUID = Field(
         sa_column=Column(
             PostgreSQLUUID(as_uuid=True), 
@@ -200,6 +225,10 @@ class UserSessionTable(AuditableModel, table=True):
         ),
         description="User ID with CASCADE DELETE constraint"
     )
+    
+    # Relationships (required for SQLModel to create foreign key constraints)
+    tenant: Optional["TenantTable"] = Relationship(back_populates="user_sessions")
+    user: Optional["UserTable"] = Relationship(back_populates="sessions")
     
     session_token: str = Field(
         sa_column=Column(String(255), nullable=False, unique=True, index=True),
@@ -251,6 +280,15 @@ class APIKeyTable(AuditableModel, table=True):
     Manages API keys for programmatic access to the system.
     """
     __tablename__ = "api_keys"
+    
+    # Tenant isolation field (each table model must define its own)
+    tenant_id: UUID = Field(
+        sa_column=create_tenant_id_column(),
+        description="Tenant identifier for multi-tenant isolation"
+    )
+    
+    # Relationship to tenant (required for SQLModel to create foreign key constraints)
+    tenant: Optional["TenantTable"] = Relationship(back_populates="api_keys")
     
     key_hash: str = Field(
         sa_column=Column(String(255), nullable=False, unique=True, index=True),

@@ -132,7 +132,7 @@ class SQLModelDatabaseManager:
         try:
             async with self.engine.begin() as conn:
                 # Import all models to ensure they're registered
-                from app.models.base import TenantTable, EmbeddingTable
+                from app.models.embedding import EmbeddingTable
                 from app.models.auth import UserTable
                 from app.models.profile import ProfileTable
                 

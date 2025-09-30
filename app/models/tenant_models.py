@@ -307,6 +307,13 @@ class TenantTable(TimestampedModel, table=True):
         Index("idx_tenants_system", "is_system_tenant"),
         Index("idx_tenants_contact", "primary_contact_email"),
     )
+    
+    # Relationships (required for SQLModel to create foreign key constraints)
+    users: List["UserTable"] = Relationship(back_populates="tenant")
+    user_sessions: List["UserSessionTable"] = Relationship(back_populates="tenant")
+    api_keys: List["APIKeyTable"] = Relationship(back_populates="tenant")
+    profiles: List["ProfileTable"] = Relationship(back_populates="tenant")
+    embeddings: List["EmbeddingTable"] = Relationship(back_populates="tenant")
 
 
 class TenantConfigurationTable(TimestampedModel, table=True):

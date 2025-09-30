@@ -25,10 +25,10 @@ python -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(32))"
 # Set up database (ensure PostgreSQL is running)
 # Database URL: postgresql://cv_user:cv_password@localhost:5432/cv-analytic
 
-# Run database migrations
-python run_migrations.py
+# Run Alembic database migrations
+alembic upgrade head
 
-# Start the application
+# Start the application (migrations also run automatically on startup)
 python -m uvicorn app.main:app --reload --port 8000
 ```
 
@@ -79,3 +79,59 @@ The system automatically detects your environment and uses appropriate services:
 - **Production**: OpenAI API, Redis Cache, Cloud Storage, PostgreSQL
 
 Cloud-agnostic design - same codebase works with any infrastructure!
+
+## Database Architecture
+
+The system uses a modern **FastAPI + SQLModel + Alembic** architecture for database management:
+
+### Key Features
+- ✅ **Industry Standard**: Following 2024-2025 FastAPI best practices
+- ✅ **Foreign Key Constraints**: Automatic CASCADE DELETE for multi-tenant data isolation
+- ✅ **Type Safety**: SQLModel provides full type checking and autocomplete
+- ✅ **Migration Management**: Alembic handles all schema changes with versioning
+- ✅ **Auto-generation**: Migrations automatically generated from SQLModel changes
+
+### Database Commands
+
+```bash
+# Check current migration status
+alembic current
+
+# Generate new migration from model changes
+alembic revision --autogenerate -m "Description of changes"
+
+# Apply migrations
+alembic upgrade head
+
+# Rollback migration
+alembic downgrade -1
+
+# View migration history
+alembic history
+```
+
+### Multi-tenant Data Isolation
+
+The system implements **complete tenant isolation** with CASCADE DELETE constraints:
+
+- When a tenant is deleted, ALL related data is automatically removed:
+  - Users → CASCADE DELETE
+  - User Sessions → CASCADE DELETE  
+  - API Keys → CASCADE DELETE
+  - Profiles → CASCADE DELETE
+  - Embeddings → CASCADE DELETE
+
+This ensures perfect data isolation and prevents orphaned records across tenant boundaries.
+
+### Schema Changes
+
+1. **Modify SQLModel models** in `app/models/`
+2. **Generate migration**: `alembic revision --autogenerate -m "Add new field"`
+3. **Review migration** in `migrations/versions/`
+4. **Apply migration**: `alembic upgrade head`
+
+Alembic automatically detects:
+- New tables and columns
+- Index changes
+- Foreign key constraints
+- Data type modifications

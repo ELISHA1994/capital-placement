@@ -22,6 +22,16 @@ from pgvector.sqlalchemy import Vector
 from .base import AuditableModel, VectorModel, MetadataModel, BaseModel
 
 
+def create_tenant_id_column():
+    """Create a unique tenant_id Column instance for each table."""
+    return Column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+
 class ProfileStatus(str, Enum):
     """Profile status enumeration"""
     ACTIVE = "active"
@@ -273,6 +283,12 @@ class ProfileTable(AuditableModel, table=True):
     while maintaining all original validation and business logic.
     """
     __tablename__ = "profiles"
+    
+    # Tenant isolation field (each table model must define its own)
+    tenant_id: UUID = Field(
+        sa_column=create_tenant_id_column(),
+        description="Tenant identifier for multi-tenant isolation"
+    )
     
     # Additional indexes for performance
     __table_args__ = (
@@ -586,6 +602,9 @@ class ProfileTable(AuditableModel, table=True):
             
         except Exception:
             return 0.0
+    
+    # Relationship to tenant (required for SQLModel to create foreign key constraints)
+    tenant: Optional["TenantTable"] = Relationship(back_populates="profiles")
 
 
 # Keep original Profile model as alias for backward compatibility

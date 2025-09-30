@@ -9,6 +9,7 @@ from .search_models import SearchRequest, SearchResult, SearchFilter
 from .notification import Notification, NotificationCreate, NotificationUpdate
 from .analytics import Usage, UsageEvent
 from .job import Job, JobCreate, JobUpdate, JobStatus
+from .embedding import EmbeddingTable
 
 __all__ = [
     # Base models
@@ -59,4 +60,7 @@ __all__ = [
     "JobCreate",
     "JobUpdate", 
     "JobStatus",
+    
+    # Vector embedding models
+    "EmbeddingTable",
 ]

@@ -11,11 +11,11 @@ from typing import Any, Dict, List, Optional, TypeVar, Union, ClassVar
 from uuid import UUID, uuid4
 
 from sqlalchemy import Column, DateTime, String, Boolean, Integer, text
-from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID, JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY
 from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.orm import declared_attr
 from sqlalchemy.sql import func
 from sqlmodel import Field, SQLModel
-from pgvector.sqlalchemy import Vector
 
 T = TypeVar("T", bound="BaseModel")
 
@@ -89,15 +89,6 @@ class TenantModel(TimestampedModel):
         default_factory=uuid4,
         primary_key=True,
         description="Unique identifier"
-    )
-    
-    tenant_id: UUID = Field(
-        sa_column=Column(
-            PostgreSQLUUID(as_uuid=True), 
-            nullable=False, 
-            index=True
-        ),
-        description="Tenant identifier for multi-tenant isolation"
     )
     
     def validate_tenant_id(cls, v):
@@ -394,23 +385,6 @@ class HealthCheckModel(BaseModel):
         default=None,
         description="Application uptime in seconds"
     )
-
-
-# Dedicated embedding table for vector search operations  
-class EmbeddingTable(VectorModel, TenantModel, table=True):
-    """Dedicated table for vector embeddings and similarity search operations"""
-    __tablename__ = "embeddings"
-    
-    # Override embedding field with proper Vector column
-    embedding: Optional[List[float]] = Field(
-        default=None,
-        sa_column=Column(Vector(1536), nullable=True),
-        description="Vector embedding for similarity search"
-    )
-    
-    # Indexes will be created via migrations for optimal performance:
-    # CREATE INDEX embeddings_tenant_entity_idx ON embeddings (tenant_id, entity_id, entity_type);
-    # CREATE INDEX embeddings_embedding_hnsw_idx ON embeddings USING hnsw (embedding vector_cosine_ops);
 
 
 # Base classes only - actual table definitions should be in specific model files
