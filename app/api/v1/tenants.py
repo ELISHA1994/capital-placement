@@ -243,21 +243,23 @@ async def list_tenants(
     "/{tenant_id}",
     response_model=TenantResponse,
     summary="Get tenant details",
-    description="Get detailed information about a specific tenant. Super admin only."
+    description="Get detailed information about a specific tenant. Super admin can access any tenant, regular users can only access their own tenant."
 )
 async def get_tenant(
     tenant_id: str,
     current_user: CurrentUserDep,
     tenant_service: TenantServiceDep
 ):
-    """Get tenant details (Super Admin only)"""
+    """Get tenant details (Super Admin can access any tenant, regular users can access their own tenant only)"""
     
-    # Check if user has super_admin role
+    # Check authorization: super_admin can access any tenant, regular users only their own
     if "super_admin" not in current_user.roles:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Super admin role required"
-        )
+        # Regular users can only access their own tenant
+        if tenant_id != current_user.tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You can only view your own tenant information."
+            )
     
     try:
         tenant = await tenant_service.get_tenant(tenant_id)

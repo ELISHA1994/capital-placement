@@ -59,8 +59,9 @@ class UserTable(TenantModel, table=True):
         description="Tenant identifier for multi-tenant isolation"
     )
     
-    # Relationship to tenant (required for SQLModel to create foreign key constraints)
+    # Relationships (required for SQLModel to create foreign key constraints)
     tenant: Optional["TenantTable"] = Relationship(back_populates="users")
+    sessions: List["UserSessionTable"] = Relationship(back_populates="user")
     
     # Core user fields
     email: str = Field(
