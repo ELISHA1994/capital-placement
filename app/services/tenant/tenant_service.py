@@ -487,23 +487,31 @@ class TenantService:
         if cached_users:
             return [CurrentUser(**user) for user in cached_users]
         
-        # Get users from repository
+        # Get users from repository (returns List[Dict[str, Any]])
         users = await self.user_repo.get_by_tenant(tenant_id)
         
-        # Convert to CurrentUser objects
-        current_users = [
-            CurrentUser(
-                user_id=user.id,
-                email=user.email,
-                full_name=f"{user.first_name} {user.last_name}".strip(),
-                tenant_id=user.tenant_id,
-                roles=user.roles,
-                permissions=user.permissions,
-                is_active=user.is_active,
-                is_superuser=user.is_superuser
+        # Convert dictionary data to CurrentUser objects
+        current_users = []
+        for user_dict in users:
+            # Handle both 'full_name' field and 'first_name'/'last_name' combination
+            if 'full_name' in user_dict and user_dict['full_name']:
+                full_name = user_dict['full_name']
+            else:
+                first_name = user_dict.get('first_name', '')
+                last_name = user_dict.get('last_name', '')
+                full_name = f"{first_name} {last_name}".strip()
+            
+            current_user = CurrentUser(
+                user_id=str(user_dict.get('id', user_dict.get('user_id', ''))),
+                email=user_dict.get('email', ''),
+                full_name=full_name,
+                tenant_id=str(user_dict.get('tenant_id', '')),
+                roles=user_dict.get('roles', []),
+                permissions=user_dict.get('permissions', []),
+                is_active=user_dict.get('is_active', True),
+                is_superuser=user_dict.get('is_superuser', False)
             )
-            for user in users
-        ]
+            current_users.append(current_user)
         
         # Cache for 30 minutes
         await self.cache.set(
@@ -514,13 +522,106 @@ class TenantService:
         
         return current_users
     
+    async def create_tenant_user(
+        self,
+        tenant_id: str,
+        email: str,
+        password: str,
+        full_name: str,
+        roles: List[str] = None
+    ) -> CurrentUser:
+        """
+        Create a new user and add them to a tenant.
+        
+        This is the proper service layer method for tenant user creation that:
+        - Validates tenant exists and is active
+        - Creates the user with proper password hashing
+        - Associates the user with the tenant
+        - Returns the created user as CurrentUser object
+        
+        Args:
+            tenant_id: The tenant to add the user to
+            email: User's email address
+            password: User's password (will be hashed)
+            full_name: User's full name
+            roles: List of roles to assign (defaults to ["user"])
+            
+        Returns:
+            CurrentUser object representing the created user
+            
+        Raises:
+            ValueError: If tenant not found or user creation fails
+        """
+        # Verify tenant exists and is active
+        tenant = await self.get_tenant(tenant_id)
+        if not tenant:
+            raise ValueError(f"Tenant {tenant_id} not found")
+        
+        # Check if tenant is active
+        is_active = tenant.is_active if hasattr(tenant, 'is_active') else tenant.get('is_active', True)
+        if not is_active:
+            raise ValueError(f"Tenant {tenant_id} is not active")
+        
+        # Default roles if not provided
+        if roles is None:
+            roles = ["user"]
+        
+        # Hash the password
+        from app.utils.security import password_manager
+        hashed_password = password_manager.hash_password(password)
+        
+        # Prepare user data
+        now = datetime.utcnow().isoformat()
+        user_data = {
+            "id": str(uuid4()),
+            "tenant_id": tenant_id,
+            "email": email,
+            "hashed_password": hashed_password,
+            "full_name": full_name,
+            "first_name": full_name.split()[0] if full_name else "",
+            "last_name": " ".join(full_name.split()[1:]) if len(full_name.split()) > 1 else "",
+            "roles": roles,
+            "permissions": ["read", "write"] if "admin" in roles else ["read"],
+            "is_active": True,
+            "is_verified": False,  # Users should verify email
+            "is_superuser": "admin" in roles,
+            "created_at": now,
+            "updated_at": now
+        }
+        
+        # Create user in database
+        created_user = await self.user_repo.create(user_data)
+        
+        # Clear cache
+        await self._invalidate_tenant_users_cache(tenant_id)
+        
+        logger.info(
+            "User created and added to tenant",
+            tenant_id=tenant_id,
+            user_id=created_user["id"],
+            email=email,
+            roles=roles
+        )
+        
+        # Convert to CurrentUser for return
+        return CurrentUser(
+            user_id=str(created_user["id"]),
+            email=created_user["email"],
+            full_name=created_user["full_name"],
+            tenant_id=str(created_user["tenant_id"]),
+            roles=created_user["roles"],
+            permissions=created_user["permissions"],
+            is_active=created_user["is_active"],
+            is_superuser=created_user.get("is_superuser", False)
+        )
+    
     async def add_tenant_user(
         self, 
         tenant_id: str, 
         user_id: str, 
         role: str = "user"
     ) -> bool:
-        """Add user to tenant with specific role"""
+        """Add existing user to tenant with specific role"""
         
         # Verify tenant exists
         tenant = await self.get_tenant(tenant_id)
@@ -551,18 +652,131 @@ class TenantService:
         
         return True
     
+    async def update_user_role(
+        self,
+        tenant_id: str,
+        user_id: str,
+        new_role: str
+    ) -> CurrentUser:
+        """
+        Update a user's role within a tenant.
+        
+        Args:
+            tenant_id: The tenant ID
+            user_id: The user ID to update
+            new_role: The new role to assign to the user
+            
+        Returns:
+            CurrentUser object representing the updated user
+            
+        Raises:
+            ValueError: If tenant not found, user not found, or user not in tenant
+        """
+        # Verify tenant exists
+        tenant = await self.get_tenant(tenant_id)
+        if not tenant:
+            raise ValueError(f"Tenant {tenant_id} not found")
+        
+        # Get user from repository
+        user_data = await self.user_repo.get_by_id(user_id)
+        if not user_data:
+            raise ValueError(f"User {user_id} not found")
+        
+        # Handle both dict and object formats for user data
+        if hasattr(user_data, 'model_dump'):
+            user_dict = user_data.model_dump()
+        elif hasattr(user_data, '__dict__'):
+            user_dict = user_data.__dict__.copy()
+        else:
+            user_dict = dict(user_data) if not isinstance(user_data, dict) else user_data.copy()
+        
+        # Verify user belongs to the tenant
+        if str(user_dict.get('tenant_id')) != str(tenant_id):
+            raise ValueError(f"User {user_id} does not belong to tenant {tenant_id}")
+        
+        # Validate the new role
+        valid_roles = ["user", "admin", "super_admin"]
+        if new_role not in valid_roles:
+            raise ValueError(f"Invalid role '{new_role}'. Valid roles are: {', '.join(valid_roles)}")
+        
+        # Update user roles - replace existing roles with the new role
+        # Keep "user" as base role and add the new role if it's not "user"
+        if new_role == "user":
+            updated_roles = ["user"]
+        elif new_role == "admin":
+            updated_roles = ["user", "admin"]
+        elif new_role == "super_admin":
+            updated_roles = ["user", "admin", "super_admin"]
+        else:
+            updated_roles = ["user", new_role]
+        
+        # Update permissions based on role
+        if "admin" in updated_roles:
+            permissions = ["read", "write", "admin"]
+        elif "super_admin" in updated_roles:
+            permissions = ["read", "write", "admin", "super_admin"]
+        else:
+            permissions = ["read"]
+        
+        # Prepare updated user data
+        user_dict["roles"] = updated_roles
+        user_dict["permissions"] = permissions
+        user_dict["is_superuser"] = "admin" in updated_roles or "super_admin" in updated_roles
+        user_dict["updated_at"] = datetime.utcnow().isoformat()
+        
+        # Update user in database
+        updated_user_data = await self.user_repo.update(user_id, user_dict)
+        
+        # Clear cache
+        await self._invalidate_tenant_users_cache(tenant_id)
+        
+        logger.info(
+            "User role updated in tenant",
+            tenant_id=tenant_id,
+            user_id=user_id,
+            old_roles=user_data.get("roles", []) if isinstance(user_data, dict) else getattr(user_data, "roles", []),
+            new_roles=updated_roles,
+            new_role_primary=new_role
+        )
+        
+        # Convert to CurrentUser for return
+        return CurrentUser(
+            user_id=str(updated_user_data.get("id", user_id)),
+            email=updated_user_data.get("email", ""),
+            full_name=updated_user_data.get("full_name", ""),
+            tenant_id=str(updated_user_data.get("tenant_id", tenant_id)),
+            roles=updated_user_data.get("roles", updated_roles),
+            permissions=updated_user_data.get("permissions", permissions),
+            is_active=updated_user_data.get("is_active", True),
+            is_superuser=updated_user_data.get("is_superuser", False)
+        )
+    
     async def remove_tenant_user(self, tenant_id: str, user_id: str) -> bool:
         """Remove user from tenant"""
         
-        user = await self.user_repo.get_by_id(user_id)
-        if not user or user.tenant_id != tenant_id:
+        # Get user from repository (returns Dict[str, Any])
+        user_data = await self.user_repo.get_by_id(user_id)
+        if not user_data:
             return False
         
-        # Deactivate user instead of deleting
-        user.is_active = False
-        user.updated_at = datetime.utcnow().isoformat()
+        # Handle both dict and object formats for user data
+        if hasattr(user_data, 'model_dump'):
+            user_dict = user_data.model_dump()
+        elif hasattr(user_data, '__dict__'):
+            user_dict = user_data.__dict__.copy()
+        else:
+            user_dict = dict(user_data) if not isinstance(user_data, dict) else user_data.copy()
         
-        await self.user_repo.update(user)
+        # Verify user belongs to the tenant
+        if str(user_dict.get('tenant_id')) != str(tenant_id):
+            return False
+        
+        # Deactivate user instead of deleting - update dictionary fields
+        user_dict['is_active'] = False
+        user_dict['updated_at'] = datetime.utcnow().isoformat()
+        
+        # Update user in database with proper parameters (user_id, user_dict)
+        await self.user_repo.update(user_id, user_dict)
         
         # Clear cache
         await self._invalidate_tenant_users_cache(tenant_id)
@@ -570,7 +784,8 @@ class TenantService:
         logger.info(
             "User removed from tenant",
             tenant_id=tenant_id,
-            user_id=user_id
+            user_id=user_id,
+            user_email=user_dict.get('email', 'unknown')
         )
         
         return True

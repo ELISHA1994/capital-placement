@@ -13,7 +13,7 @@ from typing import Dict, List, Optional
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 
 from app.models.tenant_models import (
@@ -22,10 +22,9 @@ from app.models.tenant_models import (
 )
 from app.models.auth import CurrentUser, User
 from app.core.dependencies import (
-    get_current_user, get_async_auth_service,
+    get_current_user,
     CurrentUserDep, TenantServiceDep
 )
-from app.services.auth import AuthenticationService
 from pydantic import BaseModel, Field
 
 logger = structlog.get_logger(__name__)
@@ -287,7 +286,7 @@ async def get_tenant(
     "/{tenant_id}",
     response_model=TenantResponse,
     summary="Update tenant",
-    description="Update tenant configuration. Super admin only."
+    description="Update tenant configuration. Super admin can update any tenant, tenant admins can update their own tenant."
 )
 async def update_tenant(
     tenant_id: str,
@@ -295,14 +294,22 @@ async def update_tenant(
     current_user: CurrentUserDep,
     tenant_service: TenantServiceDep
 ):
-    """Update tenant (Super Admin only)"""
+    """Update tenant (Super Admin can update any tenant, tenant admins can update their own tenant)"""
     
-    # Check if user has super_admin role
+    # Check authorization: super_admin can update any tenant, tenant admins only their own
     if "super_admin" not in current_user.roles:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Super admin role required"
-        )
+        # Check if user has admin role
+        if "admin" not in current_user.roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin or Super Admin role required"
+            )
+        # Tenant admins can only update their own tenant
+        if tenant_id != current_user.tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. Tenant admins can only update their own tenant."
+            )
     
     try:
         updated_tenant = await tenant_service.update_tenant(
@@ -311,10 +318,11 @@ async def update_tenant(
         )
         
         logger.info(
-            "Tenant updated by super admin",
+            "Tenant updated",
             tenant_id=tenant_id,
             updates=updates.model_dump(exclude_unset=True),
-            updated_by=current_user.user_id
+            updated_by=current_user.user_id,
+            updated_by_role="super_admin" if "super_admin" in current_user.roles else "admin"
         )
         
         # Convert TenantConfiguration to TenantResponse
@@ -522,19 +530,18 @@ async def add_tenant_user(
     tenant_id: str,
     user_data: TenantUserRequest,
     current_user: CurrentUserDep,
-    tenant_service: TenantServiceDep,
-    auth_service: AuthenticationService = Depends(get_async_auth_service)
+    tenant_service: TenantServiceDep
 ):
     """Add user to tenant (Tenant Admin only)"""
     
-    # Check if user has admin role
+    # Check if a user has an admin role
     if not any(role in current_user.roles for role in ["admin", "super_admin"]):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin or Super Admin role required"
         )
     
-    # Verify user is admin of the requested tenant (super_admin can access any tenant)
+    # Verify the user is admin of the requested tenant (super_admin can access any tenant)
     if "super_admin" not in current_user.roles and current_user.tenant_id != tenant_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -542,10 +549,8 @@ async def add_tenant_user(
         )
     
     try:
-        # Create user in the tenant
-        from app.models.auth import UserCreate
-        
-        user_create_data = UserCreate(
+        # Use tenant service to create and add user - proper service layer abstraction
+        created_user = await tenant_service.create_tenant_user(
             tenant_id=tenant_id,
             email=user_data.email,
             password=user_data.password,
@@ -553,27 +558,15 @@ async def add_tenant_user(
             roles=[user_data.role]
         )
         
-        created_user = await auth_service.register_user(user_create_data)
-        
         logger.info(
             "User added to tenant by admin",
             tenant_id=tenant_id,
-            user_id=created_user.id,
+            user_id=created_user.user_id,
             role=user_data.role,
             added_by=current_user.user_id
         )
         
-        # Convert to CurrentUser for response
-        return CurrentUser(
-            user_id=created_user.id,
-            email=created_user.email,
-            full_name=created_user.full_name,
-            tenant_id=created_user.tenant_id,
-            roles=created_user.roles,
-            permissions=created_user.permissions,
-            is_active=created_user.is_active,
-            is_superuser=created_user.is_superuser
-        )
+        return created_user
         
     except ValueError as e:
         raise HTTPException(
@@ -603,14 +596,14 @@ async def update_user_role(
 ):
     """Update user role (Tenant Admin only)"""
     
-    # Check if user has admin role
+    # Check if user has an admin role
     if not any(role in current_user.roles for role in ["admin", "super_admin"]):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin or Super Admin role required"
         )
     
-    # Verify user is admin of the requested tenant (super_admin can access any tenant)
+    # Verify the user is admin of the requested tenant (super_admin can access any tenant)
     if "super_admin" not in current_user.roles and current_user.tenant_id != tenant_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -618,14 +611,22 @@ async def update_user_role(
         )
     
     try:
-        # TODO: Implement user role update in tenant service
-        # success = await tenant_service.update_user_role(tenant_id, user_id, role_update.role)
-        
-        # Placeholder response
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="User role update not yet implemented"
+        # Use tenant service to update user role - proper service layer abstraction
+        updated_user = await tenant_service.update_user_role(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            new_role=role_update.role
         )
+        
+        logger.info(
+            "User role updated by admin",
+            tenant_id=tenant_id,
+            user_id=user_id,
+            new_role=role_update.role,
+            updated_by=current_user.user_id
+        )
+        
+        return updated_user
         
     except HTTPException:
         raise
@@ -778,7 +779,7 @@ async def update_subscription(
             detail="Admin or Super Admin role required"
         )
     
-    # Verify user is admin of the requested tenant (super_admin can access any tenant)
+    # Verify the user is admin of the requested tenant (super_admin can access any tenant)
     if "super_admin" not in current_user.roles and current_user.tenant_id != tenant_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
