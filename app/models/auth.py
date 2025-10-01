@@ -358,6 +358,7 @@ class UserCreate(BaseModel):
     email: str = Field(..., description="Email address")
     password: str = Field(..., min_length=8, description="Password")
     full_name: str = Field(..., description="Full name")
+    tenant_id: str = Field(..., description="Tenant ID for multi-tenant isolation")
     username: Optional[str] = Field(None, description="Username (optional)")
     roles: List[str] = Field(default_factory=list, description="Assigned roles")
     

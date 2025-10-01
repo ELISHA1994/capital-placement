@@ -86,11 +86,18 @@ class AuthenticationService:
         # Hash password
         hashed_password = password_manager.hash_password(user_data.password)
         
+        # Parse full name into first and last name
+        name_parts = user_data.full_name.strip().split(' ', 1)
+        first_name = name_parts[0] if name_parts else user_data.full_name
+        last_name = name_parts[1] if len(name_parts) > 1 else ""
+        
         # Create user record
         user = UserTable(
             tenant_id=user_data.tenant_id,
             email=user_data.email,
             hashed_password=hashed_password,
+            first_name=first_name,
+            last_name=last_name,
             full_name=user_data.full_name,
             roles=user_data.roles or ["user"],
             is_active=True,
@@ -105,11 +112,11 @@ class AuthenticationService:
         
         # Log registration
         await self._log_security_event(
-            tenant_id=user_data.tenant_id,
-            user_id=created_user.id,
+            tenant_id=str(user_data.tenant_id),
+            user_id=str(created_user.id),
             action="user_registered",
             resource_type="user",
-            resource_id=created_user.id,
+            resource_id=str(created_user.id),
             details={"email": user_data.email, "registration_type": "existing_tenant"}
         )
         

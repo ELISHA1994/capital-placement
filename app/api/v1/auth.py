@@ -68,10 +68,10 @@ async def register_user(
         
         # Convert to CurrentUser for response
         return CurrentUser(
-            user_id=created_user.id,
+            user_id=str(created_user.id),
             email=created_user.email,
             full_name=created_user.full_name,
-            tenant_id=created_user.tenant_id,
+            tenant_id=str(created_user.tenant_id),
             roles=created_user.roles,
             permissions=created_user.permissions,
             is_active=created_user.is_active,
