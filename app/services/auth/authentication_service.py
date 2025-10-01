@@ -390,15 +390,24 @@ class AuthenticationService:
     async def change_password(self, user_id: str, request: PasswordChangeRequest) -> bool:
         """Change user password"""
         
-        # Get user
-        user = await self.user_repo.get_by_id(user_id)
-        if not user:
+        # Get user and normalize to dict structure
+        user_record = await self.user_repo.get_by_id(user_id)
+        if not user_record:
             return False
-        
-        # Verify current password
-        if not password_manager.verify_password(request.current_password, user.hashed_password):
+
+        if hasattr(user_record, "dict"):
+            user_data = user_record.dict()
+        else:
+            user_data = dict(user_record)
+
+        tenant_id = user_data.get("tenant_id")
+        tenant_id_str = str(tenant_id) if tenant_id is not None else None
+
+        # Verify the current password
+        hashed_password = user_data.get("hashed_password")
+        if not hashed_password or not password_manager.verify_password(request.current_password, hashed_password):
             await self._log_security_event(
-                tenant_id=user.tenant_id,
+                tenant_id=tenant_id_str,
                 user_id=user_id,
                 action="password_change_failed",
                 resource_type="user",
@@ -417,15 +426,14 @@ class AuthenticationService:
         new_hashed_password = password_manager.hash_password(request.new_password)
         
         # Update password
-        user.hashed_password = new_hashed_password
-        await self.user_repo.update(user)
-        
+        await self.user_repo.update(user_id, {"hashed_password": new_hashed_password})
+
         # Invalidate all user sessions
         await self._revoke_all_user_sessions(user_id)
-        
+
         # Log password change
         await self._log_security_event(
-            tenant_id=user.tenant_id,
+            tenant_id=tenant_id_str,
             user_id=user_id,
             action="password_changed",
             resource_type="user",
