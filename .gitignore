@@ -8,4 +8,5 @@ venv/
 docs
 scripts
 CLAUDE.md
+AGENTS.md
 SQLModel_Migration_Plan.md
