@@ -257,17 +257,30 @@ async def update_user_profile(
     """Update current user's profile"""
     
     try:
-        # Note: This would require implementing update_user in AuthenticationService
-        # For now, return the current user
         logger.info(
             "User profile update requested",
             user_id=current_user.user_id,
             updates=user_data.dict(exclude_unset=True)
         )
         
-        # TODO: Implement actual profile update in AuthenticationService
-        return current_user
+        updated_user = await auth_service.update_user_profile(
+            current_user=current_user,
+            update_request=user_data
+        )
+
+        logger.info(
+            "User profile updated successfully",
+            user_id=updated_user.user_id,
+            tenant_id=updated_user.tenant_id
+        )
+
+        return updated_user
         
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
     except Exception as e:
         logger.error("Profile update failed", error=str(e))
         raise HTTPException(
@@ -570,3 +583,4 @@ async def terminate_session(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Session termination failed"
         )
+

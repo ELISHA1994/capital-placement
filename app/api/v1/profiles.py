@@ -277,7 +277,7 @@ async def update_profile(
             "Profile update requested",
             profile_id=profile_id,
             user_id=current_user.user_id,
-            fields_updated=list(profile_update.dict(exclude_unset=True).keys())
+            fields_updated=list(profile_update.model_dump(exclude_unset=True).keys())
         )
         
         # Get existing profile
@@ -285,7 +285,7 @@ async def update_profile(
         # profile = await get_profile(profile_id, current_user=current_user)
         
         # Apply updates
-        update_data = profile_update.dict(exclude_unset=True)
+        update_data = profile_update.model_dump(exclude_unset=True)
         
         # TODO: Implement profile update logic
         # for field, value in update_data.items():

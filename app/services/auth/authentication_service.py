@@ -18,8 +18,8 @@ from uuid import uuid4
 import structlog
 from app.core.config import get_settings
 from app.models.auth import (
-    UserTable, UserCreate, UserLogin, CurrentUser, TokenResponse, 
-    AuthenticationResult, APIKeyTable, APIKeyCreate, APIKeyResponse, 
+    UserTable, UserCreate, UserLogin, CurrentUser, UserUpdate, TokenResponse,
+    AuthenticationResult, APIKeyTable, APIKeyCreate, APIKeyResponse,
     APIKeyInfo, RefreshTokenRequest, PasswordChangeRequest,
     PasswordResetRequest, PasswordResetConfirm, SessionInfo, AuditLog
 )
@@ -373,10 +373,10 @@ class AuthenticationService:
         payload = token_manager.verify_token(token)
         if not payload:
             return False
-        
+
         # Blacklist the token
         await self._blacklist_token(token)
-        
+
         # If it's a refresh token, blacklist the entire token family
         if payload.get("token_type") == "refresh":
             token_family = payload.get("family")
@@ -386,7 +386,99 @@ class AuthenticationService:
         logger.info("Token revoked", jti=payload.get("jti"))
         
         return True
-    
+
+    async def update_user_profile(
+        self,
+        current_user: CurrentUser,
+        update_request: UserUpdate
+    ) -> CurrentUser:
+        """Update mutable profile fields for the current user"""
+
+        user_record = await self.user_repo.get_by_id(current_user.user_id)
+        if not user_record:
+            raise ValueError("User not found")
+
+        if hasattr(user_record, "model_dump"):
+            user_data = user_record.model_dump()
+        elif hasattr(user_record, "dict"):
+            user_data = user_record.dict()
+        elif hasattr(user_record, "__dict__"):
+            user_data = user_record.__dict__.copy()
+        else:
+            user_data = dict(user_record)
+
+        if str(user_data.get("tenant_id")) != str(current_user.tenant_id):
+            raise ValueError("Invalid tenant context for user update")
+
+        requested_updates = update_request.model_dump(exclude_unset=True)
+        if not requested_updates:
+            return current_user
+
+        restricted_fields = {"roles", "permissions", "is_active"}
+        attempted_restricted = restricted_fields.intersection(requested_updates.keys())
+        if attempted_restricted:
+            raise ValueError(
+                "Not permitted to update fields: " + ", ".join(sorted(attempted_restricted))
+            )
+
+        if "username" in requested_updates:
+            raise ValueError("Username updates are not supported")
+
+        profile_updates: Dict[str, Any] = {}
+
+        if "full_name" in requested_updates:
+            full_name = requested_updates["full_name"].strip()
+            if not full_name:
+                raise ValueError("Full name cannot be empty")
+            name_parts = full_name.split(" ", 1)
+            profile_updates["full_name"] = full_name
+            profile_updates["first_name"] = name_parts[0]
+            profile_updates["last_name"] = name_parts[1] if len(name_parts) > 1 else ""
+
+        if "settings" in requested_updates:
+            new_settings = requested_updates["settings"] or {}
+            if not isinstance(new_settings, dict):
+                raise ValueError("Settings must be a JSON object")
+            existing_settings = user_data.get("settings") or {}
+            if not isinstance(existing_settings, dict):
+                existing_settings = {}
+            merged_settings = existing_settings.copy()
+            merged_settings.update(new_settings)
+            profile_updates["settings"] = merged_settings
+
+        if not profile_updates:
+            return current_user
+
+        profile_updates["updated_at"] = datetime.utcnow()
+
+        updated_user = await self.user_repo.update(current_user.user_id, profile_updates)
+        if not updated_user:
+            raise ValueError("Failed to persist user updates")
+
+        normalized_user = self._normalize_user_data(updated_user)
+
+        cache_key = f"{self.USER_CACHE_PREFIX}{current_user.user_id}"
+        await self.cache.set(cache_key, normalized_user, ttl=300)
+
+        await self._log_security_event(
+            tenant_id=current_user.tenant_id,
+            user_id=current_user.user_id,
+            action="profile_updated",
+            resource_type="user",
+            details={"fields": [field for field in profile_updates.keys() if field != "updated_at"]}
+        )
+
+        return CurrentUser(
+            user_id=normalized_user.get("id", current_user.user_id),
+            email=normalized_user.get("email", current_user.email),
+            full_name=normalized_user.get("full_name", current_user.full_name),
+            tenant_id=normalized_user.get("tenant_id", current_user.tenant_id),
+            roles=normalized_user.get("roles", current_user.roles),
+            permissions=normalized_user.get("permissions", current_user.permissions),
+            is_active=normalized_user.get("is_active", current_user.is_active),
+            is_superuser=normalized_user.get("is_superuser", current_user.is_superuser)
+        )
+
     async def change_password(self, user_id: str, request: PasswordChangeRequest) -> bool:
         """Change user password"""
         
