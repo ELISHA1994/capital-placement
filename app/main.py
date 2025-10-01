@@ -17,6 +17,7 @@ from app.core.config import get_settings
 from app.core.service_factory import get_service_factory
 from app.core.environment import log_environment_info
 from app.api import api_router
+from app.middleware import DefaultUsageTrackingMiddleware
 
 # Configure structured logging
 structlog.configure(
@@ -275,6 +276,9 @@ def create_app() -> FastAPI:
 
 def setup_middleware(app: FastAPI, settings) -> None:
     """Setup application middleware"""
+    
+    # Usage tracking middleware (before CORS to capture all requests)
+    app.add_middleware(DefaultUsageTrackingMiddleware)
     
     # CORS middleware
     cors_origins = settings.get_cors_origins()

@@ -204,11 +204,12 @@ async def upload_cv_document(
             file_size_mb = len(file_content) / (1024 * 1024)
             response.estimated_processing_time_seconds = max(30, int(file_size_mb * 15))  # ~15 seconds per MB
         
-        # Update tenant usage
+        # Update tenant usage with file size tracking
         background_tasks.add_task(
             _update_upload_usage,
             tenant_id=str(current_user.tenant_id),
-            document_count=1
+            document_count=1,
+            file_size_bytes=len(file_content)
         )
         
         logger.info(
@@ -291,6 +292,7 @@ async def upload_cv_documents_batch(
         uploads = []
         rejected_files = {}
         accepted_files = 0
+        total_file_size_bytes = 0
         
         for file in files:
             try:
@@ -300,6 +302,11 @@ async def upload_cv_documents_batch(
                 if validation_result["valid"]:
                     upload_id = str(uuid4())
                     profile_id = str(uuid4())
+                    
+                    # Read file content to get size
+                    file_content = await file.read()
+                    await file.seek(0)  # Reset file position for potential reuse
+                    total_file_size_bytes += len(file_content)
                     
                     uploads.append(UploadResponse(
                         upload_id=upload_id,
@@ -332,11 +339,12 @@ async def upload_cv_documents_batch(
                 settings=settings
             )
         
-        # Update tenant usage
+        # Update tenant usage with total file size for batch
         background_tasks.add_task(
             _update_upload_usage,
             tenant_id=str(current_user.tenant_id),
-            document_count=accepted_files
+            document_count=accepted_files,
+            file_size_bytes=total_file_size_bytes
         )
         
         batch_response = BatchUploadResponse(
@@ -1083,17 +1091,31 @@ async def _process_batch_background(
         logger.error(f"Batch processing failed: {e}", batch_id=batch_id)
 
 
-async def _update_upload_usage(tenant_id: str, document_count: int) -> None:
-    """Update tenant upload usage metrics"""
+async def _update_upload_usage(tenant_id: str, document_count: int, file_size_bytes: int = 0) -> None:
+    """Update tenant upload usage metrics including storage"""
     try:
         tenant_manager = TenantManager()
+        
+        # Calculate storage in GB
+        storage_gb = file_size_bytes / (1024 * 1024 * 1024) if file_size_bytes > 0 else 0
+        
+        metrics_update = {
+            "documents_processed": document_count,
+            "documents_uploaded": document_count,
+            "storage_used_gb": storage_gb
+        }
+        
         await tenant_manager.update_usage_metrics(
             tenant_id=tenant_id,
-            metrics_update={
-                "documents_processed": document_count
-            }
+            metrics_update=metrics_update
         )
-        logger.debug("Updated tenant upload usage", tenant_id=tenant_id)
+        
+        logger.debug(
+            "Updated tenant upload usage", 
+            tenant_id=tenant_id, 
+            document_count=document_count,
+            storage_gb=round(storage_gb, 4)
+        )
     except Exception as e:
         logger.warning(f"Failed to update upload usage: {e}")
 

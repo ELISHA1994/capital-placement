@@ -175,6 +175,13 @@ async def search_profiles(
                 current_user
             )
         
+        # Track search usage metrics for tenant
+        background_tasks.add_task(
+            _update_search_usage,
+            str(search_request.tenant_id),
+            1  # One search performed
+        )
+        
         logger.info(
             "Search completed successfully",
             search_id=search_response.search_id,

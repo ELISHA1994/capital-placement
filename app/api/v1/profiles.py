@@ -26,6 +26,7 @@ from app.services.core.embedding_generator import EmbeddingGenerator
 # Azure services replaced with cloud-agnostic AI services
 from app.core.dependencies import CurrentUserDep, TenantContextDep, AuthzService, require_permission
 from app.models.auth import CurrentUser, TenantContext
+from app.services.usage import track_profile_task
 
 
 logger = structlog.get_logger(__name__)
@@ -227,12 +228,13 @@ async def get_profile(
         # Mock profile for now
         raise HTTPException(status_code=404, detail="Profile not found - database integration pending")
         
-        # Track profile view in background
+        # Track profile view in background using centralized tracker
         background_tasks.add_task(
-            _track_profile_view,
-            profile_id=profile_id,
-            user_id=current_user.user_id,
-            tenant_id=current_user.tenant_id
+            track_profile_task(
+                tenant_id=current_user.tenant_id,
+                operation="view",
+                profile_count=1
+            )
         )
         
         return profile
@@ -316,6 +318,16 @@ async def update_profile(
                 # profile=profile
             )
         
+        # Track profile update in background using centralized tracker
+        background_tasks.add_task(
+            track_profile_task(
+                tenant_id=current_user.tenant_id,
+                operation="update",
+                profile_count=1,
+                fields_updated=len(update_data)
+            )
+        )
+        
         # Mock response
         raise HTTPException(status_code=404, detail="Profile not found - database integration pending")
         
@@ -382,6 +394,15 @@ async def delete_profile(
                 profile_id=profile_id,
                 tenant_id=current_user.tenant_id
             )
+        
+        # Track profile deletion in background using centralized tracker
+        background_tasks.add_task(
+            track_profile_task(
+                tenant_id=current_user.tenant_id,
+                operation="delete",
+                profile_count=1
+            )
+        )
         
         return JSONResponse(content={
             "status": "deleted",
