@@ -343,20 +343,21 @@ async def forgot_password(
     """Request password reset"""
     
     try:
-        # TODO: Implement password reset functionality
-        logger.info(
-            "Password reset requested",
-            email=request_data.email,
-            tenant_id=request_data.tenant_id
-        )
-        
-        # Always return success to prevent email enumeration
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-        
+        reset_context = await auth_service.request_password_reset(request_data)
+
+        if reset_context:
+            logger.debug(
+                "Password reset flow triggered",
+                email=request_data.email,
+                tenant_id=reset_context.get("tenant_id"),
+                has_redirect=bool(request_data.redirect_url)
+            )
+
     except Exception as e:
         logger.error("Password reset request failed", error=str(e))
-        # Still return success to prevent information disclosure
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    
+    # Always return success to prevent email enumeration
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
@@ -372,16 +373,19 @@ async def reset_password(
     """Reset password using reset token"""
     
     try:
-        # TODO: Implement password reset confirmation
-        logger.info("Password reset attempted with token")
-        
+        await auth_service.confirm_password_reset(request_data)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
-        
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
     except Exception as e:
         logger.error("Password reset failed", error=str(e))
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to reset password"
         )
 
 
@@ -583,4 +587,3 @@ async def terminate_session(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Session termination failed"
         )
-

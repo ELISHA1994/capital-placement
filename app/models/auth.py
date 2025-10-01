@@ -499,6 +499,11 @@ class PasswordChangeRequest(BaseModel):
 class PasswordResetRequest(BaseModel):
     """Password reset request model."""
     email: str = Field(..., description="Email address")
+    tenant_id: Optional[str] = Field(None, description="Tenant identifier for multi-tenant context")
+    redirect_url: Optional[str] = Field(
+        None,
+        description="Client URL that will handle the reset flow"
+    )
     
     @field_validator("email")
     @classmethod

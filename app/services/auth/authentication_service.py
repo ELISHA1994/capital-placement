@@ -11,6 +11,8 @@ Provides core authentication functionality including:
 """
 
 import asyncio
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 from uuid import uuid4
@@ -50,6 +52,8 @@ class AuthenticationService:
         self.SESSION_CACHE_PREFIX = "session:"
         self.BLACKLIST_CACHE_PREFIX = "blacklist:"
         self.LOGIN_ATTEMPTS_PREFIX = "login_attempts:"
+        self.PASSWORD_RESET_PREFIX = "password_reset:"
+        self.PASSWORD_RESET_THROTTLE_PREFIX = "password_reset_throttle:"
         
     async def register_user(self, user_data: UserCreate) -> UserTable:
         """Register user in existing tenant"""
@@ -385,6 +389,219 @@ class AuthenticationService:
         
         logger.info("Token revoked", jti=payload.get("jti"))
         
+        return True
+
+    def _build_password_reset_link(self, base_url: str, token: str) -> str:
+        """Attach reset token to provided base URL."""
+        try:
+            from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+            if not base_url:
+                return token
+
+            parsed = urlparse(base_url)
+            query_params = dict(parse_qsl(parsed.query))
+            query_params["token"] = token
+
+            new_query = urlencode(query_params)
+            rebuilt = parsed._replace(query=new_query)
+            return urlunparse(rebuilt)
+        except Exception as ex:
+            logger.warning(
+                "Failed to construct password reset URL",
+                base_url=base_url,
+                error=str(ex)
+            )
+            if not base_url:
+                return token
+
+            if base_url.endswith("&") or base_url.endswith("?"):
+                separator = ""
+            elif "?" in base_url:
+                separator = "&"
+            else:
+                separator = "?"
+
+            return f"{base_url}{separator}token={token}"
+
+    async def request_password_reset(
+        self,
+        request: PasswordResetRequest
+    ) -> Optional[Dict[str, Any]]:
+        """Initiate password reset workflow for a user."""
+
+        email = request.email.strip().lower()
+        if not security_validator.validate_email(email):
+            logger.warning("Password reset requested with invalid email format", email=email)
+            return None
+
+        throttle_key = f"{self.PASSWORD_RESET_THROTTLE_PREFIX}{email}"
+        throttle_window = max(0, self.settings.PASSWORD_RESET_REQUEST_INTERVAL_SECONDS)
+        try:
+            if throttle_window and await self.cache.exists(throttle_key):
+                logger.info("Password reset request throttled", email=email)
+                return None
+        except Exception as ex:
+            logger.warning(
+                "Password reset throttle check failed",
+                email=email,
+                error=str(ex)
+            )
+
+        user_record: Optional[Dict[str, Any]] = None
+        try:
+            if request.tenant_id:
+                user_record = await self.user_repo.get_by_email(email, str(request.tenant_id))
+            else:
+                matches = await self.user_repo.find_by_criteria({"email": email}, limit=1)
+                user_record = matches[0] if matches else None
+        except Exception as ex:
+            logger.error("Password reset lookup failed", email=email, error=str(ex))
+            user_record = None
+
+        if not user_record:
+            # Return silently to avoid account enumeration
+            logger.info("Password reset requested for unknown email", email=email)
+            if throttle_window:
+                await self.cache.set(throttle_key, True, ttl=throttle_window)
+            return None
+
+        normalized_user = self._normalize_user_data(user_record)
+        user_id = normalized_user.get("id")
+        tenant_id = normalized_user.get("tenant_id")
+
+        # Generate secure token and hash for storage
+        token = secrets.token_urlsafe(self.settings.PASSWORD_RESET_TOKEN_BYTES)
+        token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+        ttl_seconds = max(60, self.settings.PASSWORD_RESET_TOKEN_TTL_MINUTES * 60)
+        cache_key = f"{self.PASSWORD_RESET_PREFIX}{token_digest}"
+        user_token_key = f"{self.PASSWORD_RESET_PREFIX}user:{user_id}"
+
+        reset_payload = {
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+            "email": email,
+            "token_digest": token_digest,
+            "requested_at": datetime.utcnow().isoformat()
+        }
+
+        # Invalidate any previous reset tokens for this user
+        try:
+            previous_digest = await self.cache.get(user_token_key)
+            if previous_digest:
+                await self.cache.delete(f"{self.PASSWORD_RESET_PREFIX}{previous_digest}")
+        except Exception as ex:
+            logger.warning(
+                "Failed to clear previous password reset token",
+                user_id=user_id,
+                error=str(ex)
+            )
+
+        await self.cache.set(cache_key, reset_payload, ttl=ttl_seconds)
+        await self.cache.set(user_token_key, token_digest, ttl=ttl_seconds)
+
+        if throttle_window:
+            await self.cache.set(throttle_key, True, ttl=throttle_window)
+
+        reset_link = None
+        if request.redirect_url:
+            reset_link = self._build_password_reset_link(request.redirect_url, token)
+
+        await self._log_security_event(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            action="password_reset_requested",
+            resource_type="user",
+            details={
+                "email": email,
+                "reset_token_hash": token_digest,
+                "expires_in_seconds": ttl_seconds
+            }
+        )
+
+        logger.info(
+            "Password reset token generated",
+            user_id=user_id,
+            tenant_id=tenant_id,
+            ttl_seconds=ttl_seconds
+        )
+
+        return {
+            "token": token,
+            "token_hash": token_digest,
+            "reset_link": reset_link,
+            "email": email,
+            "tenant_id": tenant_id
+        }
+
+    async def confirm_password_reset(
+        self,
+        request: PasswordResetConfirm
+    ) -> bool:
+        """Validate reset token, update password, and revoke sessions."""
+
+        token = request.token.strip()
+        if not token:
+            raise ValueError("Reset token is required")
+
+        password_validation = password_manager.validate_password_strength(request.new_password)
+        if not password_validation["valid"]:
+            raise ValueError("; ".join(password_validation["errors"]))
+
+        token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        cache_key = f"{self.PASSWORD_RESET_PREFIX}{token_digest}"
+
+        reset_payload = await self.cache.get(cache_key)
+        if not reset_payload or not isinstance(reset_payload, dict):
+            raise ValueError("Invalid or expired reset token")
+
+        user_id = reset_payload.get("user_id")
+        tenant_id = reset_payload.get("tenant_id")
+        email = reset_payload.get("email")
+
+        if not user_id:
+            raise ValueError("Invalid reset token payload")
+
+        user_record = await self.user_repo.get_by_id(user_id)
+        if not user_record:
+            raise ValueError("User account not found")
+
+        hashed_password = password_manager.hash_password(request.new_password)
+        updated_user = await self.user_repo.update(user_id, {"hashed_password": hashed_password})
+        if not updated_user:
+            raise ValueError("Failed to update password")
+
+        user_id_str = str(user_id)
+        await self._revoke_all_user_sessions(user_id_str)
+
+        # Clear reset token cache entries
+        await self.cache.delete(cache_key)
+        await self.cache.delete(f"{self.PASSWORD_RESET_PREFIX}user:{user_id_str}")
+
+        if email:
+            await self.cache.delete(f"{self.PASSWORD_RESET_THROTTLE_PREFIX}{email}")
+
+        # Clear user cache to avoid stale state
+        await self.cache.delete(f"{self.USER_CACHE_PREFIX}{user_id_str}")
+
+        await self._log_security_event(
+            tenant_id=str(tenant_id) if tenant_id is not None else None,
+            user_id=user_id_str,
+            action="password_reset_completed",
+            resource_type="user",
+            details={
+                "email": email,
+                "reset_token_hash": token_digest
+            }
+        )
+
+        logger.info(
+            "Password reset completed",
+            user_id=user_id_str,
+            tenant_id=tenant_id
+        )
+
         return True
 
     async def update_user_profile(

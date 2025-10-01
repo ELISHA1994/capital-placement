@@ -72,6 +72,18 @@ class Settings(BaseSettings):
         default=8,
         description="Minimum password length"
     )
+    PASSWORD_RESET_TOKEN_TTL_MINUTES: int = Field(
+        default=30,
+        description="Minutes password reset tokens remain valid"
+    )
+    PASSWORD_RESET_TOKEN_BYTES: int = Field(
+        default=32,
+        description="Random bytes used when generating password reset tokens"
+    )
+    PASSWORD_RESET_REQUEST_INTERVAL_SECONDS: int = Field(
+        default=60,
+        description="Cooldown between password reset requests for the same user"
+    )
     
     # Security Settings
     MAX_LOGIN_ATTEMPTS: int = Field(
@@ -445,5 +457,4 @@ def get_settings() -> Settings:
     )
     
     return settings
-
 
