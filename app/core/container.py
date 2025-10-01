@@ -85,7 +85,8 @@ class Container:
             # Use mock cache for now - will be replaced by AsyncContainer
             cache_manager = MockCacheManager()
             
-            return AuthenticationService(auth_repo, tenant_repo, cache_manager)
+            notification_service = MockNotificationService()
+            return AuthenticationService(auth_repo, tenant_repo, cache_manager, notification_service)
         except Exception as e:
             logger.error("Failed to create auth service", error=str(e))
             raise
@@ -298,6 +299,36 @@ class MockCacheManager:
             del self._cache[key]
 
 
+class MockNotificationService:
+    """Mock notification service"""
+
+    async def check_health(self) -> Dict[str, Any]:
+        return {"status": "mock"}
+
+    async def send_email(self, to: str, subject: str, body: str, is_html: bool = False) -> bool:
+        logger.info(
+            "Mock email dispatched",
+            recipient=to,
+            subject=subject,
+            is_html=is_html
+        )
+        return True
+
+    async def send_webhook(self, url: str, payload: Dict[str, Any], secret: Optional[str] = None) -> bool:
+        logger.info("Mock webhook dispatched", url=url)
+        return True
+
+    async def send_push_notification(
+        self,
+        user_id: str,
+        title: str,
+        message: str,
+        data: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        logger.info("Mock push notification dispatched", user_id=user_id, title=title)
+        return True
+
+
 class AsyncContainer:
     """Async-first dependency injection container"""
     
@@ -389,7 +420,13 @@ class AsyncContainer:
                 cache_service = await self._factory.create_cache_service()
                 self._services[MemoryCacheService] = cache_service
             
-            auth_service = AuthenticationService(auth_repo, tenant_repo, cache_service)
+            notification_service = await self._factory.create_notification_service()
+            auth_service = AuthenticationService(
+                auth_repo,
+                tenant_repo,
+                cache_service,
+                notification_service
+            )
             
             logger.info("AuthenticationService created successfully")
             return auth_service

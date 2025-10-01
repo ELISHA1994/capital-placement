@@ -183,9 +183,8 @@ class ServiceFactory:
     
     async def _create_local_notification(self) -> INotificationService:
         """Create local notification service"""
-        # Simple notification adapter for development
-        from app.services.adapters.messaging_adapters import LocalEventPublisher
-        return LocalEventPublisher()
+        from app.services.adapters.notification_adapter import LocalNotificationService
+        return LocalNotificationService()
     
     async def _create_local_analytics(self) -> IAnalyticsService:
         """Create local analytics service"""

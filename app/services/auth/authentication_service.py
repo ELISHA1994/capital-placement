@@ -29,6 +29,7 @@ from app.database.repositories.postgres import UserRepository, TenantRepository
 from app.utils.security import password_manager, token_manager, api_key_manager, security_validator
 from app.services.adapters.memory_cache_adapter import MemoryCacheService
 from app.models.tenant_models import TenantConfiguration, SubscriptionTier
+from app.core.interfaces import INotificationService
 
 logger = structlog.get_logger(__name__)
 
@@ -40,12 +41,14 @@ class AuthenticationService:
         self,
         user_repository: UserRepository,
         tenant_repository: TenantRepository,
-        cache_manager: MemoryCacheService
+        cache_manager: MemoryCacheService,
+        notification_service: Optional[INotificationService] = None
     ):
         self.user_repo = user_repository
         self.tenant_repo = tenant_repository
         self.cache = cache_manager
         self.settings = get_settings()
+        self.notification_service = notification_service
         
         # Cache keys
         self.USER_CACHE_PREFIX = "user:"
@@ -424,6 +427,62 @@ class AuthenticationService:
 
             return f"{base_url}{separator}token={token}"
 
+    def _compose_password_reset_email(
+        self,
+        recipient_name: str,
+        reset_target: str,
+        ttl_seconds: int
+    ) -> str:
+        ttl_minutes = max(1, ttl_seconds // 60)
+        app_name = self.settings.APP_NAME
+
+        lines = [
+            f"Hello {recipient_name},",
+            "",
+            f"We received a request to reset your {app_name} password.",
+            "",
+            "You can reset your password using the link or token below:",
+            reset_target,
+            "",
+            f"This link expires in {ttl_minutes} minutes.",
+            "If you did not request a reset, you can ignore this email.",
+            "",
+            "Thanks,",
+            f"The {app_name} team",
+        ]
+
+        return "\n".join(lines)
+
+    async def _send_password_reset_email(
+        self,
+        email: str,
+        recipient_name: str,
+        reset_link: Optional[str],
+        raw_token: str,
+        ttl_seconds: int
+    ) -> bool:
+        if not self.notification_service:
+            return False
+
+        target = reset_link or raw_token
+        body = self._compose_password_reset_email(recipient_name, target, ttl_seconds)
+        subject = f"{self.settings.APP_NAME} password reset"
+
+        try:
+            return await self.notification_service.send_email(
+                to=email,
+                subject=subject,
+                body=body,
+                is_html=False
+            )
+        except Exception as ex:
+            logger.error(
+                "Password reset email dispatch failed",
+                email=email,
+                error=str(ex)
+            )
+            return False
+
     async def request_password_reset(
         self,
         request: PasswordResetRequest
@@ -508,6 +567,15 @@ class AuthenticationService:
         if request.redirect_url:
             reset_link = self._build_password_reset_link(request.redirect_url, token)
 
+        recipient_name = normalized_user.get("full_name") or email
+        email_sent = await self._send_password_reset_email(
+            email=email,
+            recipient_name=recipient_name,
+            reset_link=reset_link,
+            raw_token=token,
+            ttl_seconds=ttl_seconds
+        )
+
         await self._log_security_event(
             tenant_id=tenant_id,
             user_id=user_id,
@@ -524,7 +592,8 @@ class AuthenticationService:
             "Password reset token generated",
             user_id=user_id,
             tenant_id=tenant_id,
-            ttl_seconds=ttl_seconds
+            ttl_seconds=ttl_seconds,
+            email_sent=email_sent
         )
 
         return {
@@ -532,7 +601,8 @@ class AuthenticationService:
             "token_hash": token_digest,
             "reset_link": reset_link,
             "email": email,
-            "tenant_id": tenant_id
+            "tenant_id": tenant_id,
+            "email_sent": email_sent
         }
 
     async def confirm_password_reset(
