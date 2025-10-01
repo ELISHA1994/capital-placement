@@ -69,7 +69,7 @@ class Container:
         """Create authentication service with dependencies"""
         try:
             # Create real implementations for repositories 
-            from app.database.repositories.postgres import UserRepository, TenantRepository
+            from app.database.repositories.postgres import UserRepository, TenantRepository, UserSessionRepository
             from app.database import get_database_manager
             
             # Get database manager
@@ -81,12 +81,19 @@ class Container:
             
             auth_repo = UserRepository()
             tenant_repo = TenantRepository()
+            session_repo = UserSessionRepository()
             
             # Use mock cache for now - will be replaced by AsyncContainer
             cache_manager = MockCacheManager()
             
             notification_service = MockNotificationService()
-            return AuthenticationService(auth_repo, tenant_repo, cache_manager, notification_service)
+            return AuthenticationService(
+                auth_repo,
+                tenant_repo,
+                cache_manager,
+                notification_service,
+                session_repository=session_repo
+            )
         except Exception as e:
             logger.error("Failed to create auth service", error=str(e))
             raise
@@ -95,7 +102,7 @@ class Container:
         """Create authorization service with dependencies"""
         try:
             # Create real implementations for repositories - using PostgreSQL implementations
-            from app.database.repositories.postgres import UserRepository, TenantRepository
+            from app.database.repositories.postgres import UserRepository, TenantRepository, UserSessionRepository
             from app.database import get_database_manager
             
             # Get database manager
@@ -401,7 +408,7 @@ class AsyncContainer:
         """Create authentication service with proper async initialization"""
         try:
             # Create real repositories
-            from app.database.repositories.postgres import UserRepository, TenantRepository
+            from app.database.repositories.postgres import UserRepository, TenantRepository, UserSessionRepository
             from app.database import get_database_manager
             
             # Get database manager
@@ -413,6 +420,7 @@ class AsyncContainer:
             
             auth_repo = UserRepository()
             tenant_repo = TenantRepository()
+            session_repo = UserSessionRepository()
             
             # Get cache service from container (already initialized)
             cache_service = self._services.get(MemoryCacheService)
@@ -425,7 +433,8 @@ class AsyncContainer:
                 auth_repo,
                 tenant_repo,
                 cache_service,
-                notification_service
+                notification_service,
+                session_repository=session_repo
             )
             
             logger.info("AuthenticationService created successfully")

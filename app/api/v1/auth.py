@@ -543,8 +543,7 @@ async def list_sessions(
     """List user's active sessions"""
     
     try:
-        # TODO: Implement list_sessions in AuthenticationService
-        sessions = []  # await auth_service.list_sessions(current_user.user_id)
+        sessions = await auth_service.list_sessions(str(current_user.user_id))
         
         return sessions
         
@@ -570,8 +569,13 @@ async def terminate_session(
     """Terminate a specific session"""
     
     try:
-        # TODO: Implement terminate_session in AuthenticationService
-        # success = await auth_service.terminate_session(session_id, current_user.user_id)
+        success = await auth_service.terminate_session(session_id, str(current_user.user_id))
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found"
+            )
         
         logger.info(
             "Session terminated",

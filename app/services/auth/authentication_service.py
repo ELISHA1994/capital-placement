@@ -14,8 +14,8 @@ import asyncio
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional, List
-from uuid import uuid4
+from typing import Dict, Any, Optional, List, Sequence
+from uuid import uuid4, UUID
 
 import structlog
 from app.core.config import get_settings
@@ -25,11 +25,22 @@ from app.models.auth import (
     APIKeyInfo, RefreshTokenRequest, PasswordChangeRequest,
     PasswordResetRequest, PasswordResetConfirm, SessionInfo, AuditLog
 )
-from app.database.repositories.postgres import UserRepository, TenantRepository
+from app.database.repositories.postgres import UserRepository, TenantRepository, UserSessionRepository
 from app.utils.security import password_manager, token_manager, api_key_manager, security_validator
 from app.services.adapters.memory_cache_adapter import MemoryCacheService
 from app.models.tenant_models import TenantConfiguration, SubscriptionTier
 from app.core.interfaces import INotificationService
+from app.utils.session_utils import (
+    build_session_cache_key,
+    serialize_sessions,
+    deserialize_sessions,
+    calculate_session_ttl_seconds,
+    remove_session_by_id,
+    sort_sessions_by_last_activity,
+    filter_expired_sessions,
+    session_info_from_record,
+    sessions_from_records,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -42,13 +53,15 @@ class AuthenticationService:
         user_repository: UserRepository,
         tenant_repository: TenantRepository,
         cache_manager: MemoryCacheService,
-        notification_service: Optional[INotificationService] = None
+        notification_service: Optional[INotificationService] = None,
+        session_repository: Optional[UserSessionRepository] = None
     ):
         self.user_repo = user_repository
         self.tenant_repo = tenant_repository
         self.cache = cache_manager
         self.settings = get_settings()
         self.notification_service = notification_service
+        self.session_repo = session_repository or UserSessionRepository()
         
         # Cache keys
         self.USER_CACHE_PREFIX = "user:"
@@ -674,6 +687,73 @@ class AuthenticationService:
 
         return True
 
+    async def list_sessions(self, user_id: str) -> List[SessionInfo]:
+        """List active sessions for a user from cache."""
+        user_id_str = str(user_id)
+
+        sessions = await self._get_sessions_from_cache(user_id_str)
+        if sessions:
+            return sessions
+
+        try:
+            records = await self.session_repo.list_by_user(user_id_str)
+        except Exception as ex:
+            logger.error("Failed to load sessions from repository", user_id=user_id_str, error=str(ex))
+            return []
+
+        sessions = filter_expired_sessions(sessions_from_records(records))
+        await self._cache_sessions(user_id_str, sessions)
+
+        return sessions
+
+    async def terminate_session(self, session_id: str, user_id: str) -> bool:
+        """Terminate a specific session for a user."""
+
+        user_id_str = str(user_id)
+        try:
+            session_record = await self.session_repo.find_by_id(session_id)
+        except Exception as ex:
+            logger.error(
+                "Failed to locate session",
+                session_id=session_id,
+                user_id=user_id_str,
+                error=str(ex)
+            )
+            return False
+
+        if not session_record or str(session_record.get("user_id")) != user_id_str:
+            return False
+
+        removed_session = session_info_from_record(session_record)
+
+        deleted = await self.session_repo.delete(session_id)
+        if not deleted:
+            return False
+
+        cached_sessions = await self._get_sessions_from_cache(user_id_str)
+        updated_sessions, _ = remove_session_by_id(cached_sessions, session_id)
+        await self._cache_sessions(user_id_str, updated_sessions)
+
+        await self._log_security_event(
+            tenant_id=removed_session.tenant_id,
+            user_id=user_id_str,
+            action="session_terminated",
+            resource_type="session",
+            resource_id=session_id,
+            details={
+                "ip_address": removed_session.ip_address,
+                "user_agent": removed_session.user_agent
+            }
+        )
+
+        logger.info(
+            "Session terminated",
+            user_id=user_id_str,
+            session_id=session_id
+        )
+
+        return True
+
     async def update_user_profile(
         self,
         current_user: CurrentUser,
@@ -957,28 +1037,105 @@ class AuthenticationService:
         """Create a new user session"""
         
         session_id = str(uuid4())
+        now = datetime.now(timezone.utc)
+        expiry = now + timedelta(days=self.settings.REFRESH_TOKEN_EXPIRE_DAYS)
         session_info = SessionInfo(
             session_id=session_id,
             user_id=str(user.id),  # Convert UUID to string
             tenant_id=str(user.tenant_id),  # Convert UUID to string
             ip_address="0.0.0.0",  # Should be passed from request context
             user_agent="Unknown",   # Should be passed from request context
-            created_at=datetime.utcnow().isoformat(),
-            last_activity=datetime.utcnow().isoformat(),
-            expires_at=(datetime.utcnow() + timedelta(days=self.settings.REFRESH_TOKEN_EXPIRE_DAYS)).isoformat()
+            created_at=now.isoformat(),
+            last_activity=now.isoformat(),
+            expires_at=expiry.isoformat()
         )
         
-        # TODO: Store session in session repository
-        # For now, just log the session creation
+        await self._persist_session(session_info, refresh_token)
+
         logger.info("Session created", session_id=session_info.session_id, user_id=str(user.id))
-        
+
         return session_info
     
     async def _update_session_tokens(self, user_id: str, new_refresh_token: str):
         """Update session with new refresh token"""
         # Session token update - implement if needed
         pass
-    
+
+    async def _get_sessions_from_cache(self, user_id: str) -> List[SessionInfo]:
+        cache_key = build_session_cache_key(user_id)
+        try:
+            raw_sessions = await self.cache.get(cache_key)
+        except Exception as ex:
+            logger.warning("Failed to get sessions from cache", user_id=user_id, error=str(ex))
+            return []
+
+        return filter_expired_sessions(deserialize_sessions(raw_sessions))
+
+    async def _cache_sessions(self, user_id: str, sessions: Sequence[SessionInfo]) -> None:
+        cache_key = build_session_cache_key(user_id)
+        sessions = filter_expired_sessions(sort_sessions_by_last_activity(list(sessions)))
+
+        if not sessions:
+            try:
+                await self.cache.delete(cache_key)
+            except Exception as ex:
+                logger.warning("Failed to delete sessions cache", user_id=user_id, error=str(ex))
+            return
+
+        ttl_candidates = [calculate_session_ttl_seconds(session) for session in sessions]
+        cache_ttl = max(ttl_candidates) if ttl_candidates else self.settings.CACHE_TTL
+
+        try:
+            await self.cache.set(cache_key, serialize_sessions(sessions), ttl=cache_ttl)
+        except Exception as ex:
+            logger.warning("Failed to set sessions cache", user_id=user_id, error=str(ex))
+
+    async def _persist_session(self, session_info: SessionInfo, refresh_token: str) -> None:
+        """Persist session information to cache."""
+        cache_key = build_session_cache_key(session_info.user_id)
+
+        try:
+            existing_raw = await self.cache.get(cache_key)
+            existing_sessions = deserialize_sessions(existing_raw)
+        except Exception as ex:
+            logger.warning(
+                "Failed to load sessions from cache",
+                user_id=session_info.user_id,
+                error=str(ex)
+            )
+            existing_sessions = []
+
+        token_hash = hashlib.sha256(refresh_token.encode("utf-8")).hexdigest()
+
+        payload = {
+            "id": UUID(session_info.session_id),
+            "tenant_id": UUID(session_info.tenant_id),
+            "user_id": UUID(session_info.user_id),
+            "session_token": token_hash,
+            "ip_address": session_info.ip_address,
+            "user_agent": session_info.user_agent,
+            "expires_at": datetime.fromisoformat(session_info.expires_at),
+            "last_activity": datetime.fromisoformat(session_info.last_activity),
+        }
+
+        try:
+            await self.session_repo.create(payload)
+        except Exception as ex:
+            logger.error(
+                "Failed to persist session to repository",
+                user_id=session_info.user_id,
+                session_id=session_info.session_id,
+                error=str(ex)
+            )
+            return
+
+        updated_sessions = [
+            session for session in existing_sessions
+            if session.session_id != session_info.session_id
+        ]
+        updated_sessions.append(session_info)
+        await self._cache_sessions(session_info.user_id, updated_sessions)
+
     async def _blacklist_token(self, token: str):
         """Add token to blacklist"""
         
@@ -1015,8 +1172,23 @@ class AuthenticationService:
     
     async def _revoke_all_user_sessions(self, user_id: str):
         """Revoke all sessions for a user"""
-        # TODO: Implement session revocation
-        logger.info("All user sessions revoked", user_id=user_id)
+        user_id_str = str(user_id)
+
+        try:
+            await self.session_repo.delete_by_user(user_id_str)
+        except Exception as ex:
+            logger.error(
+                "Failed to delete user sessions from repository",
+                user_id=user_id_str,
+                error=str(ex)
+            )
+
+        try:
+            await self.cache.delete(build_session_cache_key(user_id_str))
+        except Exception as ex:
+            logger.warning("Failed to clear session cache", user_id=user_id_str, error=str(ex))
+
+        logger.info("All user sessions revoked", user_id=user_id_str)
     
     async def _check_login_rate_limit(self, email: str, tenant_id: str) -> bool:
         """Check if login attempts are within rate limits"""

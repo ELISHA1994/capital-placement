@@ -24,7 +24,7 @@ from ..error_handling import (
     log_database_operation,
 )
 from app.database.sqlmodel_engine import get_sqlmodel_db_manager, SQLModelDatabaseManager
-from app.models.auth import UserTable
+from app.models.auth import UserTable, UserSessionTable
 from app.models.profile import ProfileTable
 from app.models.tenant_models import TenantTable, TenantConfigurationTable
 
@@ -601,6 +601,39 @@ class UserRepository(SQLModelRepository):
         from datetime import datetime, timezone
         await self.update(user_id, {"last_login_at": datetime.now(timezone.utc)}, session=session)
 
+
+class UserSessionRepository(SQLModelRepository):
+    """Repository for user sessions."""
+
+    def __init__(self):
+        super().__init__(UserSessionTable)
+
+    async def list_by_user(
+        self,
+        user_id: Union[UUID, str],
+        session: Optional[AsyncSession] = None
+    ) -> List[Dict[str, Any]]:
+        user_id_value = UUID(str(user_id)) if not isinstance(user_id, UUID) else user_id
+        return await self.find_by_criteria({"user_id": user_id_value}, session=session)
+
+    async def delete_by_user(
+        self,
+        user_id: Union[UUID, str],
+        session: Optional[AsyncSession] = None
+    ) -> int:
+        user_id_value = UUID(str(user_id)) if not isinstance(user_id, UUID) else user_id
+
+        async def _delete():
+            stmt = delete(self.model_class).where(self.model_class.user_id == user_id_value)
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount or 0
+
+        if session:
+            return await _delete()
+        else:
+            async with self.db_manager.get_session() as session:
+                return await _delete()
 
 class ProfileRepository(VectorRepository):
     """Repository for profile management with vector search capabilities."""
