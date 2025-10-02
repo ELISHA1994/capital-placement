@@ -32,23 +32,19 @@ from app.models.auth import CurrentUser
 from app.services.document.pdf_processor import PDFProcessor
 from app.services.document.content_extractor import ContentExtractor
 from app.services.document.quality_analyzer import QualityAnalyzer
-from app.services.ai.embedding_service import EmbeddingService
-from app.services.ai.openai_service import OpenAIService
-from app.services.ai.prompt_manager import PromptManager
-from app.services.ai.cache_manager import CacheManager
 
 # Core Services
-from app.services.core.tenant_manager import TenantManager
-from app.database.repositories.postgres import SQLModelRepository
+from app.services.core.tenant_manager_provider import get_tenant_manager
 from app.core.config import get_settings
-from app.core.container import Container
+from app.services.providers.ai_provider import (
+    get_openai_service,
+    get_embedding_service,
+    get_prompt_manager,
+)
+from app.services.providers.postgres_provider import get_postgres_adapter
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/upload", tags=["upload"])
-
-# Service container for dependency injection
-service_container = Container()
-
 
 class UploadResponse(BaseModel):
     """Response model for file upload operations"""
@@ -134,7 +130,7 @@ async def upload_cv_document(
         
         # Get tenant configuration
         settings = get_settings()
-        tenant_manager = TenantManager()
+        tenant_manager = await get_tenant_manager()
         tenant_config = await tenant_manager.get_tenant_configuration(current_user.tenant_id)
         
         validation_result = await _validate_upload_file(file, str(current_user.tenant_id), tenant_config)
@@ -268,7 +264,7 @@ async def upload_cv_documents_batch(
         
         # Get tenant configuration and check batch quota
         settings = get_settings()
-        tenant_manager = TenantManager()
+        tenant_manager = await get_tenant_manager()
         tenant_config = await tenant_manager.get_tenant_configuration(str(current_user.tenant_id))
         
         quota_check = await tenant_manager.check_quota_limit(
@@ -399,10 +395,10 @@ async def get_processing_status(
         logger.debug("Processing status requested", upload_id=upload_id)
         
         try:
-            db_repo = service_container.get_postgres_repository()
-            
+            postgres_adapter = await get_postgres_adapter()
+
             # Query document processing status
-            processing_record = await db_repo.fetch_one(
+            processing_record = await postgres_adapter.fetch_one(
                 """
                 SELECT document_id, status, processing_duration_ms, quality_score, 
                        output_data, error_details, started_at, completed_at
@@ -499,10 +495,10 @@ async def get_batch_processing_status(
     try:
         # Get batch status from database
         try:
-            db_repo = service_container.get_postgres_repository()
-            
+            postgres_adapter = await get_postgres_adapter()
+
             # Query all processing records for this batch
-            batch_records = await db_repo.fetch_all(
+            batch_records = await postgres_adapter.fetch_all(
                 """
                 SELECT id, document_id, status, processing_duration_ms, quality_score, 
                        output_data->>'filename' as filename, error_details
@@ -800,11 +796,11 @@ async def _process_document_background(
         if not settings:
             settings = get_settings()
         
-        # Initialize AI services
-        db_repo = service_container.get_postgres_repository()
-        
+        # Initialize data adapters
+        postgres_adapter = await get_postgres_adapter()
+
         # Track processing start in database
-        await db_repo.execute(
+        await postgres_adapter.execute(
             """
             INSERT INTO document_processing (id, document_id, tenant_id, processing_type, status, input_metadata, started_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -844,13 +840,13 @@ async def _process_document_background(
         logger.info("Performing AI analysis", upload_id=upload_id)
         
         if settings.is_openai_configured():
-            openai_service = service_container.get_openai_service()
-            prompt_manager = service_container.get_prompt_manager()
+            openai_service = await get_openai_service()
+            prompt_manager = await get_prompt_manager()
             
             document_analyzer = DocumentAnalyzer(
                 openai_service=openai_service,
                 prompt_manager=prompt_manager,
-                db_repository=db_repo
+                db_repository=postgres_adapter
             )
             
             # Perform comprehensive AI analysis
@@ -884,7 +880,7 @@ async def _process_document_background(
         if extract_embeddings and settings.is_openai_configured():
             try:
                 logger.info("Generating embeddings", upload_id=upload_id)
-                embedding_service = service_container.get_embedding_service()
+                embedding_service = await get_embedding_service()
                 
                 # Create combined text for embedding
                 embedding_text = content_extractor.prepare_text_for_embedding(
@@ -898,7 +894,7 @@ async def _process_document_background(
                 
                 # Store embedding in database
                 if embedding_vector:
-                    await db_repo.execute(
+                    await postgres_adapter.execute(
                         """
                         INSERT INTO embeddings (entity_id, entity_type, tenant_id, embedding_model, embedding_vector, content_hash, metadata)
                         VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -940,7 +936,7 @@ async def _process_document_background(
         
         # Store profile (this would be in your profiles table)
         # For now, we'll update the document_processing table with completion
-        await db_repo.execute(
+        await postgres_adapter.execute(
             """
             UPDATE document_processing 
             SET status = $1, completed_at = $2, processing_duration_ms = $3, 
@@ -987,8 +983,8 @@ async def _process_document_background(
         
         # Update database with failure status
         try:
-            db_repo = service_container.get_postgres_repository()
-            await db_repo.execute(
+            postgres_adapter = await get_postgres_adapter()
+            await postgres_adapter.execute(
                 """
                 UPDATE document_processing 
                 SET status = $1, completed_at = $2, processing_duration_ms = $3,
@@ -1094,7 +1090,7 @@ async def _process_batch_background(
 async def _update_upload_usage(tenant_id: str, document_count: int, file_size_bytes: int = 0) -> None:
     """Update tenant upload usage metrics including storage"""
     try:
-        tenant_manager = TenantManager()
+        tenant_manager = await get_tenant_manager()
         
         # Calculate storage in GB
         storage_gb = file_size_bytes / (1024 * 1024 * 1024) if file_size_bytes > 0 else 0

@@ -27,7 +27,7 @@ from app.services.ai.openai_service import OpenAIService
 from app.services.ai.prompt_manager import PromptManager, PromptType
 from app.services.ai.cache_manager import CacheManager
 from app.services.search.hybrid_search import HybridSearchResult
-from app.database.repositories.postgres import SQLModelRepository
+from app.services.adapters.postgres_adapter import PostgresAdapter
 
 logger = structlog.get_logger(__name__)
 
@@ -136,14 +136,14 @@ class ResultRerankerService(IHealthCheck):
         self,
         openai_service: OpenAIService,
         prompt_manager: PromptManager,
-        db_repository: SQLModelRepository,
+        db_adapter: PostgresAdapter,
         cache_manager: Optional[CacheManager] = None,
         default_config: Optional[RerankingConfig] = None
     ):
         self.settings = get_settings()
         self.openai_service = openai_service
         self.prompt_manager = prompt_manager
-        self.db_repository = db_repository
+        self.db_adapter = db_adapter
         self.cache_manager = cache_manager
         
         # Default configuration

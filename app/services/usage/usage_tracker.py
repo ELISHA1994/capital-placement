@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 import structlog
 
-from app.services.core.tenant_manager import TenantManager
+from app.services.core.tenant_manager_provider import get_tenant_manager
 
 logger = structlog.get_logger(__name__)
 
@@ -32,7 +32,12 @@ class UsageTracker:
     """
     
     def __init__(self):
-        self.tenant_manager = TenantManager()
+        self._tenant_manager = None
+
+    async def _get_tenant_manager(self):
+        if self._tenant_manager is None:
+            self._tenant_manager = await get_tenant_manager()
+        return self._tenant_manager
     
     async def track_operation_usage(
         self,
@@ -56,7 +61,8 @@ class UsageTracker:
             start_time = datetime.now()
             
             # Update tenant usage metrics
-            await self.tenant_manager.update_usage_metrics(
+            tenant_manager = await self._get_tenant_manager()
+            await tenant_manager.update_usage_metrics(
                 tenant_id=tenant_id,
                 metrics_update=metrics
             )

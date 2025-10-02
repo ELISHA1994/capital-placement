@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from app.models.profile import CVProfile, ProcessingStatus
 from app.models.base import PaginatedResponse, PaginationModel
-from app.services.core.tenant_manager import TenantManager
+from app.services.core.tenant_manager_provider import get_tenant_manager
 from app.services.core.embedding_generator import EmbeddingGenerator
 # Azure services replaced with cloud-agnostic AI services
 from app.core.dependencies import CurrentUserDep, TenantContextDep, AuthzService, require_permission
@@ -531,7 +531,7 @@ async def bulk_operation(
         # TODO: Check that all profiles belong to the tenant
         
         # Check feature access for bulk operations
-        tenant_manager = TenantManager()
+        tenant_manager = await get_tenant_manager()
         has_access = await tenant_manager.check_feature_access(
             tenant_id=current_user.tenant_id,
             feature_name="bulk_operations"
@@ -600,7 +600,7 @@ async def export_profiles_csv(
         )
         
         # Check export permissions
-        tenant_manager = TenantManager()
+        tenant_manager = await get_tenant_manager()
         has_access = await tenant_manager.check_feature_access(
             tenant_id=current_user.tenant_id,
             feature_name="export"

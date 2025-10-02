@@ -23,13 +23,12 @@ from app.models.search_models import (
     SearchMode, SortOrder, SearchFilter, RangeFilter
 )
 from app.models.base import PaginationModel, PaginatedResponse
-from app.services.core.search_engine import SearchEngine
-from app.services.core.tenant_manager import TenantManager
+from app.services.core.tenant_manager_provider import get_tenant_manager
 from app.core.dependencies import get_current_user, CurrentUserDep, TenantContextDep
 from app.models.auth import CurrentUser, TenantContext
 
 # AI-Powered Search Services
-from app.services.search.vector_search import VectorSearchService, SearchFilter as VectorSearchFilter
+from app.services.search.vector_search import SearchFilter as VectorSearchFilter
 from app.services.search.hybrid_search import (
     HybridSearchService, SearchMode as HybridSearchMode, 
     HybridSearchConfig, FusionMethod
@@ -38,24 +37,17 @@ from app.services.search.result_reranker import (
     ResultRerankerService, RankingStrategy, RerankingConfig
 )
 from app.services.search.search_analytics import SearchAnalyticsService
-from app.services.search.query_processor import QueryProcessor
-
-# AI Services
-from app.services.ai.openai_service import OpenAIService
-from app.services.ai.embedding_service import EmbeddingService
-from app.services.ai.prompt_manager import PromptManager
-from app.services.ai.cache_manager import CacheManager
 
 # Database and Config
-from app.database.repositories.postgres import SQLModelRepository
 from app.core.config import get_settings
-from app.core.container import Container
+from app.services.providers.search_provider import (
+    get_hybrid_search_service,
+    get_result_reranker_service,
+    get_search_analytics_service,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/search", tags=["search"])
-
-# Service container for dependency injection
-service_container = Container()
 
 
 @router.post("/", response_model=SearchResponse)
@@ -95,55 +87,30 @@ async def search_profiles(
         start_time = datetime.now()
         search_id = f"search_{start_time.strftime('%Y%m%d_%H%M%S')}_{current_user.user_id[:8]}"
         
-        # Get service instances
+        # Resolve service instances via providers
         settings = get_settings()
-        db_repo = service_container.get_postgres_repository()
-        
-        # Initialize AI services if configured
-        openai_service = None
-        hybrid_search_service = None
-        reranker_service = None
-        analytics_service = None
-        
+        analytics_service: Optional[SearchAnalyticsService] = None
+        hybrid_search_service: Optional[HybridSearchService] = None
+        reranker_service: Optional[ResultRerankerService] = None
+
+        try:
+            analytics_service = await get_search_analytics_service()
+        except Exception as analytics_error:
+            logger.warning(
+                "Analytics service unavailable",
+                error=str(analytics_error)
+            )
+
         if settings.is_openai_configured():
-            # Initialize AI services
-            openai_service = service_container.get_openai_service()
-            embedding_service = service_container.get_embedding_service()
-            prompt_manager = service_container.get_prompt_manager()
-            cache_manager = service_container.get_cache_manager() if settings.REDIS_URL else None
-            
-            # Initialize search services
-            vector_search_service = VectorSearchService(
-                db_repository=db_repo,
-                embedding_service=embedding_service,
-                cache_manager=cache_manager
-            )
-            
-            query_processor = QueryProcessor(
-                openai_service=openai_service,
-                prompt_manager=prompt_manager,
-                cache_manager=cache_manager,
-                db_repository=db_repo
-            )
-            
-            hybrid_search_service = HybridSearchService(
-                db_repository=db_repo,
-                vector_search_service=vector_search_service,
-                query_processor=query_processor,
-                cache_manager=cache_manager
-            )
-            
-            reranker_service = ResultRerankerService(
-                openai_service=openai_service,
-                prompt_manager=prompt_manager,
-                db_repository=db_repo,
-                cache_manager=cache_manager
-            )
-            
-            analytics_service = SearchAnalyticsService(
-                db_repository=db_repo
-            )
-        
+            try:
+                hybrid_search_service = await get_hybrid_search_service()
+                reranker_service = await get_result_reranker_service()
+            except Exception as service_error:
+                logger.warning(
+                    "AI search services unavailable",
+                    error=str(service_error)
+                )
+
         # Execute search based on mode and available services
         if hybrid_search_service and search_request.search_mode in [SearchMode.HYBRID, SearchMode.VECTOR, SearchMode.SEMANTIC]:
             # AI-powered search
@@ -580,7 +547,7 @@ async def _track_search_analytics(
 async def _update_search_usage(tenant_id: str, search_count: int) -> None:
     """Update tenant search usage metrics"""
     try:
-        tenant_manager = TenantManager()
+        tenant_manager = await get_tenant_manager()
         await tenant_manager.update_usage_metrics(
             tenant_id=tenant_id,
             metrics_update={

@@ -158,21 +158,24 @@ class ServiceFactory:
     async def _create_local_search(self) -> ISearchService:
         """Create local search service with SQLModel repositories"""
         from app.services.search.vector_search import VectorSearchService
+        from app.services.ai.openai_service import OpenAIService
         from app.services.ai.embedding_service import EmbeddingService
-        from app.database.repositories.postgres import VectorRepository
-        from app.models.embedding import EmbeddingTable
-        from app.database.sqlmodel_engine import get_sqlmodel_db_manager
-        
-        # Get SQLModel database manager for session management
-        db_manager = get_sqlmodel_db_manager()
-        
-        # Create repository and embedding service for vector search
-        vector_repo = VectorRepository(EmbeddingTable, db_manager)  # Use dedicated EmbeddingTable for vector search
-        embedding_service = await EmbeddingService.create()
-        
+        from app.services.adapters.postgres_adapter import PostgresAdapter
+
+        cache_service = await self.create_cache_service()
+        openai_service = await OpenAIService.create(cache_service=cache_service)
+        postgres_adapter = PostgresAdapter()
+
+        embedding_service = EmbeddingService(
+            openai_service=openai_service,
+            db_adapter=postgres_adapter,
+            cache_service=cache_service,
+        )
+
         return VectorSearchService(
-            db_repository=vector_repo,
-            embedding_service=embedding_service
+            db_adapter=postgres_adapter,
+            embedding_service=embedding_service,
+            cache_manager=None,
         )
     
     
@@ -188,13 +191,16 @@ class ServiceFactory:
     
     async def _create_local_analytics(self) -> IAnalyticsService:
         """Create local analytics service"""
-        # Basic analytics adapter for development
-        from app.services.adapters.secrets_adapters import LocalSecretManager
-        # Create a simple analytics stub for now
-        class SimpleAnalyticsAdapter:
-            async def track_event(self, event, data): pass
-            async def get_stats(self): return {}
-        return SimpleAnalyticsAdapter()
+        from app.services.adapters.postgres_adapter import PostgresAdapter
+        from app.services.search.search_analytics import SearchAnalyticsService
+
+        postgres_adapter = PostgresAdapter()
+        notification_service = await self.create_notification_service()
+
+        return SearchAnalyticsService(
+            db_adapter=postgres_adapter,
+            notification_service=notification_service,
+        )
     
     def clear_cache(self):
         """Clear service cache"""

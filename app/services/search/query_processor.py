@@ -21,7 +21,7 @@ from app.core.config import get_settings
 from app.services.ai.openai_service import OpenAIService
 from app.services.ai.prompt_manager import PromptManager, PromptType
 from app.services.ai.cache_manager import CacheManager
-from app.database.repositories.postgres import SQLModelRepository
+from app.services.adapters.postgres_adapter import PostgresAdapter
 
 logger = structlog.get_logger(__name__)
 
@@ -69,13 +69,13 @@ class QueryProcessor:
         openai_service: OpenAIService,
         prompt_manager: PromptManager,
         cache_manager: CacheManager,
-        db_repository: SQLModelRepository
+        db_adapter: PostgresAdapter
     ):
         self.settings = get_settings()
         self.openai_service = openai_service
         self.prompt_manager = prompt_manager
         self.cache_manager = cache_manager
-        self.db_repository = db_repository
+        self.db_adapter = db_adapter
         
         # Processing statistics
         self._stats = {
@@ -503,7 +503,7 @@ class QueryProcessor:
             # Try database cache
             query_hash = hashlib.sha256(query.encode()).hexdigest()
             
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 result = await conn.fetchrow("""
                     SELECT * FROM query_expansions 
                     WHERE query_hash = $1 
@@ -561,7 +561,7 @@ class QueryProcessor:
             query_hash = hashlib.sha256(expansion.original_query.encode()).hexdigest()
             expires_at = datetime.now() + timedelta(seconds=self.settings.SEMANTIC_CACHE_TTL)
             
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 await conn.execute("""
                     INSERT INTO query_expansions (
                         original_query, query_hash, expanded_terms, primary_skills,
@@ -615,7 +615,7 @@ class QueryProcessor:
         """Generate query suggestions based on partial input"""
         try:
             # Get popular queries from cache
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 results = await conn.fetch("""
                     SELECT original_query, usage_count
                     FROM query_expansions

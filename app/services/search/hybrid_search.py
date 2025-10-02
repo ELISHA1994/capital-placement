@@ -26,7 +26,7 @@ from app.core.interfaces import IHealthCheck
 from app.services.search.vector_search import VectorSearchService, VectorSearchResult, SearchFilter
 from app.services.search.query_processor import QueryProcessor, ProcessedQuery
 from app.services.ai.cache_manager import CacheManager
-from app.database.repositories.postgres import SQLModelRepository
+from app.services.adapters.postgres_adapter import PostgresAdapter
 
 logger = structlog.get_logger(__name__)
 
@@ -121,14 +121,14 @@ class HybridSearchService(IHealthCheck):
     
     def __init__(
         self,
-        db_repository: SQLModelRepository,
+        db_adapter: PostgresAdapter,
         vector_search_service: VectorSearchService,
         query_processor: QueryProcessor,
         cache_manager: Optional[CacheManager] = None,
         default_config: Optional[HybridSearchConfig] = None
     ):
         self.settings = get_settings()
-        self.db_repository = db_repository
+        self.db_adapter = db_adapter
         self.vector_search_service = vector_search_service
         self.query_processor = query_processor
         self.cache_manager = cache_manager
@@ -448,7 +448,7 @@ class HybridSearchService(IHealthCheck):
                 LIMIT {config.max_text_results}
             """
             
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 rows = await conn.fetch(query_sql, *params)
                 
                 # Convert to TextSearchResult objects
@@ -913,7 +913,7 @@ class HybridSearchService(IHealthCheck):
                 query_health = "error"
             
             # Test database connectivity
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 await conn.fetchval("SELECT 1")
             
             # Test cache service

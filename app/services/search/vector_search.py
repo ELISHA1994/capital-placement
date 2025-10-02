@@ -25,7 +25,7 @@ from app.core.config import get_settings
 from app.core.interfaces import IHealthCheck
 from app.services.ai.embedding_service import EmbeddingService
 from app.services.ai.cache_manager import CacheManager
-from app.database.repositories.postgres import VectorRepository
+from app.services.adapters.postgres_adapter import PostgresAdapter
 
 logger = structlog.get_logger(__name__)
 
@@ -85,12 +85,12 @@ class VectorSearchService(IHealthCheck):
     
     def __init__(
         self,
-        db_repository: VectorRepository,
+        db_adapter: PostgresAdapter,
         embedding_service: EmbeddingService,
         cache_manager: Optional[CacheManager] = None
     ):
         self.settings = get_settings()
-        self.db_repository = db_repository
+        self.db_adapter = db_adapter
         self.embedding_service = embedding_service
         self.cache_manager = cache_manager
         
@@ -349,7 +349,7 @@ class VectorSearchService(IHealthCheck):
         """
         try:
             # Get the reference entity's embedding
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 embedding_row = await conn.fetchrow("""
                     SELECT embedding_vector, embedding_model, metadata
                     FROM embeddings
@@ -489,7 +489,7 @@ class VectorSearchService(IHealthCheck):
                 LIMIT $2
             """
             
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 rows = await conn.fetch(query, *params)
                 
                 # Convert results to VectorSearchResult objects
@@ -673,7 +673,7 @@ class VectorSearchService(IHealthCheck):
             
             # Get database-level analytics if available
             if tenant_id:
-                async with self.db_repository.get_connection() as conn:
+                async with self.db_adapter.get_connection() as conn:
                     # Embedding statistics
                     embedding_stats = await conn.fetchrow("""
                         SELECT 
@@ -700,7 +700,7 @@ class VectorSearchService(IHealthCheck):
         try:
             optimization_results = {}
             
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 # Update index statistics
                 await conn.execute("ANALYZE embeddings")
                 
@@ -731,7 +731,7 @@ class VectorSearchService(IHealthCheck):
             start_time = datetime.now()
             
             # Test database connectivity
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 # Test vector extension
                 await conn.fetchval("SELECT 1")
                 

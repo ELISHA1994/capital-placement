@@ -21,7 +21,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from app.core.config import get_settings
 from app.services.ai.openai_service import OpenAIService
-from app.database.repositories.postgres import SQLModelRepository
+from app.services.adapters.postgres_adapter import PostgresAdapter
 
 logger = structlog.get_logger(__name__)
 
@@ -42,12 +42,12 @@ class EmbeddingService:
     def __init__(
         self,
         openai_service: OpenAIService,
-        db_repository: SQLModelRepository,
+        db_adapter: PostgresAdapter,
         cache_service=None
     ):
         self.settings = get_settings()
         self.openai_service = openai_service
-        self.db_repository = db_repository
+        self.db_adapter = db_adapter
         self.cache_service = cache_service
         self._metrics = {
             "embeddings_generated": 0,
@@ -214,7 +214,7 @@ class EmbeddingService:
             query_sql = " ".join(query_parts)
             
             # Execute similarity search
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 result = await conn.execute(text(query_sql), params)
                 rows = result.fetchall()
             
@@ -323,7 +323,7 @@ class EmbeddingService:
             
             query_sql = " ".join(query_parts)
             
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 result = await conn.execute(text(query_sql), params)
                 row = result.fetchone()
             
@@ -388,7 +388,7 @@ class EmbeddingService:
             
             query_sql = " ".join(query_parts)
             
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 result = await conn.execute(text(query_sql), params)
             
             if result.rowcount == 0:
@@ -448,7 +448,7 @@ class EmbeddingService:
             
             query_sql = " ".join(query_parts)
             
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 result = await conn.execute(text(query_sql), params)
             
             deleted = result.rowcount > 0
@@ -516,7 +516,7 @@ class EmbeddingService:
         
         params = [entity_id, entity_type, model, embedding, tenant_id]
         
-        async with self.db_repository.get_connection() as conn:
+        async with self.db_adapter.get_connection() as conn:
             await conn.execute(text(query_sql), params)
         
         self._metrics["db_operations"] += 1
@@ -562,7 +562,7 @@ class EmbeddingService:
                 updated_at = NOW()
         """
         
-        async with self.db_repository.get_connection() as conn:
+        async with self.db_adapter.get_connection() as conn:
             await conn.execute(text(query_sql), values)
         
         self._metrics["db_operations"] += 1
@@ -586,7 +586,7 @@ class EmbeddingService:
         """Get service metrics"""
         # Get database statistics
         try:
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 result = await conn.execute(text(
                     "SELECT COUNT(*) as total_embeddings FROM embeddings"
                 ))
@@ -613,7 +613,7 @@ class EmbeddingService:
             test_embedding = await self.openai_service.generate_embedding("health check")
             
             # Test database connection
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 await conn.execute(text("SELECT 1"))
             
             return {

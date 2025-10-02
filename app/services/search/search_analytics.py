@@ -24,7 +24,7 @@ import statistics
 
 from app.core.config import get_settings
 from app.core.interfaces import IHealthCheck, IAnalyticsService
-from app.database.repositories.postgres import SQLModelRepository
+from app.services.adapters.postgres_adapter import PostgresAdapter
 
 logger = structlog.get_logger(__name__)
 
@@ -107,11 +107,11 @@ class SearchAnalyticsService(IAnalyticsService):
     
     def __init__(
         self,
-        db_repository: SQLModelRepository,
+        db_adapter: PostgresAdapter,
         notification_service: Optional[Any] = None
     ):
         self.settings = get_settings()
-        self.db_repository = db_repository
+        self.db_adapter = db_adapter
         self.notification_service = notification_service
         
         # Analytics configuration
@@ -316,7 +316,7 @@ class SearchAnalyticsService(IAnalyticsService):
             where_clause = " AND ".join(conditions)
             
             # Execute query based on aggregation type
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 if aggregation == AggregationType.COUNT:
                     query = f"""
                         SELECT metric_name, COUNT(*) as value
@@ -592,7 +592,7 @@ class SearchAnalyticsService(IAnalyticsService):
             )
             
             # Store alert configuration
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 await conn.execute("""
                     INSERT INTO performance_alerts (
                         id, name, metric_name, threshold_value, comparison_operator,
@@ -733,7 +733,7 @@ class SearchAnalyticsService(IAnalyticsService):
                 return
             
             # First ensure the table exists (you might need to create it)
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 # Create table if it doesn't exist
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS search_metrics (
@@ -795,7 +795,7 @@ class SearchAnalyticsService(IAnalyticsService):
         """Get AI operation cost analysis"""
         
         try:
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 # Query AI analytics table
                 conditions = ["created_at >= $1 AND created_at <= $2"]
                 params = [start_date, end_date]
@@ -1193,7 +1193,7 @@ class SearchAnalyticsService(IAnalyticsService):
         """Store analytics report in database"""
         
         try:
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 # Create reports table if it doesn't exist
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS analytics_reports (
@@ -1241,7 +1241,7 @@ class SearchAnalyticsService(IAnalyticsService):
             start_time = datetime.now()
             
             # Test database connectivity
-            async with self.db_repository.get_connection() as conn:
+            async with self.db_adapter.get_connection() as conn:
                 await conn.fetchval("SELECT 1")
             
             # Check metrics cache status

@@ -16,7 +16,6 @@ from app.services.bootstrap_service import BootstrapService
 from app.services.adapters.memory_cache_adapter import MemoryCacheService
 # from app.services.core.document_processor import DocumentProcessor  # Temporarily disabled until CV models are created
 # from app.services.core.search_engine import SearchEngine  # Temporarily disabled until CV models are created
-from app.services.core.tenant_manager import TenantManager
 # NotificationService and ProfileService - to be implemented later
 # from app.services.notification import NotificationService  
 # from app.services.profile import ProfileService

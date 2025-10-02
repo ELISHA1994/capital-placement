@@ -23,25 +23,21 @@ from app.models.auth import CurrentUser
 from app.models.base import PaginatedResponse, PaginationModel
 from app.core.dependencies import CurrentUserDep
 
-# AI Services
-from app.services.ai.openai_service import OpenAIService
-from app.services.ai.embedding_service import EmbeddingService
-from app.services.ai.prompt_manager import PromptManager
-from app.services.ai.cache_manager import CacheManager
 # DocumentAnalyzer replaced with QualityAnalyzer for document analysis
 from app.services.document.quality_analyzer import QualityAnalyzer
-from app.services.search.query_processor import QueryProcessor
 
 # Core Services
-from app.database.repositories.postgres import SQLModelRepository
 from app.core.config import get_settings
-from app.core.container import Container
+from app.services.providers.ai_provider import (
+    get_openai_service,
+    get_embedding_service,
+    get_prompt_manager,
+)
+from app.services.providers.postgres_provider import get_postgres_adapter
+from app.services.providers.search_provider import get_query_processor
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/ai", tags=["ai"])
-
-# Service container for dependency injection
-service_container = Container()
 
 
 # Request/Response Models
@@ -203,8 +199,8 @@ async def create_chat_completion(
             )
         
         # Get AI services
-        openai_service = service_container.get_openai_service()
-        prompt_manager = service_container.get_prompt_manager()
+        openai_service = await get_openai_service()
+        prompt_manager = await get_prompt_manager()
         
         # Prepare messages with system context
         messages = request.messages.copy()
@@ -298,9 +294,9 @@ async def analyze_document(
             )
         
         # Get AI services
-        openai_service = service_container.get_openai_service()
-        prompt_manager = service_container.get_prompt_manager()
-        db_repo = service_container.get_postgres_repository()
+        openai_service = await get_openai_service()
+        prompt_manager = await get_prompt_manager()
+        postgres_adapter = await get_postgres_adapter()
         
         # Initialize document analyzer (using QualityAnalyzer)
         document_analyzer = QualityAnalyzer(
@@ -417,7 +413,7 @@ async def generate_embeddings(
             )
         
         # Get embedding service
-        embedding_service = service_container.get_embedding_service()
+        embedding_service = await get_embedding_service()
         
         # Generate embeddings for all texts
         all_embeddings = []
@@ -503,7 +499,7 @@ async def calculate_similarity(
             )
         
         # Get embedding service
-        embedding_service = service_container.get_embedding_service()
+        embedding_service = await get_embedding_service()
         
         # Generate embedding for query
         query_embedding = await embedding_service.generate_embedding(
@@ -605,17 +601,7 @@ async def expand_query(
             )
         
         # Get query processor service
-        openai_service = service_container.get_openai_service()
-        prompt_manager = service_container.get_prompt_manager()
-        cache_manager = service_container.get_cache_manager() if settings.REDIS_URL else None
-        db_repo = service_container.get_postgres_repository()
-        
-        query_processor = QueryProcessor(
-            openai_service=openai_service,
-            prompt_manager=prompt_manager,
-            cache_manager=cache_manager,
-            db_repository=db_repo
-        )
+        query_processor = await get_query_processor()
         
         # Expand query
         expansion_result = await query_processor.expand_query(
@@ -685,7 +671,7 @@ async def get_ai_usage_analytics(
     - Error rates and success metrics
     """
     try:
-        db_repo = service_container.get_postgres_repository()
+        postgres_adapter = await get_postgres_adapter()
         
         # Build analytics query
         where_conditions = ["tenant_id = $1"]
@@ -710,7 +696,7 @@ async def get_ai_usage_analytics(
         where_clause = " AND ".join(where_conditions)
         
         # Get usage analytics
-        analytics_data = await db_repo.fetch_all(
+        analytics_data = await postgres_adapter.fetch_all(
             f"""
             SELECT 
                 operation_type,
@@ -782,7 +768,7 @@ async def _track_ai_usage(
 ) -> None:
     """Track AI usage for analytics and billing"""
     try:
-        db_repo = service_container.get_postgres_repository()
+        postgres_adapter = await get_postgres_adapter()
         
         # Calculate estimated cost (simplified pricing)
         cost_estimate = 0.0
@@ -796,7 +782,7 @@ async def _track_ai_usage(
                 cost_estimate = (usage.get("total_tokens", 0) * 0.0001) / 1000
         
         # Store analytics record
-        await db_repo.execute(
+        await postgres_adapter.execute(
             """
             INSERT INTO ai_analytics (
                 tenant_id, operation_type, ai_model, token_usage, processing_time_ms,
