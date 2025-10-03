@@ -25,7 +25,7 @@ from app.models.tenant_models import (
 )
 from app.models.auth import User, CurrentUser
 from app.database.repositories.postgres import TenantRepository, UserRepository
-from app.services.adapters.memory_cache_adapter import MemoryCacheService
+from app.domain.interfaces import ICacheService
 from app.core.transaction_manager import transactional, get_transaction_manager
 from app.database.error_handling import TransactionError, DatabaseError
 
@@ -39,7 +39,7 @@ class TenantService:
         self,
         tenant_repository: TenantRepository,
         user_repository: UserRepository,
-        cache_manager: MemoryCacheService
+        cache_manager: ICacheService
     ):
         self.tenant_repo = tenant_repository
         self.user_repo = user_repository

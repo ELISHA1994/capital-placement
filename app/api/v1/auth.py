@@ -25,8 +25,10 @@ from app.models.auth import (
     CurrentUser, PasswordChangeRequest, PasswordResetRequest, PasswordResetConfirm,
     APIKeyCreate, APIKeyResponse, APIKeyInfo, SessionInfo
 )
-from app.services.auth import AuthenticationService, AuthorizationService
+# AuthenticationService and AuthorizationService are injected via dependencies
 from app.utils.security import security_validator
+from app.api.dependencies import map_domain_exception_to_http
+from app.domain.exceptions import DomainException
 
 logger = structlog.get_logger(__name__)
 
@@ -43,7 +45,7 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 async def register_user(
     user_data: UserCreate,
     request: Request,
-    auth_service: AuthenticationService = Depends(get_async_auth_service)
+    auth_service = Depends(get_async_auth_service)
 ):
     """Register a new user account"""
     
@@ -78,6 +80,9 @@ async def register_user(
             is_superuser=created_user.is_superuser
         )
         
+    except DomainException as domain_exc:
+        # Map domain exceptions to appropriate HTTP responses
+        raise map_domain_exception_to_http(domain_exc)
     except ValueError as e:
         # Business logic errors (validation, conflicts, etc.)
         logger.warning(
@@ -115,7 +120,7 @@ async def register_user(
 async def login(
     credentials: UserLogin,
     request: Request,
-    auth_service: AuthenticationService = Depends(get_async_auth_service)
+    auth_service = Depends(get_async_auth_service)
 ):
     """Authenticate user and return tokens"""
     
@@ -168,7 +173,7 @@ async def login(
 )
 async def refresh_tokens(
     request_data: RefreshTokenRequest,
-    auth_service: AuthenticationService = Depends(get_async_auth_service)
+    auth_service = Depends(get_async_auth_service)
 ):
     """Refresh access token using refresh token"""
     
@@ -204,7 +209,7 @@ async def refresh_tokens(
 async def logout(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
-    auth_service: AuthenticationService = Depends(get_async_auth_service)
+    auth_service = Depends(get_async_auth_service)
 ):
     """Logout user and revoke current token"""
     
@@ -252,7 +257,7 @@ async def get_current_user_info(
 async def update_user_profile(
     user_data: UserUpdate,
     current_user: CurrentUser = Depends(get_current_user),
-    auth_service: AuthenticationService = Depends(get_async_auth_service)
+    auth_service = Depends(get_async_auth_service)
 ):
     """Update current user's profile"""
     
@@ -298,7 +303,7 @@ async def update_user_profile(
 async def change_password(
     request_data: PasswordChangeRequest,
     current_user: CurrentUser = Depends(get_current_user),
-    auth_service: AuthenticationService = Depends(get_async_auth_service)
+    auth_service = Depends(get_async_auth_service)
 ):
     """Change user password"""
     
@@ -338,7 +343,7 @@ async def change_password(
 )
 async def forgot_password(
     request_data: PasswordResetRequest,
-    auth_service: AuthenticationService = Depends(get_async_auth_service)
+    auth_service = Depends(get_async_auth_service)
 ):
     """Request password reset"""
     
@@ -368,7 +373,7 @@ async def forgot_password(
 )
 async def reset_password(
     request_data: PasswordResetConfirm,
-    auth_service: AuthenticationService = Depends(get_async_auth_service)
+    auth_service = Depends(get_async_auth_service)
 ):
     """Reset password using reset token"""
     
@@ -399,8 +404,8 @@ async def reset_password(
 async def create_api_key(
     request_data: APIKeyCreate,
     current_user: CurrentUser = Depends(get_current_user),
-    auth_service: AuthenticationService = Depends(get_async_auth_service),
-    authz_service: AuthorizationService = Depends(get_async_authz_service)
+    auth_service = Depends(get_async_auth_service),
+    authz_service = Depends(get_async_authz_service)
 ):
     """Create a new API key"""
     
@@ -451,8 +456,8 @@ async def create_api_key(
 )
 async def list_api_keys(
     current_user: CurrentUser = Depends(get_current_user),
-    auth_service: AuthenticationService = Depends(get_async_auth_service),
-    authz_service: AuthorizationService = Depends(get_async_authz_service)
+    auth_service = Depends(get_async_auth_service),
+    authz_service = Depends(get_async_authz_service)
 ):
     """List user's API keys"""
     
@@ -492,8 +497,8 @@ async def list_api_keys(
 async def revoke_api_key(
     key_id: str,
     current_user: CurrentUser = Depends(get_current_user),
-    auth_service: AuthenticationService = Depends(get_async_auth_service),
-    authz_service: AuthorizationService = Depends(get_async_authz_service)
+    auth_service = Depends(get_async_auth_service),
+    authz_service = Depends(get_async_authz_service)
 ):
     """Revoke an API key"""
     
@@ -538,7 +543,7 @@ async def revoke_api_key(
 )
 async def list_sessions(
     current_user: CurrentUser = Depends(get_current_user),
-    auth_service: AuthenticationService = Depends(get_async_auth_service)
+    auth_service = Depends(get_async_auth_service)
 ):
     """List user's active sessions"""
     
@@ -564,7 +569,7 @@ async def list_sessions(
 async def terminate_session(
     session_id: str,
     current_user: CurrentUser = Depends(get_current_user),
-    auth_service: AuthenticationService = Depends(get_async_auth_service)
+    auth_service = Depends(get_async_auth_service)
 ):
     """Terminate a specific session"""
     

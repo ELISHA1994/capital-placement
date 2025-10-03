@@ -20,7 +20,7 @@ from app.models.tenant_models import (
     TenantConfiguration, SubscriptionTier, IndexStrategy,
     UsageMetrics, QuotaLimits, FeatureFlags, BillingConfiguration
 )
-from app.core.interfaces import IDatabase, ICacheService
+from app.domain.interfaces import IDatabase, ICacheService
 
 logger = structlog.get_logger(__name__)
 

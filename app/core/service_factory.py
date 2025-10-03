@@ -7,7 +7,7 @@ from typing import Dict, Any, Type, Optional
 import structlog
 
 from app.core.environment import get_service_strategy, ServiceStrategy, get_current_environment, Environment
-from app.core.interfaces import (
+from app.domain.interfaces import (
     ICacheService, IDocumentStore, IDatabase, ISearchService, 
     IAIService, IMessageQueue, INotificationService, IAnalyticsService
 )

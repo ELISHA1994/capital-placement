@@ -7,7 +7,7 @@ from uuid import UUID
 
 import structlog
 
-from app.core.interfaces import IDatabase
+from app.domain.interfaces import IDatabase
 from app.database.repositories.postgres import TenantRepository
 
 logger = structlog.get_logger(__name__)

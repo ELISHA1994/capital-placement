@@ -22,7 +22,7 @@ from app.models.search_models import (
     SearchFacet, FacetValue, SearchAnalytics, SearchMode, SortOrder
 )
 from app.models.profile import CVProfile
-from app.core.interfaces import ISearchService, IAIService
+from app.domain.interfaces import ISearchService, IAIService
 from app.services.core.embedding_generator import EmbeddingGenerator
 
 logger = structlog.get_logger(__name__)

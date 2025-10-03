@@ -23,7 +23,7 @@ from uuid import UUID, uuid4
 import statistics
 
 from app.core.config import get_settings
-from app.core.interfaces import IHealthCheck, IAnalyticsService
+from app.domain.interfaces import IHealthCheck, IAnalyticsService
 from app.services.adapters.postgres_adapter import PostgresAdapter
 
 logger = structlog.get_logger(__name__)

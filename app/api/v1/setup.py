@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, Field
 
 from app.core.dependencies import get_async_bootstrap_service
-from app.services.bootstrap_service import BootstrapService
+# BootstrapService is injected via dependencies
 
 logger = structlog.get_logger(__name__)
 
@@ -52,7 +52,7 @@ class SuperAdminCreateResponse(BaseModel):
     description="Check the current initialization status of the system"
 )
 async def get_setup_status(
-    bootstrap_service: BootstrapService = Depends(get_async_bootstrap_service)
+    bootstrap_service = Depends(get_async_bootstrap_service)
 ):
     """Get system setup and initialization status"""
     
@@ -89,7 +89,7 @@ async def get_setup_status(
 )
 async def initialize_system(
     admin_data: SuperAdminCreateRequest,
-    bootstrap_service: BootstrapService = Depends(get_async_bootstrap_service)
+    bootstrap_service = Depends(get_async_bootstrap_service)
 ):
     """Initialize the system by creating the first super admin user"""
     

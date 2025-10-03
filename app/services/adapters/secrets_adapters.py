@@ -8,7 +8,7 @@ from typing import Optional, List
 from pathlib import Path
 import structlog
 
-from app.core.interfaces import ISecretManager
+from app.domain.interfaces import ISecretManager
 
 logger = structlog.get_logger(__name__)
 

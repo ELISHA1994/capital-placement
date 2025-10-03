@@ -9,7 +9,6 @@ while preserving all original Pydantic functionality.
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from uuid import UUID, uuid4
-from enum import Enum
 
 from pydantic import field_validator, model_validator
 from sqlalchemy import Column, String, Boolean, Integer, Float, Text, Index, DateTime, ForeignKey
@@ -19,6 +18,7 @@ from sqlalchemy.sql import func
 from sqlmodel import Field, SQLModel, Relationship
 from pgvector.sqlalchemy import Vector
 
+from app.domain.entities.profile import ExperienceLevel, ProcessingStatus, ProfileStatus
 from .base import AuditableModel, VectorModel, MetadataModel, BaseModel
 
 
@@ -30,36 +30,6 @@ def create_tenant_id_column():
         nullable=False,
         index=True
     )
-
-
-class ProfileStatus(str, Enum):
-    """Profile status enumeration"""
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-    DRAFT = "draft"
-    ARCHIVED = "archived"
-    DELETED = "deleted"
-
-
-class ExperienceLevel(str, Enum):
-    """Experience level enumeration"""
-    ENTRY = "entry"
-    JUNIOR = "junior"
-    MID = "mid"
-    SENIOR = "senior"
-    LEAD = "lead"
-    PRINCIPAL = "principal"
-    EXECUTIVE = "executive"
-
-
-class ProcessingStatus(str, Enum):
-    """Processing status enumeration"""
-    PENDING = "pending"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    PARTIAL = "partial"
-
 
 class ProcessingMetadata(BaseModel):
     """Processing metadata for profile"""

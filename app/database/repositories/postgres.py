@@ -6,7 +6,7 @@ with support for vector operations, transactions, and performance optimization.
 Provides clean, type-safe database operations with minimal boilerplate.
 """
 
-from typing import Any, Dict, List, Optional, Union, Type, TypeVar
+from typing import Any, Dict, List, Optional, Union, Type, TypeVar, Iterable
 from uuid import UUID
 from datetime import datetime
 import structlog
@@ -16,14 +16,11 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import SQLModel
 import numpy as np
 
-from ..error_handling import (
-    DatabaseError,
-    QueryError,
-    IntegrityViolationError,
-    handle_database_errors,
-    log_database_operation,
-)
+from app.database.error_handling import DatabaseError, QueryError, IntegrityViolationError, handle_database_errors, log_database_operation
 from app.database.sqlmodel_engine import get_sqlmodel_db_manager, SQLModelDatabaseManager
+from app.domain.entities.profile import Profile
+from app.domain.value_objects import ProfileId
+from app.infrastructure.mappers.profile_mapper import ProfileMapper
 from app.models.auth import UserTable, UserSessionTable
 from app.models.profile import ProfileTable
 from app.models.tenant_models import TenantTable, TenantConfigurationTable
@@ -640,6 +637,68 @@ class ProfileRepository(VectorRepository):
     
     def __init__(self):
         super().__init__(ProfileTable)
+        self._mapper = ProfileMapper()
+
+    async def _load_profile(
+        self,
+        profile_id: Union[UUID, str],
+        *,
+        session: AsyncSession,
+    ) -> Optional[Profile]:
+        stmt = select(ProfileTable).where(ProfileTable.id == profile_id)
+        result = await session.execute(stmt)
+        instance = result.scalar_one_or_none()
+        if not instance:
+            return None
+        return self._mapper.to_domain(instance)
+
+    async def get_profile(self, profile_id: ProfileId) -> Optional[Profile]:
+        """Load a profile aggregate by identifier."""
+
+        async with self.db_manager.get_session() as session:
+            return await self._load_profile(profile_id.value, session=session)
+
+    async def save_profile(self, profile: Profile) -> Profile:
+        """Persist a profile aggregate using SQLModel infrastructure."""
+
+        async with self.db_manager.get_session() as session:
+            stmt = select(ProfileTable).where(ProfileTable.id == profile.id.value)
+            result = await session.execute(stmt)
+            instance = result.scalar_one_or_none()
+
+            model = self._mapper.to_model(profile, existing=instance)
+            session.add(model)
+            await session.commit()
+            await session.refresh(model)
+            return self._mapper.to_domain(model)
+
+    async def _rows_to_domain(
+        self,
+        rows: Iterable[Dict[str, Any]],
+        *,
+        session: AsyncSession,
+    ) -> List[Profile]:
+        ids: List[UUID] = []
+        for row in rows:
+            raw_id = row.get("id") if isinstance(row, dict) else None
+            if raw_id is None:
+                continue
+            ids.append(raw_id if isinstance(raw_id, UUID) else UUID(str(raw_id)))
+
+        if not ids:
+            return []
+
+        stmt = select(ProfileTable).where(ProfileTable.id.in_(ids))
+        result = await session.execute(stmt)
+        instances = result.scalars().all()
+        by_id = {instance.id: instance for instance in instances}
+
+        ordered: List[Profile] = []
+        for identifier in ids:
+            instance = by_id.get(identifier)
+            if instance:
+                ordered.append(self._mapper.to_domain(instance))
+        return ordered
     
     async def search_profiles_by_vector(
         self,
@@ -649,21 +708,33 @@ class ProfileRepository(VectorRepository):
         limit: int = 20,
         threshold: float = 0.7,
         filters: Optional[Dict[str, Any]] = None,
-        session: Optional[AsyncSession] = None
-    ) -> List[Dict[str, Any]]:
-        """Search profiles using vector similarity."""
+        session: Optional[AsyncSession] = None,
+        *,
+        as_domain: bool = False,
+    ) -> Union[List[Dict[str, Any]], List[Profile]]:
+        """Search profiles using vector similarity with optional domain mapping."""
         criteria = {"tenant_id": tenant_id}
         if filters:
             criteria.update(filters)
-        
-        return await self.vector_similarity_search(
-            query_vector=query_vector,
-            vector_column=vector_column,
-            limit=limit,
-            threshold=threshold,
-            additional_criteria=criteria,
-            session=session
-        )
+
+        async def _search(active_session: AsyncSession):
+            rows = await self.vector_similarity_search(
+                query_vector=query_vector,
+                vector_column=vector_column,
+                limit=limit,
+                threshold=threshold,
+                additional_criteria=criteria,
+                session=active_session,
+            )
+            if not as_domain:
+                return rows
+            return await self._rows_to_domain(rows, session=active_session)
+
+        if session:
+            return await _search(session)
+
+        async with self.db_manager.get_session() as new_session:
+            return await _search(new_session)
 
 
 class JobRepository(SQLModelRepository):

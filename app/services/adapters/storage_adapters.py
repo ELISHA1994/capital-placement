@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import mimetypes
 import structlog
 
-from app.core.interfaces import IBlobStorage, BlobMetadata
+from app.domain.interfaces import IBlobStorage, BlobMetadata
 
 logger = structlog.get_logger(__name__)
 

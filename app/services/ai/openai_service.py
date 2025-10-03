@@ -20,7 +20,7 @@ from openai import AsyncOpenAI
 from openai.types import CreateEmbeddingResponse
 from openai.types.chat import ChatCompletion
 
-from app.core.interfaces import IAIService
+from app.domain.interfaces import IAIService
 from app.core.config import get_settings
 
 logger = structlog.get_logger(__name__)

@@ -17,7 +17,7 @@ from app.core.config import get_settings
 from app.models.auth import CurrentUser, AuthorizationResult, Permission, UserRole
 from app.database.repositories.postgres import UserRepository, TenantRepository
 # Note: RoleRepository and PermissionRepository not yet implemented in PostgreSQL
-from app.services.adapters.memory_cache_adapter import MemoryCacheService
+from app.domain.interfaces import ICacheService
 
 logger = structlog.get_logger(__name__)
 
@@ -61,7 +61,7 @@ class AuthorizationService:
         self,
         user_repository: UserRepository,
         tenant_repository: TenantRepository,
-        cache_manager: MemoryCacheService,
+        cache_manager: ICacheService,
         role_repository=None,  # Not yet implemented
         permission_repository=None  # Not yet implemented
     ):

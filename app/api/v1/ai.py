@@ -22,19 +22,21 @@ from pydantic import BaseModel, Field, validator
 from app.models.auth import CurrentUser
 from app.models.base import PaginatedResponse, PaginationModel
 from app.core.dependencies import CurrentUserDep
+from app.api.dependencies import map_domain_exception_to_http
+from app.domain.exceptions import DomainException
 
 # DocumentAnalyzer replaced with QualityAnalyzer for document analysis
 from app.services.document.quality_analyzer import QualityAnalyzer
 
 # Core Services
 from app.core.config import get_settings
-from app.services.providers.ai_provider import (
+from app.infrastructure.providers.ai_provider import (
     get_openai_service,
     get_embedding_service,
     get_prompt_manager,
 )
-from app.services.providers.postgres_provider import get_postgres_adapter
-from app.services.providers.search_provider import get_query_processor
+from app.infrastructure.providers.postgres_provider import get_postgres_adapter
+from app.infrastructure.providers.search_provider import get_query_processor
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -256,6 +258,9 @@ async def create_chat_completion(
         
         return response
         
+    except DomainException as domain_exc:
+        # Map domain exceptions to appropriate HTTP responses
+        raise map_domain_exception_to_http(domain_exc)
     except HTTPException:
         raise
     except Exception as e:

@@ -18,7 +18,7 @@ import structlog
 import numpy as np
 
 from app.models.profile import CVProfile
-from app.core.interfaces import IAIService
+from app.domain.interfaces import IAIService
 
 logger = structlog.get_logger(__name__)
 

@@ -3,7 +3,7 @@
 import structlog
 from typing import Any, Dict, Optional
 
-from app.core.interfaces import INotificationService
+from app.domain.interfaces import INotificationService
 
 
 logger = structlog.get_logger(__name__)

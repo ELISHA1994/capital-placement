@@ -80,6 +80,14 @@ The system automatically detects your environment and uses appropriate services:
 
 Cloud-agnostic design - same codebase works with any infrastructure!
 
+## Hexagonal Architecture
+
+- **Domain contracts** live in `app/domain/interfaces.py` (e.g., `ICacheService`, `IEventPublisher`).
+- **Application services** orchestrate use cases in `app/application/` (search and upload flows today).
+- **Infrastructure providers** under `app/infrastructure/providers/` expose async `get_*` helpers that return singleton adapters.
+- **FastAPI dependencies** resolve services through those providers (`app/core/dependencies.py`), so routers never touch containers directly.
+- **Tests** reset provider singletons via `tests/conftest.py` to keep scenarios isolated.
+
 ## Database Architecture
 
 The system uses a modern **FastAPI + SQLModel + Alembic** architecture for database management:

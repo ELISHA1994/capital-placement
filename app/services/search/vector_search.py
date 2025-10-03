@@ -22,7 +22,7 @@ import numpy as np
 from uuid import UUID, uuid4
 
 from app.core.config import get_settings
-from app.core.interfaces import IHealthCheck
+from app.domain.interfaces import IHealthCheck
 from app.services.ai.embedding_service import EmbeddingService
 from app.services.ai.cache_manager import CacheManager
 from app.services.adapters.postgres_adapter import PostgresAdapter

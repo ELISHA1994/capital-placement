@@ -22,7 +22,7 @@ from uuid import uuid4
 import numpy as np
 
 from app.core.config import get_settings
-from app.core.interfaces import IHealthCheck
+from app.domain.interfaces import IHealthCheck
 from app.services.ai.openai_service import OpenAIService
 from app.services.ai.prompt_manager import PromptManager, PromptType
 from app.services.ai.cache_manager import CacheManager

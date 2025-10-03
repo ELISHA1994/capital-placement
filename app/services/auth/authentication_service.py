@@ -27,9 +27,9 @@ from app.models.auth import (
 )
 from app.database.repositories.postgres import UserRepository, TenantRepository, UserSessionRepository
 from app.utils.security import password_manager, token_manager, api_key_manager, security_validator
-from app.services.adapters.memory_cache_adapter import MemoryCacheService
+from app.domain.interfaces import ICacheService
 from app.models.tenant_models import TenantConfiguration, SubscriptionTier
-from app.core.interfaces import INotificationService
+from app.domain.interfaces import INotificationService
 from app.utils.session_utils import (
     build_session_cache_key,
     serialize_sessions,
@@ -52,7 +52,7 @@ class AuthenticationService:
         self,
         user_repository: UserRepository,
         tenant_repository: TenantRepository,
-        cache_manager: MemoryCacheService,
+        cache_manager: ICacheService,
         notification_service: Optional[INotificationService] = None,
         session_repository: Optional[UserSessionRepository] = None
     ):

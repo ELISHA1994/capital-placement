@@ -11,7 +11,7 @@ from datetime import datetime
 import threading
 import structlog
 
-from app.core.interfaces import IMessageQueue, IEventPublisher, Message
+from app.domain.interfaces import IMessageQueue, IEventPublisher, Message
 
 logger = structlog.get_logger(__name__)
 

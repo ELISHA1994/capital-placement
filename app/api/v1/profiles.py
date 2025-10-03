@@ -21,12 +21,14 @@ from pydantic import BaseModel, Field
 
 from app.models.profile import CVProfile, ProcessingStatus
 from app.models.base import PaginatedResponse, PaginationModel
-from app.services.core.tenant_manager_provider import get_tenant_manager
-from app.services.core.embedding_generator import EmbeddingGenerator
-# Azure services replaced with cloud-agnostic AI services
 from app.core.dependencies import CurrentUserDep, TenantContextDep, AuthzService, require_permission
 from app.models.auth import CurrentUser, TenantContext
-from app.services.usage import track_profile_task
+from app.infrastructure.providers.usage_provider import get_usage_service
+from app.api.dependencies import map_domain_exception_to_http
+from app.domain.exceptions import DomainException, ProfileNotFoundError
+from app.infrastructure.providers.ai_provider import get_embedding_service
+from app.services.core.tenant_manager_provider import get_tenant_manager
+from app.infrastructure.providers.postgres_provider import get_postgres_adapter
 
 
 logger = structlog.get_logger(__name__)
@@ -184,6 +186,9 @@ async def list_profiles(
         
         return response
         
+    except DomainException as domain_exc:
+        # Map domain exceptions to appropriate HTTP responses
+        raise map_domain_exception_to_http(domain_exc)
     except Exception as e:
         logger.error(f"Failed to list profiles: {e}")
         raise HTTPException(
@@ -230,11 +235,10 @@ async def get_profile(
         
         # Track profile view in background using centralized tracker
         background_tasks.add_task(
-            track_profile_task(
-                tenant_id=current_user.tenant_id,
-                operation="view",
-                profile_count=1
-            )
+            _track_profile_usage,
+            tenant_id=current_user.tenant_id,
+            operation="view",
+            profile_count=1
         )
         
         return profile
@@ -320,12 +324,11 @@ async def update_profile(
         
         # Track profile update in background using centralized tracker
         background_tasks.add_task(
-            track_profile_task(
-                tenant_id=current_user.tenant_id,
-                operation="update",
-                profile_count=1,
-                fields_updated=len(update_data)
-            )
+            _track_profile_usage,
+            tenant_id=current_user.tenant_id,
+            operation="update",
+            profile_count=1,
+            fields_updated=len(update_data)
         )
         
         # Mock response
@@ -397,11 +400,10 @@ async def delete_profile(
         
         # Track profile deletion in background using centralized tracker
         background_tasks.add_task(
-            track_profile_task(
-                tenant_id=current_user.tenant_id,
-                operation="delete",
-                profile_count=1
-            )
+            _track_profile_usage,
+            tenant_id=current_user.tenant_id,
+            operation="delete",
+            profile_count=1
         )
         
         return JSONResponse(content={
@@ -681,6 +683,21 @@ async def find_similar_profiles(
 
 
 # Background task functions
+
+async def _track_profile_usage(tenant_id: str, operation: str, profile_count: int = 1, **metadata) -> None:
+    """Track profile usage via usage service provider"""
+    try:
+        usage_service = await get_usage_service()
+        await usage_service.track_usage(
+            tenant_id=tenant_id,
+            resource_type="profile",
+            amount=profile_count,
+            metadata={"operation": operation, **metadata}
+        )
+        logger.debug("Profile usage tracked", operation=operation, profile_count=profile_count)
+    except Exception as e:
+        logger.warning(f"Failed to track profile usage: {e}")
+
 
 async def _track_profile_view(profile_id: str, user_id: str, tenant_id: str) -> None:
     """Track profile view for analytics"""

@@ -1,0 +1,136 @@
+"""Concrete factory for creating UploadApplicationService dependencies."""
+
+from __future__ import annotations
+
+from app.application.dependencies import UploadDependencies, IUploadDependencyFactory
+from app.infrastructure.persistence.repositories import (
+    PostgresProfileRepository,
+    PostgresUserRepository,
+    PostgresTenantRepository
+)
+from app.infrastructure.providers.ai_provider import (
+    get_embedding_service,
+    get_openai_service,
+    get_prompt_manager
+)
+from app.infrastructure.providers.postgres_provider import get_postgres_adapter
+from app.infrastructure.providers.document_provider import (
+    get_pdf_processor,
+    get_content_extractor,
+    get_quality_analyzer
+)
+from app.services.core.tenant_manager_provider import get_tenant_manager
+from app.infrastructure.adapters.event_publisher_adapter import EventPublisherAdapter
+from app.infrastructure.adapters.storage_adapter import StorageAdapter
+from app.infrastructure.adapters.notification_adapter import NotificationAdapter
+
+
+class UploadDependencyFactory(IUploadDependencyFactory):
+    """Concrete factory for creating upload dependencies using current providers."""
+
+    async def create_dependencies(self) -> UploadDependencies:
+        """Create and return upload dependencies."""
+        
+        # Repository implementations
+        profile_repository = PostgresProfileRepository()
+        user_repository = PostgresUserRepository()
+        tenant_repository = PostgresTenantRepository()
+        
+        # Document processing services (via providers)
+        pdf_processor = await get_pdf_processor()
+        content_extractor = await get_content_extractor()
+        quality_analyzer = await get_quality_analyzer()
+        
+        # AI services
+        embedding_service = await get_embedding_service()
+        
+        # Infrastructure services
+        storage_service = StorageAdapter()
+        notification_service = NotificationAdapter()
+        tenant_manager = await get_tenant_manager()
+        database_adapter = await get_postgres_adapter()
+        
+        # Event publisher
+        event_publisher = EventPublisherAdapter()
+        
+        # Wrap document processor to use PDFProcessor
+        document_processor = DocumentProcessorAdapter(
+            pdf_processor=pdf_processor,
+            content_extractor=content_extractor
+        )
+        
+        return UploadDependencies(
+            # Repositories
+            profile_repository=profile_repository,
+            user_repository=user_repository,
+            tenant_repository=tenant_repository,
+            
+            # Document processing
+            document_processor=document_processor,
+            content_extractor=content_extractor,
+            quality_analyzer=quality_analyzer,
+            embedding_service=embedding_service,
+            
+            # Infrastructure
+            storage_service=storage_service,
+            notification_service=notification_service,
+            tenant_manager=tenant_manager,
+            database_adapter=database_adapter,
+            event_publisher=event_publisher
+        )
+
+
+class DocumentProcessorAdapter:
+    """Adapter to make PDFProcessor compatible with IDocumentProcessor interface."""
+    
+    def __init__(self, pdf_processor, content_extractor):
+        self.pdf_processor = pdf_processor
+        self.content_extractor = content_extractor
+    
+    async def process_document(self, file_content: bytes, filename: str, **kwargs) -> dict:
+        """Process document and extract content."""
+        file_extension = filename.lower().split(".")[-1] if "." in filename else "unknown"
+        
+        if file_extension == "pdf":
+            extracted_content = await self.pdf_processor.extract_content(file_content)
+            return {
+                "text": extracted_content.get("text", ""),
+                "metadata": extracted_content.get("metadata", {})
+            }
+        else:
+            # Handle text files
+            try:
+                text_content = file_content.decode("utf-8")
+                metadata = {"file_type": file_extension}
+                return {
+                    "text": text_content,
+                    "metadata": metadata
+                }
+            except UnicodeDecodeError:
+                text_content = file_content.decode("utf-8", errors="ignore")
+                metadata = {"file_type": file_extension, "encoding_issues": True}
+                return {
+                    "text": text_content,
+                    "metadata": metadata
+                }
+
+
+# Singleton instance for global usage
+_upload_dependency_factory: UploadDependencyFactory | None = None
+
+
+async def get_upload_dependency_factory() -> UploadDependencyFactory:
+    """Get singleton instance of upload dependency factory."""
+    global _upload_dependency_factory
+    if _upload_dependency_factory is None:
+        _upload_dependency_factory = UploadDependencyFactory()
+    return _upload_dependency_factory
+
+
+async def get_upload_dependencies() -> UploadDependencies:
+    """Helper function to get upload dependencies directly."""
+    factory = await get_upload_dependency_factory()
+    return await factory.create_dependencies()
+
+
+__all__ = ["UploadDependencyFactory", "get_upload_dependency_factory", "get_upload_dependencies", "DocumentProcessorAdapter"]

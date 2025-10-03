@@ -209,6 +209,7 @@ select = [
     "T20", # flake8-print
     "SIM", # flake8-simplify
     "TCH", # flake8-type-checking
+    "TID", # flake8-tidy-imports
 ]
 ignore = [
     "E501",  # line too long, handled by black
@@ -220,6 +221,9 @@ ignore = [
 [tool.ruff.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/**/*" = ["PLR2004", "S101", "TID252"]
+
+# Architectural enforcement is handled by tests/architecture/
+
 
 [tool.mypy]
 python_version = "3.12"

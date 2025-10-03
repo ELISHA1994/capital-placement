@@ -14,9 +14,46 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
-from app.core.service_factory import get_service_factory
 from app.core.environment import log_environment_info
+from app.core.service_factory import get_service_factory
 from app.api import api_router
+from app.infrastructure.providers.ai_provider import (
+    get_openai_service,
+    reset_ai_services,
+)
+from app.infrastructure.providers.analytics_provider import (
+    reset_analytics_service,
+)
+from app.infrastructure.providers.auth_provider import (
+    get_authentication_service,
+    get_authorization_service,
+    get_bootstrap_service,
+    get_tenant_service,
+    reset_authentication_service,
+    reset_authorization_service,
+    reset_bootstrap_service,
+    reset_tenant_service,
+)
+from app.infrastructure.providers.cache_provider import (
+    get_cache_service,
+    reset_cache_service,
+)
+from app.infrastructure.providers.database_provider import (
+    reset_database_service,
+)
+from app.infrastructure.providers.document_store_provider import (
+    reset_document_store,
+)
+from app.infrastructure.providers.message_queue_provider import (
+    reset_message_queue,
+)
+from app.infrastructure.providers.notification_provider import (
+    reset_notification_service,
+)
+from app.infrastructure.providers.postgres_provider import (
+    reset_postgres_adapter,
+)
+from app.infrastructure.providers.search_provider import reset_search_services
 from app.middleware import DefaultUsageTrackingMiddleware
 
 # Configure structured logging
@@ -69,30 +106,24 @@ async def lifespan(app: FastAPI):
         if get_settings().ENVIRONMENT == "production":
             sys.exit(1)
     
-    # Initialize services using the factory and async container
+    # Initialize services using provider-backed singletons
     try:
         # Initialize service factory
         factory = get_service_factory()
         
-        # Initialize async container and critical services
-        from app.core.dependencies import get_async_container
-        from app.services.auth import AuthenticationService, AuthorizationService
-        
-        # Initialize async container
-        container = await get_async_container()
-        
-        # Pre-warm authentication services
-        auth_service = await container.get_service(AuthenticationService)
-        authz_service = await container.get_service(AuthorizationService)
-        
-        # Pre-initialize other critical services
-        cache_service = await factory.create_cache_service()
-        ai_service = await factory.create_ai_service()
+        # Pre-warm critical provider services
+        await get_authentication_service()
+        await get_authorization_service()
+        await get_bootstrap_service()
+        await get_tenant_service()
+
+        cache_service = await get_cache_service()
+        ai_service = await get_openai_service()
         
         # Check health
         cache_health = await cache_service.check_health()
         ai_health = await ai_service.check_health()
-        
+
         logger.info("All services initialized successfully",
                    cache_status=cache_health["status"],
                    ai_status=ai_health["status"],
@@ -118,10 +149,21 @@ async def lifespan(app: FastAPI):
         from app.database import shutdown_database
         await shutdown_database()
         logger.info("Database shutdown completed")
-        
-        # Cleanup async container  
-        from app.core.container import reset_async_container
-        await reset_async_container()
+
+        # Reset provider singletons
+        await reset_authentication_service()
+        await reset_authorization_service()
+        await reset_bootstrap_service()
+        await reset_tenant_service()
+        await reset_cache_service()
+        await reset_ai_services()
+        await reset_search_services()
+        await reset_notification_service()
+        await reset_message_queue()
+        await reset_document_store()
+        await reset_database_service()
+        await reset_analytics_service()
+        await reset_postgres_adapter()
         
         # Cleanup service factory
         factory = get_service_factory()

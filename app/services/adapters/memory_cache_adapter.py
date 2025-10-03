@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional
 from dataclasses import dataclass
 import structlog
 
-from app.core.interfaces import ICacheService
+from app.domain.interfaces import ICacheService
 
 logger = structlog.get_logger(__name__)
 

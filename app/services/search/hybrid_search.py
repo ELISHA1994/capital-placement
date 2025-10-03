@@ -22,7 +22,7 @@ import structlog
 from uuid import uuid4
 
 from app.core.config import get_settings
-from app.core.interfaces import IHealthCheck
+from app.domain.interfaces import IHealthCheck
 from app.services.search.vector_search import VectorSearchService, VectorSearchResult, SearchFilter
 from app.services.search.query_processor import QueryProcessor, ProcessedQuery
 from app.services.ai.cache_manager import CacheManager

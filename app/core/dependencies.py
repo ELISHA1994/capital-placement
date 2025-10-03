@@ -2,18 +2,29 @@
 FastAPI Dependencies
 """
 
-from typing import Annotated, Dict, Optional
+from typing import Annotated, Dict, Optional, TYPE_CHECKING
 
 import structlog
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import Settings, get_settings
-from app.core.container import Container, get_container, get_async_container
 from app.models.auth import CurrentUser, TenantContext
-from app.services.auth import AuthenticationService, AuthorizationService
+from app.domain.interfaces import ICacheService
+from app.infrastructure.providers.auth_provider import (
+    get_authentication_service as resolve_authentication_service,
+    get_authorization_service as resolve_authorization_service,
+    get_tenant_service as resolve_tenant_service,
+)
+from app.infrastructure.providers.bootstrap_provider import (
+    get_bootstrap_service as resolve_bootstrap_service,
+)
+from app.infrastructure.providers.cache_provider import (
+    get_cache_service as resolve_cache_service,
+)
+from app.services.auth.authentication_service import AuthenticationService
+from app.services.auth.authorization_service import AuthorizationService
 from app.services.bootstrap_service import BootstrapService
-from app.services.adapters.memory_cache_adapter import MemoryCacheService
 # from app.services.core.document_processor import DocumentProcessor  # Temporarily disabled until CV models are created
 # from app.services.core.search_engine import SearchEngine  # Temporarily disabled until CV models are created
 # NotificationService and ProfileService - to be implemented later
@@ -31,7 +42,7 @@ from app.database.repositories.postgres import (
 )
 
 # Transaction manager imports
-from app.core.transaction_manager import SQLModelTransactionManager, get_transaction_manager, initialize_transaction_manager
+from app.core.transaction_manager import SQLModelTransactionManager, get_transaction_manager
 
 logger = structlog.get_logger(__name__)
 
@@ -39,110 +50,43 @@ logger = structlog.get_logger(__name__)
 security = HTTPBearer(auto_error=False)
 
 
-# Container dependencies
+# Settings dependency
 def get_settings_dependency() -> Settings:
     """Get application settings"""
     return get_settings()
 
 
-def get_container_dependency() -> Container:
-    """Get dependency injection container"""
-    return get_container()
-
-
-# Service dependencies
-def get_auth_service(
-    container: Container = Depends(get_container_dependency)
-) -> AuthenticationService:
-    """Get authentication service"""
-    return container.get_service(AuthenticationService)
-
-
-def get_authz_service(
-    container: Container = Depends(get_container_dependency)
-) -> AuthorizationService:
-    """Get authorization service"""
-    return container.get_service(AuthorizationService)
-
-
-# Async service dependencies
+# Provider-backed service dependencies
 async def get_async_auth_service() -> AuthenticationService:
-    """Get authentication service (async)"""
-    container = await get_async_container()
-    return await container.get_service(AuthenticationService)
+    """Resolve the authentication service from infrastructure providers."""
+    return await resolve_authentication_service()
 
 
 async def get_async_authz_service() -> AuthorizationService:
-    """Get authorization service (async)"""
-    container = await get_async_container()
-    return await container.get_service(AuthorizationService)
+    """Resolve the authorization service from infrastructure providers."""
+    return await resolve_authorization_service()
 
 
 async def get_async_bootstrap_service() -> BootstrapService:
-    """Get bootstrap service (async)"""
-    container = await get_async_container()
-    return await container.get_service(BootstrapService)
+    """Resolve the bootstrap service from infrastructure providers."""
+    return await resolve_bootstrap_service()
 
 
-# ProfileService not implemented yet
-# def get_profile_service(
-#     container: Container = Depends(get_container_dependency)
-# ) -> ProfileService:
-#     """Get profile service"""
-#     return container.get_service(ProfileService)
+async def get_async_tenant_service() -> "TenantService":
+    """Resolve the tenant service from infrastructure providers."""
+    return await resolve_tenant_service()
 
 
-# def get_search_service(
-#     container: Container = Depends(get_container_dependency)
-# ) -> SearchEngine:
-#     """Get search service"""
-#     return container.get_service(SearchEngine)  # Temporarily disabled
+# TODO: Add provider-backed profile/search/document services when implementations are available.
 
+# Compatibility stubs (to be removed once all modules drop legacy imports)
+async def get_async_container():
+    """Legacy shim retained for backward compatibility with provider migration."""
+    raise RuntimeError("Async container has been removed; rely on provider helpers instead.")
 
-# def get_document_service(
-#     container: Container = Depends(get_container_dependency)
-# ) -> DocumentProcessor:
-#     """Get document processing service"""
-#     return container.get_service(DocumentProcessor)  # Temporarily disabled
-
-
-async def get_async_tenant_service():
-    """Get tenant service with transaction management (async)"""
-    from app.services.tenant.tenant_service import TenantService
-    from app.services.adapters.memory_cache_adapter import MemoryCacheService
-    
-    container = await get_async_container()
-    
-    # Get dependencies from AsyncContainer
-    cache_manager = await container.get_service(MemoryCacheService)
-    
-    # Get database manager and ensure transaction manager is initialized
-    db_manager = get_database_manager()
-    
-    # Initialize transaction manager with database manager if not already done
-    tx_manager = initialize_transaction_manager(db_manager)
-    
-    # Create repositories with database manager
-    tenant_repo = TenantRepository()
-    user_repo = UserRepository()
-    
-    # Create and return TenantService (which now includes transaction support)
-    return TenantService(tenant_repo, user_repo, cache_manager)
-
-
-# NotificationService not implemented yet
-# def get_notification_service(
-#     container: Container = Depends(get_container_dependency)
-# ) -> NotificationService:
-#     """Get notification service"""
-#     return container.get_service(NotificationService)
-
-
-def get_cache_manager(
-    container: Container = Depends(get_container_dependency)
-) -> MemoryCacheService:
-    """Get cache manager"""
-    return container.get_service(MemoryCacheService)
+async def get_cache_service_dependency() -> ICacheService:
+    """Resolve the cache service from infrastructure providers."""
+    return await resolve_cache_service()
 
 
 # Database dependencies
@@ -443,13 +387,12 @@ AuthzService = Annotated[AuthorizationService, Depends(get_async_authz_service)]
 # SearchService = Annotated[SearchEngine, Depends(get_search_service)]  # Temporarily disabled
 # DocumentService = Annotated[DocumentProcessor, Depends(get_document_service)]  # Temporarily disabled
 # Import TenantService for type annotation
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.services.tenant.tenant_service import TenantService
 
 TenantServiceDep = Annotated["TenantService", Depends(get_async_tenant_service)]
 # NotificationService = Annotated[NotificationService, Depends(get_notification_service)]  # Not implemented yet
-CacheManager = Annotated[MemoryCacheService, Depends(get_cache_manager)]
+CacheServiceDep = Annotated[ICacheService, Depends(get_cache_service_dependency)]
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 OptionalCurrentUser = Annotated[Optional[CurrentUser], Depends(get_current_user_optional)]
 TenantContextDep = Annotated[TenantContext, Depends(get_tenant_context)]

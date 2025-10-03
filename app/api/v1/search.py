@@ -11,7 +11,7 @@ Advanced CV search endpoints with:
 """
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import List, Optional
 from uuid import UUID
 import structlog
 
@@ -19,32 +19,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from fastapi.responses import JSONResponse
 
 from app.models.search_models import (
-    SearchRequest, SearchResponse, SavedSearch, SearchHistory, 
-    SearchMode, SortOrder, SearchFilter, RangeFilter
+    SearchRequest,
+    SearchResponse,
+    SavedSearch,
+    SortOrder,
+    SearchFilter,
+    RangeFilter,
 )
 from app.models.base import PaginationModel, PaginatedResponse
-from app.services.core.tenant_manager_provider import get_tenant_manager
 from app.core.dependencies import get_current_user, CurrentUserDep, TenantContextDep
 from app.models.auth import CurrentUser, TenantContext
-
-# AI-Powered Search Services
-from app.services.search.vector_search import SearchFilter as VectorSearchFilter
-from app.services.search.hybrid_search import (
-    HybridSearchService, SearchMode as HybridSearchMode, 
-    HybridSearchConfig, FusionMethod
-)
-from app.services.search.result_reranker import (
-    ResultRerankerService, RankingStrategy, RerankingConfig
-)
-from app.services.search.search_analytics import SearchAnalyticsService
-
-# Database and Config
-from app.core.config import get_settings
-from app.services.providers.search_provider import (
-    get_hybrid_search_service,
-    get_result_reranker_service,
-    get_search_analytics_service,
-)
+from app.api.dependencies import SearchServiceDep, map_domain_exception_to_http
+from app.domain.exceptions import DomainException
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/search", tags=["search"])
@@ -54,7 +40,8 @@ router = APIRouter(prefix="/search", tags=["search"])
 async def search_profiles(
     search_request: SearchRequest,
     background_tasks: BackgroundTasks,
-    current_user: CurrentUserDep
+    current_user: CurrentUserDep,
+    search_service: SearchServiceDep
 ) -> SearchResponse:
     """
     Execute comprehensive CV profile search with multi-modal capabilities.
@@ -73,104 +60,25 @@ async def search_profiles(
     - Real-time analytics and performance monitoring
     """
     try:
-        logger.info(
-            "Search request received (authenticated)",
-            tenant_id=str(search_request.tenant_id),
-            user_id=current_user.user_id,
-            query=search_request.query[:100],
-            search_mode=search_request.search_mode
+        return await search_service.execute_search(
+            search_request=search_request,
+            current_user=current_user,
+            schedule_task=background_tasks,
         )
-        
-        # TODO: Apply rate limiting
-        # validate_rate_limit(current_user, "search", limit=100)
-        
-        start_time = datetime.now()
-        search_id = f"search_{start_time.strftime('%Y%m%d_%H%M%S')}_{current_user.user_id[:8]}"
-        
-        # Resolve service instances via providers
-        settings = get_settings()
-        analytics_service: Optional[SearchAnalyticsService] = None
-        hybrid_search_service: Optional[HybridSearchService] = None
-        reranker_service: Optional[ResultRerankerService] = None
-
-        try:
-            analytics_service = await get_search_analytics_service()
-        except Exception as analytics_error:
-            logger.warning(
-                "Analytics service unavailable",
-                error=str(analytics_error)
-            )
-
-        if settings.is_openai_configured():
-            try:
-                hybrid_search_service = await get_hybrid_search_service()
-                reranker_service = await get_result_reranker_service()
-            except Exception as service_error:
-                logger.warning(
-                    "AI search services unavailable",
-                    error=str(service_error)
-                )
-
-        # Execute search based on mode and available services
-        if hybrid_search_service and search_request.search_mode in [SearchMode.HYBRID, SearchMode.VECTOR, SearchMode.SEMANTIC]:
-            # AI-powered search
-            search_response = await _execute_ai_search(
-                search_request=search_request,
-                hybrid_search_service=hybrid_search_service,
-                reranker_service=reranker_service,
-                analytics_service=analytics_service,
-                current_user=current_user,
-                search_id=search_id,
-                start_time=start_time
-            )
-        else:
-            # Fallback to basic search or mock response
-            search_response = await _execute_basic_search(
-                search_request=search_request,
-                current_user=current_user,
-                search_id=search_id,
-                start_time=start_time
-            )
-        
-        # Track search analytics in background
-        if analytics_service:
-            background_tasks.add_task(
-                _track_search_analytics,
-                analytics_service,
-                search_request,
-                search_response,
-                current_user
-            )
-        
-        # Track search usage metrics for tenant
-        background_tasks.add_task(
-            _update_search_usage,
-            str(search_request.tenant_id),
-            1  # One search performed
-        )
-        
-        logger.info(
-            "Search completed successfully",
-            search_id=search_response.search_id,
-            user_id=current_user.user_id,
-            search_mode=search_response.search_mode,
-            results_count=search_response.total_count,
-            duration_ms=search_response.analytics.get("total_search_time_ms", 0)
-        )
-        
-        return search_response
-        
+    except DomainException as domain_exc:
+        # Map domain exceptions to appropriate HTTP responses
+        raise map_domain_exception_to_http(domain_exc)
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Search request failed: {e}")
+    except Exception as exc:  # pragma: no cover - unexpected errors bubble to API layer
+        logger.error("Search request failed", error=str(exc))
         raise HTTPException(
             status_code=500,
             detail={
                 "error": "search_failed",
                 "message": "Search request could not be completed",
-                "details": str(e) if logger.level == "DEBUG" else None
-            }
+                "details": str(exc) if logger.level == "DEBUG" else None,
+            },
         )
 
 
@@ -506,274 +414,3 @@ async def get_available_facets(
             status_code=500,
             detail="Failed to retrieve facet information"
         )
-
-
-# Background task functions
-
-async def _track_search_analytics(
-    search_request: SearchRequest,
-    search_response: SearchResponse, 
-    user_id: str,
-    duration_ms: float
-) -> None:
-    """Track search analytics in background"""
-    try:
-        search_history = SearchHistory(
-            tenant_id=search_request.tenant_id,
-            search_request=search_request,
-            response_summary={
-                "total_count": search_response.total_count,
-                "search_mode": search_response.search_mode,
-                "duration_ms": duration_ms,
-                "high_match_count": search_response.high_match_count
-            },
-            user_id=UUID(user_id),
-            search_duration_ms=int(duration_ms)
-        )
-        
-        # TODO: Store in database
-        # await database.create_search_history(search_history)
-        
-        logger.debug(
-            "Search analytics tracked",
-            search_id=search_response.search_id,
-            duration_ms=duration_ms
-        )
-        
-    except Exception as e:
-        logger.warning(f"Failed to track search analytics: {e}")
-
-
-async def _update_search_usage(tenant_id: str, search_count: int) -> None:
-    """Update tenant search usage metrics"""
-    try:
-        tenant_manager = await get_tenant_manager()
-        await tenant_manager.update_usage_metrics(
-            tenant_id=tenant_id,
-            metrics_update={
-                "searches_today": search_count,
-                "total_searches": search_count
-            }
-        )
-        
-        logger.debug("Updated tenant search usage", tenant_id=tenant_id)
-        
-    except Exception as e:
-        logger.warning(f"Failed to update search usage: {e}")
-
-
-async def _execute_ai_search(
-    search_request: SearchRequest,
-    hybrid_search_service: HybridSearchService,
-    reranker_service: Optional[ResultRerankerService],
-    analytics_service: Optional[SearchAnalyticsService],
-    current_user: CurrentUser,
-    search_id: str,
-    start_time: datetime
-) -> SearchResponse:
-    """Execute AI-powered search with hybrid search and reranking"""
-    
-    try:
-        # Convert search request to hybrid search parameters
-        search_mode_mapping = {
-            SearchMode.VECTOR: HybridSearchMode.VECTOR_ONLY,
-            SearchMode.HYBRID: HybridSearchMode.HYBRID,
-            SearchMode.SEMANTIC: HybridSearchMode.ADAPTIVE,
-            SearchMode.KEYWORD: HybridSearchMode.TEXT_ONLY
-        }
-        
-        hybrid_mode = search_mode_mapping.get(search_request.search_mode, HybridSearchMode.HYBRID)
-        
-        # Create search filter from request
-        search_filter = None
-        if search_request.filters:
-            search_filter = VectorSearchFilter(
-                entity_types=["profile", "job"],  # Adjust based on your needs
-                tenant_ids=[str(current_user.tenant_id)] if current_user.tenant_id else None
-            )
-        
-        # Configure hybrid search
-        search_config = HybridSearchConfig(
-            text_weight=0.4,
-            vector_weight=0.6,
-            fusion_method=FusionMethod.WEIGHTED_AVERAGE,
-            enable_query_expansion=True,
-            enable_result_diversification=True
-        )
-        
-        # Execute hybrid search
-        hybrid_response = await hybrid_search_service.hybrid_search(
-            query=search_request.query,
-            tenant_id=str(current_user.tenant_id) if current_user.tenant_id else None,
-            limit=search_request.limit or 20,
-            search_mode=hybrid_mode,
-            config=search_config,
-            search_filter=search_filter,
-            use_cache=True,
-            include_explanations=False
-        )
-        
-        # Apply reranking if enabled and service available
-        final_results = hybrid_response.results
-        reranking_time_ms = 0
-        
-        if reranker_service and len(hybrid_response.results) > 0:
-            rerank_start = datetime.now()
-            
-            reranking_config = RerankingConfig(
-                strategy=RankingStrategy.HYBRID_INTELLIGENT,
-                max_results_to_rerank=min(50, len(hybrid_response.results)),
-                enable_explanations=False
-            )
-            
-            # Convert HybridSearchResults to format expected by reranker
-            hybrid_results_for_reranking = []
-            for result in hybrid_response.results:
-                # This is a simplified conversion - you may need to adjust based on actual data structures
-                hybrid_results_for_reranking.append(result)
-            
-            reranking_response = await reranker_service.rerank_results(
-                query=search_request.query,
-                results=hybrid_results_for_reranking,
-                tenant_id=str(current_user.tenant_id) if current_user.tenant_id else None,
-                config=reranking_config
-            )
-            
-            reranking_time_ms = int((datetime.now() - rerank_start).total_seconds() * 1000)
-            # Use reranked results if available
-            if reranking_response.results:
-                final_results = reranking_response.results
-        
-        # Calculate total search time
-        total_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-        
-        # Convert results to SearchResponse format
-        search_results = []
-        for result in final_results:
-            # Convert hybrid/reranked results to SearchResponse result format
-            # This is a simplified conversion - adjust based on your actual models
-            search_result = {
-                "id": result.entity_id,
-                "type": result.entity_type,
-                "score": getattr(result, 'reranked_score', getattr(result, 'final_score', 0)),
-                "title": result.metadata.get("title", "Untitled") if result.metadata else "Untitled",
-                "summary": result.content_preview or "No preview available",
-                "metadata": result.metadata or {}
-            }
-            search_results.append(search_result)
-        
-        # Create analytics data
-        analytics = {
-            "total_search_time_ms": total_time_ms,
-            "query_expansion_time_ms": 0,  # This would come from query processor
-            "vector_search_time_ms": hybrid_response.search_time_ms - hybrid_response.fusion_time_ms,
-            "text_search_time_ms": 0,  # This would come from text search component
-            "fusion_time_ms": hybrid_response.fusion_time_ms,
-            "reranking_time_ms": reranking_time_ms,
-            "cache_hit": hybrid_response.cache_hit,
-            "search_strategy": hybrid_mode.value,
-            "results_before_reranking": len(hybrid_response.results),
-            "results_after_reranking": len(final_results)
-        }
-        
-        return SearchResponse(
-            search_id=search_id,
-            query=search_request.query,
-            search_mode=search_request.search_mode,
-            results=search_results,
-            total_count=len(search_results),
-            high_match_count=len([r for r in search_results if r["score"] > 0.8]),
-            analytics=analytics
-        )
-        
-    except Exception as e:
-        logger.error(f"AI search execution failed: {e}")
-        # Fallback to basic search on AI failure
-        return await _execute_basic_search(
-            search_request=search_request,
-            current_user=current_user,
-            search_id=search_id,
-            start_time=start_time
-        )
-
-
-async def _execute_basic_search(
-    search_request: SearchRequest,
-    current_user: CurrentUser,
-    search_id: str,
-    start_time: datetime
-) -> SearchResponse:
-    """Execute basic/fallback search when AI services are not available"""
-    
-    total_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-    
-    # Basic mock response for fallback
-    search_response = SearchResponse(
-        search_id=search_id,
-        query=search_request.query,
-        search_mode=search_request.search_mode,
-        results=[],
-        total_count=0,
-        high_match_count=0,
-        analytics={
-            "total_search_time_ms": total_time_ms,
-            "query_expansion_time_ms": 0,
-            "vector_search_time_ms": 0,
-            "reranking_time_ms": 0,
-            "fallback_mode": True,
-            "reason": "AI services not configured or unavailable"
-        }
-    )
-    
-    return search_response
-
-
-async def _track_search_analytics(
-    analytics_service: SearchAnalyticsService,
-    search_request: SearchRequest,
-    search_response: SearchResponse,
-    current_user: CurrentUser
-) -> None:
-    """Track search analytics in background task"""
-    
-    try:
-        # Prepare search event data
-        search_data = {
-            "search_id": search_response.search_id,
-            "query": search_request.query,
-            "search_mode": search_request.search_mode.value,
-            "results_count": search_response.total_count,
-            "high_match_count": search_response.high_match_count,
-            "search_duration_ms": search_response.analytics.get("total_search_time_ms", 0),
-            "vector_search_duration_ms": search_response.analytics.get("vector_search_time_ms", 0),
-            "reranking_duration_ms": search_response.analytics.get("reranking_time_ms", 0),
-            "cache_hit": search_response.analytics.get("cache_hit", False),
-            "filters_applied": search_request.filters is not None
-        }
-        
-        # Track search event
-        await analytics_service.track_search_event(
-            event_type="search_executed",
-            search_data=search_data,
-            tenant_id=str(current_user.tenant_id) if current_user.tenant_id else None,
-            user_id=current_user.user_id
-        )
-        
-    except Exception as e:
-        logger.warning(f"Failed to track search analytics: {e}")
-
-
-async def _update_saved_search_last_run(search_id: str, result_count: int) -> None:
-    """Update saved search last run statistics"""
-    try:
-        # TODO: Update saved search record
-        # await database.update_saved_search_stats(
-        #     search_id=search_id,
-        #     last_run=datetime.now(),
-        #     last_result_count=result_count
-        # )
-        
-        logger.debug("Updated saved search stats", search_id=search_id)
-        
-    except Exception as e:
-        logger.warning(f"Failed to update saved search stats: {e}")
