@@ -83,12 +83,67 @@ class ConfigurationError(DomainException):
 
 class RateLimitExceededError(DomainException):
     """Raised when rate limits are exceeded."""
-    pass
+    
+    def __init__(
+        self,
+        limit_type: str,
+        limit_value: int,
+        time_window: str,
+        retry_after: int = None,
+        identifier: str = None
+    ):
+        self.limit_type = limit_type
+        self.limit_value = limit_value
+        self.time_window = time_window
+        self.retry_after = retry_after
+        self.identifier = identifier
+        
+        message = f"Rate limit exceeded: {limit_value} requests per {time_window}"
+        if identifier:
+            message += f" for {identifier}"
+        if retry_after:
+            message += f". Retry after {retry_after} seconds"
+            
+        super().__init__(message)
 
 
 class ConcurrencyError(DomainException):
     """Raised when concurrent operations conflict."""
     pass
+
+
+class WebhookValidationError(ValidationError):
+    """Raised when webhook URL validation fails."""
+    pass
+
+
+class FileSizeExceededError(ValidationError):
+    """Raised when uploaded file exceeds size limits."""
+    
+    def __init__(self, actual_size: int, max_size: int, filename: str = None):
+        self.actual_size = actual_size
+        self.max_size = max_size
+        self.filename = filename
+        
+        size_mb = actual_size / (1024 * 1024)
+        max_mb = max_size / (1024 * 1024)
+        
+        filename_str = f" '{filename}'" if filename else ""
+        message = f"File{filename_str} size {size_mb:.2f}MB exceeds maximum allowed size of {max_mb:.2f}MB"
+        super().__init__(message)
+
+
+class InvalidFileError(ValidationError):
+    """Raised when uploaded file is invalid or corrupted."""
+    
+    def __init__(self, filename: str = None, reason: str = None):
+        self.filename = filename
+        self.reason = reason
+        
+        filename_str = f" '{filename}'" if filename else ""
+        reason_str = f": {reason}" if reason else ""
+        message = f"Invalid file{filename_str}{reason_str}"
+        super().__init__(message)
 
 
 __all__ = [
@@ -108,5 +163,8 @@ __all__ = [
     "EmbeddingGenerationError",
     "ConfigurationError",
     "RateLimitExceededError",
-    "ConcurrencyError"
+    "ConcurrencyError",
+    "WebhookValidationError",
+    "FileSizeExceededError",
+    "InvalidFileError"
 ]

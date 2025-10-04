@@ -10,6 +10,8 @@ from .notification import Notification, NotificationCreate, NotificationUpdate
 from .analytics import Usage, UsageEvent
 from .job import Job, JobCreate, JobUpdate, JobStatus
 from .embedding import EmbeddingTable
+from .retry_models import RetryStateModel, RetryAttemptModel, DeadLetterModel, RetryPolicyTemplate
+from .webhook import WebhookEndpointTable, WebhookDeliveryTable, WebhookDeadLetterTable
 
 __all__ = [
     # Base models
@@ -63,4 +65,15 @@ __all__ = [
     
     # Vector embedding models
     "EmbeddingTable",
+    
+    # Retry system models
+    "RetryStateModel",
+    "RetryAttemptModel",
+    "DeadLetterModel", 
+    "RetryPolicyTemplate",
+    
+    # Webhook system models
+    "WebhookEndpointTable",
+    "WebhookDeliveryTable",
+    "WebhookDeadLetterTable",
 ]

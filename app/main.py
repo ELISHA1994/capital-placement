@@ -12,6 +12,7 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import get_settings
 from app.core.environment import log_environment_info
@@ -54,6 +55,16 @@ from app.infrastructure.providers.postgres_provider import (
     reset_postgres_adapter,
 )
 from app.infrastructure.providers.search_provider import reset_search_services
+from app.infrastructure.providers.resource_provider import (
+    get_file_resource_service,
+    get_periodic_cleanup_service,
+    shutdown_resource_services,
+)
+from app.infrastructure.providers.rate_limit_provider import (
+    get_rate_limit_service,
+    reset_rate_limit_service,
+)
+from app.infrastructure.task_manager import get_task_manager, shutdown_task_manager
 from app.middleware import DefaultUsageTrackingMiddleware
 
 # Configure structured logging
@@ -120,14 +131,34 @@ async def lifespan(app: FastAPI):
         cache_service = await get_cache_service()
         ai_service = await get_openai_service()
         
+        # Initialize resource management services
+        file_resource_service = await get_file_resource_service()
+        periodic_cleanup_service = await get_periodic_cleanup_service()
+        
+        # Initialize rate limiting service (for health checks and dependency setup)
+        rate_limit_service = await get_rate_limit_service()
+        
+        # Setup async-dependent middleware now that services are initialized
+        await setup_async_middleware(app, get_settings())
+        
+        # Initialize task manager
+        task_manager = get_task_manager()
+        
         # Check health
         cache_health = await cache_service.check_health()
         ai_health = await ai_service.check_health()
+        resource_health = await file_resource_service.check_health()
+        cleanup_status = await periodic_cleanup_service.get_cleanup_status()
+        rate_limit_health = await rate_limit_service.check_health()
 
         logger.info("All services initialized successfully",
                    cache_status=cache_health["status"],
                    ai_status=ai_health["status"],
-                   auth_services="initialized")
+                   resource_status=resource_health["status"],
+                   cleanup_status=cleanup_status["status"],
+                   rate_limit_status=rate_limit_health["status"],
+                   auth_services="initialized",
+                   task_manager="initialized")
         
     except Exception as e:
         logger.error("Failed to initialize services", error=str(e))
@@ -140,7 +171,15 @@ async def lifespan(app: FastAPI):
     # Cleanup
     logger.info("Shutting down CV Matching Backend API")
     try:
-        # Shutdown transaction manager first (rollback any active transactions)
+        # Shutdown task manager first (cancel all active tasks)
+        await shutdown_task_manager()
+        logger.info("Task manager shutdown completed")
+        
+        # Shutdown resource management services
+        await shutdown_resource_services()
+        logger.info("Resource management services shutdown completed")
+        
+        # Shutdown transaction manager (rollback any active transactions)
         from app.core.transaction_manager import shutdown_transaction_manager
         await shutdown_transaction_manager()
         logger.info("Transaction manager shutdown completed")
@@ -164,6 +203,7 @@ async def lifespan(app: FastAPI):
         await reset_database_service()
         await reset_analytics_service()
         await reset_postgres_adapter()
+        await reset_rate_limit_service()
         
         # Cleanup service factory
         factory = get_service_factory()
@@ -188,8 +228,8 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     
-    # Add middleware
-    setup_middleware(app, settings)
+    # Add basic middleware that doesn't require async initialization
+    setup_basic_middleware(app, settings)
     
     # Include API routes
     app.include_router(api_router)
@@ -302,7 +342,7 @@ def create_app() -> FastAPI:
                 "error": str(e),
                 "timestamp": datetime.utcnow().isoformat() + "Z"
             }
-    
+
     # API root
     @app.get("/")
     async def root():
@@ -316,8 +356,15 @@ def create_app() -> FastAPI:
     return app
 
 
-def setup_middleware(app: FastAPI, settings) -> None:
-    """Setup application middleware"""
+
+
+def setup_basic_middleware(app: FastAPI, settings) -> None:
+    """Setup all middleware during app creation"""
+    
+    # Rate limiting middleware (first to protect against DDoS)
+    # Using lazy initialization to handle async dependencies
+    from app.middleware import LazyRateLimitMiddleware
+    app.add_middleware(LazyRateLimitMiddleware, settings=settings)
     
     # Usage tracking middleware (before CORS to capture all requests)
     app.add_middleware(DefaultUsageTrackingMiddleware)
@@ -331,6 +378,24 @@ def setup_middleware(app: FastAPI, settings) -> None:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    
+    logger.info("All middleware configured successfully (rate limiting will initialize on first request)")
+
+
+async def setup_async_middleware(app: FastAPI, settings) -> None:
+    """Validate that async services are ready (middleware already configured)"""
+    
+    try:
+        # Just validate that the rate limiting service can be initialized
+        rate_limit_service = await get_rate_limit_service()
+        rate_limit_health = await rate_limit_service.check_health()
+        
+        logger.info("Rate limiting service pre-validation successful", 
+                   status=rate_limit_health["status"])
+        
+    except Exception as e:
+        logger.error("Rate limiting service pre-validation failed", error=str(e))
+        # The LazyRateLimitMiddleware will handle initialization failures gracefully
 
 
 # Create app instance

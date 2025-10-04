@@ -13,6 +13,9 @@ from app.models.auth import UserTable, UserSessionTable, APIKeyTable
 from app.models.profile import ProfileTable
 from app.models.embedding import EmbeddingTable
 from app.models.tenant_models import TenantTable
+from app.models.audit import AuditLogTable
+from app.models.retry_models import RetryStateModel, RetryAttemptModel, DeadLetterModel, RetryPolicyTemplate
+from app.models.webhook import WebhookEndpointTable, WebhookDeliveryTable, WebhookDeadLetterTable
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

@@ -48,6 +48,7 @@ class ProcessingStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     PARTIAL = "partial"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -81,6 +82,12 @@ class ProcessingMetadata:
         """Mark processing as failed with error details."""
         self.status = ProcessingStatus.FAILED
         self.error_message = error_message
+        self.last_processed = datetime.utcnow()
+
+    def mark_processing_cancelled(self, reason: Optional[str] = None) -> None:
+        """Mark processing as cancelled."""
+        self.status = ProcessingStatus.CANCELLED
+        self.error_message = reason or "Processing cancelled by user"
         self.last_processed = datetime.utcnow()
 
 

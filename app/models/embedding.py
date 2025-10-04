@@ -12,17 +12,8 @@ from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlmodel import Field, Relationship
 from pgvector.sqlalchemy import Vector
 
-from app.models.base import VectorModel, TenantModel
+from app.models.base import VectorModel, TenantModel, create_tenant_id_column
 
-
-def create_tenant_id_column():
-    """Create a unique tenant_id Column instance for each table."""
-    return Column(
-        PostgreSQLUUID(as_uuid=True),
-        ForeignKey("tenants.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
-    )
 
 
 class EmbeddingTable(VectorModel, TenantModel, table=True):

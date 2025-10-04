@@ -5,7 +5,7 @@ This module provides SQLModel-based authentication models with database persiste
 while preserving all original Pydantic functionality and validation.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Union
 from uuid import UUID, uuid4
 
@@ -15,17 +15,7 @@ from sqlalchemy.sql import func
 from sqlmodel import Field, SQLModel, Relationship
 from pydantic import field_validator
 
-from .base import AuditableModel, BaseModel, TenantModel
-
-
-def create_tenant_id_column():
-    """Create a unique tenant_id Column instance for each table."""
-    return Column(
-        PostgreSQLUUID(as_uuid=True),
-        ForeignKey("tenants.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
-    )
+from .base import AuditableModel, BaseModel, TenantModel, create_tenant_id_column
 
 
 # Validation and data models (non-table models)
@@ -174,33 +164,33 @@ class UserTable(TenantModel, table=True):
     
     def update_login(self) -> None:
         """Update login tracking information."""
-        self.last_login_at = datetime.utcnow()
+        self.last_login_at = datetime.now(timezone.utc)
         self.failed_login_attempts = 0  # Reset on successful login
         self.locked_until = None
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
     
     def increment_failed_login(self) -> None:
         """Increment failed login attempts."""
         self.failed_login_attempts += 1
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
     
     def lock_account(self, until: datetime) -> None:
         """Lock account until specified time."""
         self.locked_until = until
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
     
     def unlock_account(self) -> None:
         """Unlock account and reset failed attempts."""
         self.locked_until = None
         self.failed_login_attempts = 0
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
     
     @property
     def is_locked(self) -> bool:
         """Check if account is currently locked."""
         if self.locked_until is None:
             return False
-        return datetime.utcnow() < self.locked_until
+        return datetime.now(timezone.utc) < self.locked_until
 
 
 class UserSessionTable(AuditableModel, table=True):
@@ -265,12 +255,20 @@ class UserSessionTable(AuditableModel, table=True):
     @property
     def is_expired(self) -> bool:
         """Check if session is expired."""
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
     
     def extend_session(self, additional_seconds: int = 3600) -> None:
         """Extend session expiration time."""
-        self.expires_at = datetime.utcnow() + datetime.timedelta(seconds=additional_seconds)
-        self.last_activity = datetime.utcnow()
+        now = datetime.now(timezone.utc)
+        base_expiry = now
+        if self.expires_at:
+            current_expiry = self.expires_at
+            if current_expiry.tzinfo is None:
+                current_expiry = current_expiry.replace(tzinfo=timezone.utc)
+            if current_expiry > now:
+                base_expiry = current_expiry
+        self.expires_at = base_expiry + timedelta(seconds=additional_seconds)
+        self.last_activity = now
         self.update_timestamp()
 
 
@@ -337,7 +335,7 @@ class APIKeyTable(AuditableModel, table=True):
     def record_usage(self) -> None:
         """Record API key usage."""
         self.usage_count += 1
-        self.last_used_at = datetime.utcnow()
+        self.last_used_at = datetime.now(timezone.utc)
         self.update_timestamp()
     
     @property
@@ -345,7 +343,7 @@ class APIKeyTable(AuditableModel, table=True):
         """Check if API key is expired."""
         if self.expires_at is None:
             return False
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
     
     def has_permission(self, permission: str) -> bool:
         """Check if API key has specific permission."""
@@ -356,7 +354,7 @@ class APIKeyTable(AuditableModel, table=True):
 class UserCreate(BaseModel):
     """User creation request model."""
     email: str = Field(..., description="Email address")
-    password: str = Field(..., min_length=8, description="Password")
+    password: str = Field(..., description="Password")
     full_name: str = Field(..., description="Full name")
     tenant_id: str = Field(..., description="Tenant ID for multi-tenant isolation")
     username: Optional[str] = Field(None, description="Username (optional)")
@@ -589,7 +587,7 @@ class AuditLog(BaseModel):
     details: Dict[str, Any] = Field(default_factory=dict, description="Additional details")
     ip_address: str = Field(..., description="Client IP address")
     user_agent: str = Field(..., description="Client user agent")
-    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     
     # Risk assessment
     risk_level: str = Field("low", description="Risk level: low, medium, high")

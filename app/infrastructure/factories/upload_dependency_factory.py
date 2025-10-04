@@ -23,6 +23,8 @@ from app.services.core.tenant_manager_provider import get_tenant_manager
 from app.infrastructure.adapters.event_publisher_adapter import EventPublisherAdapter
 from app.infrastructure.adapters.storage_adapter import StorageAdapter
 from app.infrastructure.adapters.notification_adapter import NotificationAdapter
+from app.infrastructure.providers.validation_provider import get_webhook_validator
+from app.infrastructure.providers.validation_provider import get_file_content_validator
 
 
 class UploadDependencyFactory(IUploadDependencyFactory):
@@ -53,6 +55,10 @@ class UploadDependencyFactory(IUploadDependencyFactory):
         # Event publisher
         event_publisher = EventPublisherAdapter()
         
+        # Validation services
+        webhook_validator = await get_webhook_validator()
+        file_content_validator = await get_file_content_validator()
+        
         # Wrap document processor to use PDFProcessor
         document_processor = DocumentProcessorAdapter(
             pdf_processor=pdf_processor,
@@ -76,7 +82,11 @@ class UploadDependencyFactory(IUploadDependencyFactory):
             notification_service=notification_service,
             tenant_manager=tenant_manager,
             database_adapter=database_adapter,
-            event_publisher=event_publisher
+            event_publisher=event_publisher,
+            
+            # Validation services
+            webhook_validator=webhook_validator,
+            file_content_validator=file_content_validator
         )
 
 

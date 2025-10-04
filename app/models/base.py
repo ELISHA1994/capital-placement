@@ -10,8 +10,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, TypeVar, Union, ClassVar
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, DateTime, String, Boolean, Integer, text
-from sqlalchemy.dialects.postgresql import JSONB, ARRAY
+from sqlalchemy import Column, DateTime, String, Boolean, Integer, text, ForeignKey
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY, UUID as PostgreSQLUUID
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import declared_attr
 from sqlalchemy.sql import func
@@ -60,6 +60,9 @@ class TimestampedModel(BaseModel):
     
     Preserves the original functionality while adding database-level
     automatic timestamp handling with PostgreSQL functions.
+    
+    Note: Table models must define their own sa_column for these fields
+    to avoid SQLAlchemy column conflicts in inheritance.
     """
     
     created_at: datetime = Field(
@@ -83,6 +86,9 @@ class TenantModel(TimestampedModel):
     
     Preserves multi-tenant architecture with database-level UUID support,
     automatic tenant validation, and proper indexing for performance.
+    
+    Note: Table models must define their own sa_column for the id field
+    to avoid SQLAlchemy column conflicts in inheritance.
     """
     
     id: UUID = Field(
@@ -101,12 +107,25 @@ class TenantModel(TimestampedModel):
         return v
 
 
+def create_tenant_id_column():
+    """Create a unique tenant_id Column instance for tenant-aware tables."""
+    return Column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+
 class SoftDeleteModel(TenantModel):
     """
     Model with soft delete functionality.
     
     Preserves all original soft delete patterns with database-level support
     and proper indexing for performance.
+    
+    Note: Table models must define their own sa_column for these fields
+    to avoid SQLAlchemy column conflicts in inheritance.
     """
     
     is_deleted: bool = Field(
@@ -145,6 +164,9 @@ class AuditableModel(SoftDeleteModel):
     
     Preserves the original audit functionality with database-level
     version management and user tracking for complete audit trails.
+    
+    Note: Table models must define their own sa_column for these fields
+    to avoid SQLAlchemy column conflicts in inheritance.
     """
     
     created_by: Optional[UUID] = Field(
@@ -175,6 +197,9 @@ class MetadataModel(BaseModel):
     
     Preserves the original metadata functionality with optimized
     PostgreSQL JSONB storage and indexing capabilities.
+    
+    Note: Table models must define their own sa_column for these fields
+    to avoid SQLAlchemy column conflicts in inheritance.
     """
     
     extra_metadata: Dict[str, Any] = Field(
@@ -213,6 +238,9 @@ class VectorModel(BaseModel):
     
     New addition for vector similarity search capabilities that integrates
     with the existing pgvector infrastructure while providing type safety.
+    
+    Note: Table models must define their own sa_column for these fields
+    to avoid SQLAlchemy column conflicts in inheritance.
     """
     
     entity_id: UUID = Field(

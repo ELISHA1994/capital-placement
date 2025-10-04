@@ -12,9 +12,15 @@ from .usage_tracking import (
     DefaultUsageTrackingMiddleware,
     create_usage_tracking_middleware
 )
+from .rate_limit_middleware import (
+    RateLimitMiddleware,
+    LazyRateLimitMiddleware
+)
 
 __all__ = [
     "UsageTrackingMiddleware",
     "DefaultUsageTrackingMiddleware", 
-    "create_usage_tracking_middleware"
+    "create_usage_tracking_middleware",
+    "RateLimitMiddleware",
+    "LazyRateLimitMiddleware"
 ]

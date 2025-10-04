@@ -44,7 +44,9 @@ class PasswordManager:
         errors = []
         
         if len(password) < self.settings.PASSWORD_MIN_LENGTH:
-            errors.append(f"Password must be at least {self.settings.PASSWORD_MIN_LENGTH} characters long")
+            errors.append(
+                f"Password length must be at least {self.settings.PASSWORD_MIN_LENGTH} characters"
+            )
         
         if not any(c.isupper() for c in password):
             errors.append("Password must contain at least one uppercase letter")

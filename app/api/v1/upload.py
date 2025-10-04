@@ -31,6 +31,7 @@ from app.models.upload_models import (
     ProcessingStatusResponse,
 )
 from app.api.dependencies import UploadServiceDep, map_domain_exception_to_http
+from app.api.rate_limit import UploadRateLimitDep
 from app.domain.exceptions import DomainException
 
 # Core Services
@@ -49,6 +50,7 @@ async def upload_cv_document(
     auto_process: bool = Form(True, description="Automatically start processing"),
     extract_embeddings: bool = Form(True, description="Generate embeddings for search"),
     processing_priority: str = Form("normal", description="Processing priority (low, normal, high)"),
+    _rate_limit_check: None = UploadRateLimitDep,
 ) -> UploadResponse:
     """
     Upload a single CV document for processing.
@@ -102,6 +104,7 @@ async def upload_cv_documents_batch(
     auto_process: bool = Form(True, description="Automatically start processing all files"),
     extract_embeddings: bool = Form(True, description="Generate embeddings for search"),
     max_concurrent: int = Form(3, ge=1, le=10, description="Maximum concurrent processing jobs"),
+    _rate_limit_check: None = UploadRateLimitDep,
 ) -> BatchUploadResponse:
     """
     Upload multiple CV documents in batch for efficient processing.
@@ -248,6 +251,7 @@ async def cancel_processing(
         payload = await upload_service.cancel_processing(
             upload_id=upload_id,
             user_id=current_user.user_id,
+            tenant_id=str(current_user.tenant_id),
         )
         return JSONResponse(content=payload)
         
@@ -257,6 +261,37 @@ async def cancel_processing(
     except Exception as exc:  # pragma: no cover
         logger.error("Failed to cancel processing", error=str(exc))
         raise HTTPException(status_code=500, detail="Failed to cancel processing")
+
+
+@router.delete("/batch/{batch_id}")
+async def cancel_batch_processing(
+    batch_id: str,
+    current_user: CurrentUserDep,
+    upload_service: UploadServiceDep
+) -> JSONResponse:
+    """
+    Cancel all processing jobs in a batch upload.
+    
+    This will attempt to cancel all individual upload processing tasks
+    within the specified batch. Returns detailed results showing which
+    tasks were successfully cancelled and which failed.
+    
+    Note: Only pending and processing jobs can be cancelled.
+    """
+    try:
+        payload = await upload_service.cancel_batch_processing(
+            batch_id=batch_id,
+            user_id=current_user.user_id,
+            tenant_id=str(current_user.tenant_id),
+        )
+        return JSONResponse(content=payload)
+        
+    except DomainException as domain_exc:
+        # Map domain exceptions to appropriate HTTP responses
+        raise map_domain_exception_to_http(domain_exc)
+    except Exception as exc:  # pragma: no cover
+        logger.error("Failed to cancel batch processing", error=str(exc))
+        raise HTTPException(status_code=500, detail="Failed to cancel batch processing")
 
 
 @router.get("/history", response_model=PaginatedResponse)

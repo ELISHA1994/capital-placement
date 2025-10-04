@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Any, BinaryIO, Dict, List, Optional, Union
+from enum import Enum
 
 
 class IHealthCheck:
@@ -654,6 +655,1515 @@ class IUsageService(IHealthCheck, ABC):
         pass
 
 
+class IWebhookValidator(ABC):
+    """Webhook URL validation service interface."""
+
+    @abstractmethod
+    def validate_webhook_url(self, url: str) -> None:
+        """
+        Validate webhook URL against security policies.
+        
+        Raises WebhookValidationError if URL is invalid or poses security risks.
+        
+        Args:
+            url: The webhook URL to validate
+            
+        Raises:
+            WebhookValidationError: If URL validation fails
+        """
+        pass
+
+    @abstractmethod
+    def is_allowed_scheme(self, scheme: str) -> bool:
+        """Check if URL scheme is allowed."""
+        pass
+
+    @abstractmethod  
+    def is_blocked_host(self, host: str) -> bool:
+        """Check if host/domain is blocked."""
+        pass
+
+    @abstractmethod
+    def is_private_ip(self, ip: str) -> bool:
+        """Check if IP address is private/internal."""
+        pass
+
+
+class IAuditService(IHealthCheck, ABC):
+    """
+    Audit logging service interface for security compliance and tamper-resistant logging.
+    
+    Provides comprehensive audit logging capabilities with tamper resistance,
+    compliance reporting, and security event tracking.
+    """
+
+    @abstractmethod
+    async def log_event(
+        self,
+        event_type: str,
+        tenant_id: str,
+        action: str,
+        resource_type: str,
+        *,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        session_id: Optional[str] = None,
+        api_key_id: Optional[str] = None,
+        resource_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+        ip_address: str = "unknown",
+        user_agent: str = "unknown",
+        risk_level: str = "low",
+        suspicious: bool = False,
+        correlation_id: Optional[str] = None,
+        batch_id: Optional[str] = None,
+        error_code: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ) -> str:
+        """
+        Log an audit event with comprehensive details.
+        
+        Args:
+            event_type: Type of audit event (from AuditEventType enum)
+            tenant_id: Tenant identifier
+            action: Specific action performed
+            resource_type: Type of resource affected
+            user_id: User who performed the action (optional)
+            user_email: Email of user who performed the action (optional)
+            session_id: Session identifier (optional)
+            api_key_id: API key used (optional)
+            resource_id: Identifier of affected resource (optional)
+            details: Additional event details (optional)
+            ip_address: Client IP address
+            user_agent: Client user agent string
+            risk_level: Risk level (low, medium, high, critical)
+            suspicious: Whether event is flagged as suspicious
+            correlation_id: ID for correlating related events (optional)
+            batch_id: Batch identifier for grouped operations (optional)
+            error_code: Error code if operation failed (optional)
+            error_message: Error message if operation failed (optional)
+            
+        Returns:
+            Audit log entry ID
+            
+        Raises:
+            AuditServiceError: If audit logging fails
+        """
+        pass
+
+    @abstractmethod
+    async def log_authentication_event(
+        self,
+        event_type: str,
+        tenant_id: str,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        session_id: Optional[str] = None,
+        ip_address: str = "unknown",
+        user_agent: str = "unknown",
+        success: bool = True,
+        failure_reason: Optional[str] = None,
+        additional_details: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Log authentication-specific events with standardized details.
+        
+        Args:
+            event_type: Authentication event type
+            tenant_id: Tenant identifier
+            user_id: User identifier (optional)
+            user_email: User email (optional)
+            session_id: Session identifier (optional)
+            ip_address: Client IP address
+            user_agent: Client user agent
+            success: Whether authentication was successful
+            failure_reason: Reason for failure (if applicable)
+            additional_details: Additional event details
+            
+        Returns:
+            Audit log entry ID
+        """
+        pass
+
+    @abstractmethod
+    async def log_file_upload_event(
+        self,
+        event_type: str,
+        tenant_id: str,
+        user_id: str,
+        filename: str,
+        file_size: int,
+        upload_id: str,
+        *,
+        session_id: Optional[str] = None,
+        ip_address: str = "unknown",
+        user_agent: str = "unknown",
+        validation_errors: Optional[List[str]] = None,
+        security_warnings: Optional[List[str]] = None,
+        processing_duration_ms: Optional[int] = None,
+        batch_id: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ) -> str:
+        """
+        Log file upload and processing events with file-specific details.
+        
+        Args:
+            event_type: Upload event type
+            tenant_id: Tenant identifier
+            user_id: User who uploaded the file
+            filename: Name of uploaded file
+            file_size: Size of uploaded file in bytes
+            upload_id: Unique upload identifier
+            session_id: Session identifier (optional)
+            ip_address: Client IP address
+            user_agent: Client user agent
+            validation_errors: File validation errors (optional)
+            security_warnings: Security warnings detected (optional)
+            processing_duration_ms: Processing time in milliseconds (optional)
+            batch_id: Batch identifier for batch uploads (optional)
+            error_message: Error message if upload failed (optional)
+            
+        Returns:
+            Audit log entry ID
+        """
+        pass
+
+    @abstractmethod
+    async def log_security_event(
+        self,
+        event_type: str,
+        tenant_id: str,
+        threat_type: str,
+        severity: str,
+        *,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        resource_id: Optional[str] = None,
+        ip_address: str = "unknown",
+        user_agent: str = "unknown",
+        threat_details: Optional[Dict[str, Any]] = None,
+        mitigation_actions: Optional[List[str]] = None,
+    ) -> str:
+        """
+        Log security-related events with threat analysis details.
+        
+        Args:
+            event_type: Security event type
+            tenant_id: Tenant identifier
+            threat_type: Type of security threat detected
+            severity: Severity level of the threat
+            user_id: User involved (optional)
+            session_id: Session identifier (optional)
+            resource_id: Affected resource (optional)
+            ip_address: Client IP address
+            user_agent: Client user agent
+            threat_details: Detailed threat information (optional)
+            mitigation_actions: Actions taken to mitigate threat (optional)
+            
+        Returns:
+            Audit log entry ID
+        """
+        pass
+
+    @abstractmethod
+    async def query_audit_logs(
+        self,
+        tenant_id: str,
+        *,
+        user_id: Optional[str] = None,
+        event_types: Optional[List[str]] = None,
+        resource_type: Optional[str] = None,
+        resource_id: Optional[str] = None,
+        risk_level: Optional[str] = None,
+        suspicious_only: bool = False,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        correlation_id: Optional[str] = None,
+        batch_id: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> Dict[str, Any]:
+        """
+        Query audit logs with filtering and pagination.
+        
+        Args:
+            tenant_id: Tenant identifier
+            user_id: Filter by user ID (optional)
+            event_types: Filter by event types (optional)
+            resource_type: Filter by resource type (optional)
+            resource_id: Filter by resource ID (optional)
+            risk_level: Filter by risk level (optional)
+            suspicious_only: Show only suspicious events
+            start_time: Start time filter (optional)
+            end_time: End time filter (optional)
+            correlation_id: Filter by correlation ID (optional)
+            batch_id: Filter by batch ID (optional)
+            ip_address: Filter by IP address (optional)
+            page: Page number for pagination
+            size: Page size for pagination
+            
+        Returns:
+            Dictionary containing audit logs and pagination info
+        """
+        pass
+
+    @abstractmethod
+    async def get_audit_statistics(
+        self,
+        tenant_id: str,
+        *,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get audit log statistics for compliance reporting.
+        
+        Args:
+            tenant_id: Tenant identifier
+            start_time: Start time for statistics (optional)
+            end_time: End time for statistics (optional)
+            
+        Returns:
+            Dictionary containing audit statistics
+        """
+        pass
+
+    @abstractmethod
+    async def verify_log_integrity(
+        self,
+        tenant_id: str,
+        log_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Verify the integrity of a specific audit log entry.
+        
+        Args:
+            tenant_id: Tenant identifier
+            log_id: Audit log entry ID
+            
+        Returns:
+            Dictionary containing integrity verification results
+        """
+        pass
+
+    @abstractmethod
+    async def export_audit_logs(
+        self,
+        tenant_id: str,
+        format: str = "json",
+        *,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        event_types: Optional[List[str]] = None,
+    ) -> bytes:
+        """
+        Export audit logs for compliance reporting.
+        
+        Args:
+            tenant_id: Tenant identifier
+            format: Export format (json, csv, xml)
+            start_time: Start time for export (optional)
+            end_time: End time for export (optional)
+            event_types: Filter by event types (optional)
+            
+        Returns:
+            Exported audit logs as bytes
+        """
+        pass
+
+
+@dataclass
+class FileValidationResult:
+    """Result of comprehensive file content validation."""
+    
+    is_valid: bool
+    filename: str
+    file_size: int
+    detected_mime_type: Optional[str] = None
+    detected_extension: Optional[str] = None
+    file_signature: Optional[str] = None
+    validation_errors: List[str] = field(default_factory=list)
+    security_warnings: List[str] = field(default_factory=list)
+    confidence_score: float = 0.0
+    validation_details: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class FileTypeConfig:
+    """Configuration for allowed file types with comprehensive validation rules."""
+    
+    extension: str
+    mime_types: List[str]
+    magic_bytes_patterns: List[bytes]
+    max_size_mb: Optional[int] = None
+    description: str = ""
+    security_level: str = "standard"  # standard, strict, permissive
+    allow_binary_content: bool = True
+
+
+class IFileContentValidator(IHealthCheck, ABC):
+    """
+    Comprehensive file content validation service interface.
+    
+    Provides multi-layered validation including:
+    - MIME type validation from Content-Type header
+    - File signature validation using magic bytes
+    - Extension vs content consistency checks  
+    - Security threat detection
+    - Malicious file pattern detection
+    """
+
+    @abstractmethod
+    async def validate_file_content(
+        self,
+        file_content: bytes,
+        filename: str,
+        content_type: Optional[str] = None,
+        tenant_config: Optional[Dict[str, Any]] = None,
+    ) -> FileValidationResult:
+        """
+        Perform comprehensive file content validation.
+        
+        Args:
+            file_content: Raw file content bytes
+            filename: Original filename with extension
+            content_type: MIME type from Content-Type header
+            tenant_config: Tenant-specific validation configuration
+            
+        Returns:
+            FileValidationResult with validation details and results
+        """
+        pass
+
+    @abstractmethod
+    async def validate_upload_file(
+        self,
+        file: Any,  # UploadFile from FastAPI
+        tenant_config: Optional[Dict[str, Any]] = None,
+    ) -> FileValidationResult:
+        """
+        Validate uploaded file without loading entire content into memory.
+        
+        Args:
+            file: FastAPI UploadFile instance
+            tenant_config: Tenant-specific validation configuration
+            
+        Returns:
+            FileValidationResult with validation details
+        """
+        pass
+
+    @abstractmethod
+    def detect_file_type_from_content(self, file_content: bytes) -> Optional[str]:
+        """
+        Detect file type from magic bytes/file signature.
+        
+        Args:
+            file_content: Raw file content bytes
+            
+        Returns:
+            Detected file extension or None if unknown
+        """
+        pass
+
+    @abstractmethod
+    def detect_mime_type_from_content(self, file_content: bytes) -> Optional[str]:
+        """
+        Detect MIME type from file content analysis.
+        
+        Args:
+            file_content: Raw file content bytes
+            
+        Returns:
+            Detected MIME type or None if unknown
+        """
+        pass
+
+    @abstractmethod
+    def validate_file_signature(
+        self,
+        file_content: bytes,
+        expected_extension: str,
+    ) -> bool:
+        """
+        Validate file signature matches expected extension.
+        
+        Args:
+            file_content: Raw file content bytes
+            expected_extension: Expected file extension (e.g., '.pdf')
+            
+        Returns:
+            True if signature matches, False otherwise
+        """
+        pass
+
+    @abstractmethod
+    def cross_validate_file_properties(
+        self,
+        filename: str,
+        content_type: Optional[str],
+        detected_type: Optional[str],
+        detected_mime: Optional[str],
+    ) -> List[str]:
+        """
+        Cross-validate filename extension, MIME type, and detected type for consistency.
+        
+        Args:
+            filename: Original filename
+            content_type: MIME type from Content-Type header
+            detected_type: File type detected from content
+            detected_mime: MIME type detected from content
+            
+        Returns:
+            List of validation error messages (empty if all consistent)
+        """
+        pass
+
+    @abstractmethod
+    def scan_for_security_threats(
+        self,
+        file_content: bytes,
+        filename: str,
+    ) -> List[str]:
+        """
+        Scan file content for potential security threats.
+        
+        Args:
+            file_content: Raw file content bytes
+            filename: Original filename
+            
+        Returns:
+            List of security warnings/threats detected
+        """
+        pass
+
+    @abstractmethod
+    def get_supported_file_types(
+        self,
+        tenant_config: Optional[Dict[str, Any]] = None,
+    ) -> List[FileTypeConfig]:
+        """
+        Get list of supported file types with validation rules.
+        
+        Args:
+            tenant_config: Tenant-specific configuration
+            
+        Returns:
+            List of supported file type configurations
+        """
+        pass
+
+    @abstractmethod
+    def is_file_type_allowed(
+        self,
+        extension: str,
+        tenant_config: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        Check if file type is allowed based on extension.
+        
+        Args:
+            extension: File extension (e.g., '.pdf')
+            tenant_config: Tenant-specific configuration
+            
+        Returns:
+            True if file type is allowed, False otherwise
+        """
+        pass
+
+
+class IResourceManager(IHealthCheck, ABC):
+    """Resource management interface for file cleanup and memory management."""
+
+    @abstractmethod
+    async def track_resource(
+        self,
+        resource_id: str,
+        resource_type: str,
+        size_bytes: int,
+        *,
+        tenant_id: str,
+        upload_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        Track a resource for cleanup management.
+        
+        Args:
+            resource_id: Unique identifier for the resource
+            resource_type: Type of resource (file_content, temp_file, etc.)
+            size_bytes: Size of the resource in bytes
+            tenant_id: Tenant identifier
+            upload_id: Associated upload ID if applicable
+            file_path: File path if applicable
+            metadata: Additional metadata
+            
+        Returns:
+            True if tracking was successful
+        """
+        pass
+
+    @abstractmethod
+    async def release_resource(
+        self,
+        resource_id: str,
+        *,
+        force: bool = False,
+    ) -> bool:
+        """
+        Release and cleanup a tracked resource.
+        
+        Args:
+            resource_id: Resource identifier to release
+            force: Force cleanup even if resource is marked as in-use
+            
+        Returns:
+            True if resource was successfully released
+        """
+        pass
+
+    @abstractmethod
+    async def release_upload_resources(
+        self,
+        upload_id: str,
+        *,
+        exclude_types: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Release all resources associated with an upload.
+        
+        Args:
+            upload_id: Upload identifier
+            exclude_types: Resource types to exclude from cleanup
+            
+        Returns:
+            Dictionary with cleanup statistics
+        """
+        pass
+
+    @abstractmethod
+    async def cleanup_orphaned_resources(
+        self,
+        *,
+        older_than_minutes: int = 60,
+        max_cleanup_count: int = 100,
+    ) -> Dict[str, Any]:
+        """
+        Clean up orphaned resources older than specified time.
+        
+        Args:
+            older_than_minutes: Cleanup resources older than this
+            max_cleanup_count: Maximum number of resources to cleanup in one pass
+            
+        Returns:
+            Dictionary with cleanup statistics
+        """
+        pass
+
+    @abstractmethod
+    async def get_resource_stats(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get resource usage statistics.
+        
+        Args:
+            tenant_id: Tenant to get stats for, or None for all tenants
+            
+        Returns:
+            Dictionary with resource statistics
+        """
+        pass
+
+    @abstractmethod
+    async def mark_resource_in_use(self, resource_id: str) -> bool:
+        """Mark a resource as currently in use."""
+        pass
+
+    @abstractmethod
+    async def mark_resource_available(self, resource_id: str) -> bool:
+        """Mark a resource as available for cleanup."""
+        pass
+
+
+class IFileResourceManager(IResourceManager):
+    """Specialized resource manager for file operations."""
+
+    @abstractmethod
+    async def track_file_content(
+        self,
+        content: bytes,
+        filename: str,
+        *,
+        upload_id: str,
+        tenant_id: str,
+        auto_cleanup_after: Optional[int] = None,
+    ) -> str:
+        """
+        Track file content in memory for cleanup.
+        
+        Args:
+            content: File content bytes
+            filename: Original filename
+            upload_id: Associated upload ID
+            tenant_id: Tenant identifier
+            auto_cleanup_after: Auto cleanup after N seconds
+            
+        Returns:
+            Resource ID for tracking
+        """
+        pass
+
+    @abstractmethod
+    async def get_file_content(self, resource_id: str) -> Optional[bytes]:
+        """Get tracked file content by resource ID."""
+        pass
+
+    @abstractmethod
+    async def track_temp_file(
+        self,
+        file_path: str,
+        *,
+        upload_id: str,
+        tenant_id: str,
+        auto_cleanup_after: Optional[int] = None,
+    ) -> str:
+        """
+        Track temporary file for cleanup.
+        
+        Args:
+            file_path: Path to temporary file
+            upload_id: Associated upload ID
+            tenant_id: Tenant identifier
+            auto_cleanup_after: Auto cleanup after N seconds
+            
+        Returns:
+            Resource ID for tracking
+        """
+        pass
+
+    @abstractmethod
+    async def cleanup_file_handles(self, upload_id: str) -> int:
+        """Cleanup file handles for an upload."""
+        pass
+
+
+class RateLimitType(str, Enum):
+    """Types of rate limits that can be applied."""
+    USER = "user"
+    TENANT = "tenant"
+    IP = "ip"
+    API_KEY = "api_key"
+    ENDPOINT = "endpoint"
+    GLOBAL = "global"
+
+
+class TimeWindow(str, Enum):
+    """Time windows for rate limiting."""
+    MINUTE = "minute"
+    HOUR = "hour"
+    DAY = "day"
+
+
+@dataclass
+class RateLimitRule:
+    """Configuration for a rate limit rule."""
+    
+    limit_type: RateLimitType
+    time_window: TimeWindow
+    max_requests: int
+    identifier: Optional[str] = None  # specific identifier (e.g., endpoint pattern)
+    description: str = ""
+    priority: int = 0  # higher priority rules are checked first
+
+
+@dataclass
+class RateLimitResult:
+    """Result of a rate limit check."""
+    
+    allowed: bool
+    limit_type: RateLimitType
+    time_window: TimeWindow
+    max_requests: int
+    current_usage: int
+    remaining: int
+    reset_time: datetime
+    retry_after: Optional[int] = None
+    identifier: str = ""
+
+
+@dataclass
+class RateLimitViolation:
+    """Details of a rate limit violation for audit logging."""
+    
+    limit_type: RateLimitType
+    time_window: TimeWindow
+    max_requests: int
+    actual_requests: int
+    identifier: str
+    tenant_id: str
+    user_id: Optional[str] = None
+    ip_address: str = "unknown"
+    user_agent: str = "unknown"
+    endpoint: str = ""
+    violation_time: datetime = field(default_factory=datetime.utcnow)
+
+
+class IRateLimitService(IHealthCheck, ABC):
+    """Rate limiting service interface."""
+
+    @abstractmethod
+    async def check_rate_limit(
+        self,
+        identifier: str,
+        limit_type: RateLimitType,
+        time_window: TimeWindow,
+        max_requests: int,
+        *,
+        tenant_id: Optional[str] = None,
+        increment: bool = True
+    ) -> RateLimitResult:
+        """
+        Check if a request is within rate limits.
+        
+        Args:
+            identifier: Unique identifier for the limit (user_id, IP, etc.)
+            limit_type: Type of rate limit being checked
+            time_window: Time window for the limit
+            max_requests: Maximum requests allowed in the time window
+            tenant_id: Tenant context for isolation
+            increment: Whether to increment the counter (set False for checks only)
+            
+        Returns:
+            RateLimitResult with limit status and details
+        """
+        pass
+
+    @abstractmethod
+    async def check_multiple_limits(
+        self,
+        identifiers: Dict[RateLimitType, str],
+        rules: List[RateLimitRule],
+        *,
+        tenant_id: Optional[str] = None,
+        increment: bool = True
+    ) -> List[RateLimitResult]:
+        """
+        Check multiple rate limits in a single operation.
+        
+        Args:
+            identifiers: Map of limit types to their identifiers
+            rules: List of rate limit rules to check
+            tenant_id: Tenant context for isolation
+            increment: Whether to increment counters
+            
+        Returns:
+            List of RateLimitResult for each rule checked
+        """
+        pass
+
+    @abstractmethod
+    async def reset_rate_limit(
+        self,
+        identifier: str,
+        limit_type: RateLimitType,
+        time_window: TimeWindow,
+        *,
+        tenant_id: Optional[str] = None
+    ) -> bool:
+        """
+        Reset rate limit counter for an identifier.
+        
+        Args:
+            identifier: Identifier to reset
+            limit_type: Type of limit to reset
+            time_window: Time window to reset
+            tenant_id: Tenant context
+            
+        Returns:
+            True if reset was successful
+        """
+        pass
+
+    @abstractmethod
+    async def get_rate_limit_status(
+        self,
+        identifier: str,
+        limit_type: RateLimitType,
+        time_window: TimeWindow,
+        *,
+        tenant_id: Optional[str] = None
+    ) -> Optional[RateLimitResult]:
+        """
+        Get current rate limit status without incrementing.
+        
+        Args:
+            identifier: Identifier to check
+            limit_type: Type of limit
+            time_window: Time window
+            tenant_id: Tenant context
+            
+        Returns:
+            Current rate limit status or None if no limit exists
+        """
+        pass
+
+    @abstractmethod
+    async def cleanup_expired_limits(
+        self,
+        *,
+        batch_size: int = 1000
+    ) -> int:
+        """
+        Clean up expired rate limit entries.
+        
+        Args:
+            batch_size: Number of entries to clean in one batch
+            
+        Returns:
+            Number of entries cleaned up
+        """
+        pass
+
+    @abstractmethod
+    async def get_rate_limit_stats(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        limit_type: Optional[RateLimitType] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None
+    ) -> Dict[str, Any]:
+        """
+        Get rate limiting statistics.
+        
+        Args:
+            tenant_id: Filter by tenant
+            limit_type: Filter by limit type
+            start_time: Filter by start time
+            end_time: Filter by end time
+            
+        Returns:
+            Dictionary with statistics
+        """
+        pass
+
+    @abstractmethod
+    async def is_whitelisted(
+        self,
+        identifier: str,
+        limit_type: RateLimitType,
+        *,
+        tenant_id: Optional[str] = None
+    ) -> bool:
+        """
+        Check if an identifier is whitelisted from rate limits.
+        
+        Args:
+            identifier: Identifier to check
+            limit_type: Type of limit
+            tenant_id: Tenant context
+            
+        Returns:
+            True if whitelisted
+        """
+        pass
+
+    @abstractmethod
+    async def add_to_whitelist(
+        self,
+        identifier: str,
+        limit_type: RateLimitType,
+        *,
+        tenant_id: Optional[str] = None,
+        expires_at: Optional[datetime] = None
+    ) -> bool:
+        """
+        Add identifier to whitelist.
+        
+        Args:
+            identifier: Identifier to whitelist
+            limit_type: Type of limit
+            tenant_id: Tenant context
+            expires_at: When whitelist entry expires
+            
+        Returns:
+            True if successfully whitelisted
+        """
+        pass
+
+    @abstractmethod
+    async def remove_from_whitelist(
+        self,
+        identifier: str,
+        limit_type: RateLimitType,
+        *,
+        tenant_id: Optional[str] = None
+    ) -> bool:
+        """
+        Remove identifier from whitelist.
+        
+        Args:
+            identifier: Identifier to remove
+            limit_type: Type of limit
+            tenant_id: Tenant context
+            
+        Returns:
+            True if successfully removed
+        """
+        pass
+
+
+@dataclass 
+class WebhookDeliveryResult:
+    """Result of a webhook delivery attempt."""
+    
+    success: bool
+    status_code: Optional[int] = None
+    response_body: Optional[str] = None
+    response_headers: Optional[Dict[str, str]] = None
+    response_time_ms: Optional[int] = None
+    error_message: Optional[str] = None
+    failure_reason: Optional[str] = None
+    signature_verified: Optional[bool] = None
+
+
+@dataclass
+class WebhookRetrySchedule:
+    """Webhook retry schedule calculation result."""
+    
+    should_retry: bool
+    next_attempt_at: Optional[datetime] = None
+    delay_seconds: Optional[float] = None
+    attempt_number: int = 1
+    reason: str = ""
+
+
+class IWebhookDeliveryService(IHealthCheck, ABC):
+    """Webhook delivery service with retry mechanisms and reliability features."""
+    
+    @abstractmethod
+    async def deliver_webhook(
+        self,
+        endpoint_id: str,
+        event_type: str,
+        payload: Dict[str, Any],
+        *,
+        tenant_id: str,
+        event_id: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        priority: int = 0
+    ) -> str:
+        """
+        Queue a webhook for delivery with retry mechanism.
+        
+        Args:
+            endpoint_id: Webhook endpoint identifier
+            event_type: Type of event triggering the webhook
+            payload: Webhook payload data
+            tenant_id: Tenant identifier
+            event_id: Unique event identifier
+            correlation_id: Correlation ID for tracking
+            priority: Delivery priority (higher = more urgent)
+            
+        Returns:
+            Delivery ID for tracking
+        """
+        pass
+    
+    @abstractmethod
+    async def deliver_webhook_immediate(
+        self,
+        url: str,
+        payload: Dict[str, Any],
+        *,
+        secret: Optional[str] = None,
+        timeout_seconds: int = 30,
+        signature_header: str = "X-Webhook-Signature",
+        correlation_id: Optional[str] = None
+    ) -> WebhookDeliveryResult:
+        """
+        Deliver webhook immediately without queuing.
+        
+        Args:
+            url: Webhook URL
+            payload: Webhook payload
+            secret: Secret for signature generation
+            timeout_seconds: Request timeout
+            signature_header: Header name for signature
+            correlation_id: Correlation ID for tracking
+            
+        Returns:
+            WebhookDeliveryResult with delivery outcome
+        """
+        pass
+    
+    @abstractmethod
+    async def retry_failed_delivery(
+        self,
+        delivery_id: str,
+        *,
+        override_max_attempts: bool = False,
+        new_max_attempts: Optional[int] = None,
+        admin_user_id: Optional[str] = None,
+        notes: Optional[str] = None
+    ) -> bool:
+        """
+        Manually retry a failed webhook delivery.
+        
+        Args:
+            delivery_id: Delivery ID to retry
+            override_max_attempts: Override the max attempts limit
+            new_max_attempts: New max attempts if overriding
+            admin_user_id: Admin user performing the retry
+            notes: Notes about the retry
+            
+        Returns:
+            True if retry was scheduled successfully
+        """
+        pass
+    
+    @abstractmethod
+    async def cancel_delivery(
+        self,
+        delivery_id: str,
+        *,
+        reason: str,
+        admin_user_id: Optional[str] = None
+    ) -> bool:
+        """
+        Cancel a pending webhook delivery.
+        
+        Args:
+            delivery_id: Delivery ID to cancel
+            reason: Cancellation reason
+            admin_user_id: Admin user performing the cancellation
+            
+        Returns:
+            True if cancellation was successful
+        """
+        pass
+    
+    @abstractmethod
+    async def get_delivery_status(
+        self,
+        delivery_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get the status of a webhook delivery.
+        
+        Args:
+            delivery_id: Delivery ID to check
+            
+        Returns:
+            Delivery status details or None if not found
+        """
+        pass
+    
+    @abstractmethod
+    async def process_delivery_queue(
+        self,
+        *,
+        max_deliveries: int = 50,
+        timeout_seconds: int = 300
+    ) -> Dict[str, Any]:
+        """
+        Process pending webhook deliveries from queue.
+        
+        Args:
+            max_deliveries: Maximum deliveries to process
+            timeout_seconds: Processing timeout
+            
+        Returns:
+            Processing summary with statistics
+        """
+        pass
+    
+    @abstractmethod
+    async def calculate_retry_schedule(
+        self,
+        delivery_id: str,
+        failure_reason: str
+    ) -> WebhookRetrySchedule:
+        """
+        Calculate when to retry a failed delivery.
+        
+        Args:
+            delivery_id: Delivery ID that failed
+            failure_reason: Reason for failure
+            
+        Returns:
+            WebhookRetrySchedule with retry timing
+        """
+        pass
+
+
+class IWebhookCircuitBreakerService(IHealthCheck, ABC):
+    """Circuit breaker service for webhook endpoints."""
+    
+    @abstractmethod
+    async def should_allow_request(
+        self,
+        endpoint_id: str
+    ) -> bool:
+        """
+        Check if requests should be allowed to an endpoint.
+        
+        Args:
+            endpoint_id: Webhook endpoint ID
+            
+        Returns:
+            True if requests are allowed
+        """
+        pass
+    
+    @abstractmethod
+    async def record_success(
+        self,
+        endpoint_id: str,
+        response_time_ms: int
+    ) -> None:
+        """
+        Record a successful webhook delivery.
+        
+        Args:
+            endpoint_id: Webhook endpoint ID
+            response_time_ms: Response time in milliseconds
+        """
+        pass
+    
+    @abstractmethod
+    async def record_failure(
+        self,
+        endpoint_id: str,
+        failure_reason: str
+    ) -> None:
+        """
+        Record a failed webhook delivery.
+        
+        Args:
+            endpoint_id: Webhook endpoint ID
+            failure_reason: Reason for failure
+        """
+        pass
+    
+    @abstractmethod
+    async def get_circuit_state(
+        self,
+        endpoint_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get circuit breaker state for an endpoint.
+        
+        Args:
+            endpoint_id: Webhook endpoint ID
+            
+        Returns:
+            Circuit breaker state information
+        """
+        pass
+    
+    @abstractmethod
+    async def force_circuit_state(
+        self,
+        endpoint_id: str,
+        state: str,
+        *,
+        admin_user_id: Optional[str] = None,
+        reason: Optional[str] = None
+    ) -> bool:
+        """
+        Manually set circuit breaker state.
+        
+        Args:
+            endpoint_id: Webhook endpoint ID
+            state: Target state (open, closed, half_open)
+            admin_user_id: Admin user making the change
+            reason: Reason for manual override
+            
+        Returns:
+            True if state change was successful
+        """
+        pass
+
+
+class IWebhookSignatureService(ABC):
+    """Webhook signature generation and verification service."""
+    
+    @abstractmethod
+    def generate_signature(
+        self,
+        payload: str,
+        secret: str,
+        algorithm: str = "sha256"
+    ) -> str:
+        """
+        Generate webhook signature for payload.
+        
+        Args:
+            payload: Webhook payload as string
+            secret: Secret key for signing
+            algorithm: Signature algorithm
+            
+        Returns:
+            Generated signature
+        """
+        pass
+    
+    @abstractmethod
+    def verify_signature(
+        self,
+        payload: str,
+        signature: str,
+        secret: str,
+        algorithm: str = "sha256"
+    ) -> bool:
+        """
+        Verify webhook signature.
+        
+        Args:
+            payload: Webhook payload as string
+            signature: Provided signature
+            secret: Secret key for verification
+            algorithm: Signature algorithm
+            
+        Returns:
+            True if signature is valid
+        """
+        pass
+    
+    @abstractmethod
+    def generate_timestamp_signature(
+        self,
+        payload: str,
+        timestamp: int,
+        secret: str,
+        algorithm: str = "sha256"
+    ) -> str:
+        """
+        Generate timestamped signature for replay protection.
+        
+        Args:
+            payload: Webhook payload as string
+            timestamp: Unix timestamp
+            secret: Secret key for signing
+            algorithm: Signature algorithm
+            
+        Returns:
+            Generated timestamped signature
+        """
+        pass
+
+
+class IWebhookDeadLetterService(IHealthCheck, ABC):
+    """Dead letter queue service for failed webhook deliveries."""
+    
+    @abstractmethod
+    async def move_to_dead_letter(
+        self,
+        delivery_id: str,
+        *,
+        final_failure_reason: str,
+        final_error_message: Optional[str] = None,
+        moved_by: str = "system"
+    ) -> str:
+        """
+        Move a failed delivery to dead letter queue.
+        
+        Args:
+            delivery_id: Original delivery ID
+            final_failure_reason: Final reason for failure
+            final_error_message: Final error message
+            moved_by: Who moved it to dead letter
+            
+        Returns:
+            Dead letter ID
+        """
+        pass
+    
+    @abstractmethod
+    async def retry_dead_letter(
+        self,
+        dead_letter_id: str,
+        *,
+        admin_user_id: str,
+        notes: Optional[str] = None
+    ) -> str:
+        """
+        Retry a dead letter delivery.
+        
+        Args:
+            dead_letter_id: Dead letter ID to retry
+            admin_user_id: Admin performing the retry
+            notes: Retry notes
+            
+        Returns:
+            New delivery ID for retry
+        """
+        pass
+    
+    @abstractmethod
+    async def resolve_dead_letter(
+        self,
+        dead_letter_id: str,
+        *,
+        resolution_action: str,
+        admin_user_id: str,
+        notes: Optional[str] = None
+    ) -> bool:
+        """
+        Mark a dead letter as resolved.
+        
+        Args:
+            dead_letter_id: Dead letter ID to resolve
+            resolution_action: Action taken to resolve
+            admin_user_id: Admin resolving the issue
+            notes: Resolution notes
+            
+        Returns:
+            True if resolution was successful
+        """
+        pass
+    
+    @abstractmethod
+    async def get_dead_letters(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        endpoint_id: Optional[str] = None,
+        event_type: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        limit: int = 50,
+        offset: int = 0
+    ) -> Dict[str, Any]:
+        """
+        Get dead letter queue entries.
+        
+        Args:
+            tenant_id: Filter by tenant
+            endpoint_id: Filter by endpoint
+            event_type: Filter by event type
+            start_date: Filter by start date
+            end_date: Filter by end date
+            limit: Maximum entries to return
+            offset: Offset for pagination
+            
+        Returns:
+            Dead letter entries with pagination info
+        """
+        pass
+    
+    @abstractmethod
+    async def cleanup_old_dead_letters(
+        self,
+        *,
+        older_than_days: int = 30,
+        batch_size: int = 100
+    ) -> int:
+        """
+        Clean up old dead letter entries.
+        
+        Args:
+            older_than_days: Remove entries older than this
+            batch_size: Batch size for cleanup
+            
+        Returns:
+            Number of entries cleaned up
+        """
+        pass
+
+
+class IWebhookStatsService(IHealthCheck, ABC):
+    """Webhook delivery statistics and monitoring service."""
+    
+    @abstractmethod
+    async def get_delivery_stats(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        endpoint_id: Optional[str] = None,
+        event_type: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> Dict[str, Any]:
+        """
+        Get webhook delivery statistics.
+        
+        Args:
+            tenant_id: Filter by tenant
+            endpoint_id: Filter by endpoint
+            event_type: Filter by event type
+            start_date: Start date for statistics
+            end_date: End date for statistics
+            
+        Returns:
+            Delivery statistics
+        """
+        pass
+    
+    @abstractmethod
+    async def get_endpoint_health(
+        self,
+        endpoint_id: str,
+        *,
+        time_window_hours: int = 24
+    ) -> Dict[str, Any]:
+        """
+        Get health metrics for a specific endpoint.
+        
+        Args:
+            endpoint_id: Webhook endpoint ID
+            time_window_hours: Time window for metrics
+            
+        Returns:
+            Endpoint health metrics
+        """
+        pass
+    
+    @abstractmethod
+    async def get_tenant_webhook_summary(
+        self,
+        tenant_id: str,
+        *,
+        time_window_hours: int = 24
+    ) -> Dict[str, Any]:
+        """
+        Get webhook summary for a tenant.
+        
+        Args:
+            tenant_id: Tenant ID
+            time_window_hours: Time window for summary
+            
+        Returns:
+            Tenant webhook summary
+        """
+        pass
+    
+    @abstractmethod
+    async def generate_stats_digest(
+        self,
+        tenant_id: str,
+        *,
+        period_days: int = 1
+    ) -> Dict[str, Any]:
+        """
+        Generate webhook statistics digest.
+        
+        Args:
+            tenant_id: Tenant ID
+            period_days: Period for digest
+            
+        Returns:
+            Statistics digest
+        """
+        pass
+
+
 __all__ = [
     "IHealthCheck",
     "ICacheService",
@@ -678,4 +2188,24 @@ __all__ = [
     "IAuthorizationService",
     "IBootstrapService",
     "IUsageService",
+    "IWebhookValidator",
+    "IAuditService",
+    "IFileContentValidator",
+    "FileValidationResult",
+    "FileTypeConfig",
+    "IResourceManager",
+    "IFileResourceManager",
+    "RateLimitType",
+    "TimeWindow",
+    "RateLimitRule",
+    "RateLimitResult",
+    "RateLimitViolation",
+    "IRateLimitService",
+    "WebhookDeliveryResult",
+    "WebhookRetrySchedule",
+    "IWebhookDeliveryService",
+    "IWebhookCircuitBreakerService",
+    "IWebhookSignatureService",
+    "IWebhookDeadLetterService",
+    "IWebhookStatsService",
 ]

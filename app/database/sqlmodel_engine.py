@@ -131,10 +131,22 @@ class SQLModelDatabaseManager:
         
         try:
             async with self.engine.begin() as conn:
-                # Import all models to ensure they're registered
+                # Import all models to ensure they're registered with SQLModel metadata
                 from app.models.embedding import EmbeddingTable
                 from app.models.auth import UserTable
                 from app.models.profile import ProfileTable
+                from app.models.audit import AuditLogTable
+                from app.models.retry_models import (
+                    RetryStateModel,
+                    RetryAttemptModel,
+                    DeadLetterModel,
+                    RetryPolicyTemplate
+                )
+                from app.models.webhook import (
+                    WebhookEndpointTable,
+                    WebhookDeliveryTable,
+                    WebhookDeadLetterTable
+                )
                 
                 # Create all tables
                 await conn.run_sync(SQLModel.metadata.create_all)

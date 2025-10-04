@@ -11,7 +11,7 @@ Provides comprehensive tenant management functionality:
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 from uuid import uuid4
 import re
@@ -116,7 +116,7 @@ class TenantService:
         
         Either both succeed or both fail - no orphaned data.
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         operation_id = str(uuid4())
         
         logger.info(
@@ -180,7 +180,7 @@ class TenantService:
             await self._invalidate_tenant_cache(created_tenant["id"])
             
             # Calculate operation time
-            end_time = datetime.utcnow()
+            end_time = datetime.now(timezone.utc)
             duration_ms = (end_time - start_time).total_seconds() * 1000
             
             # Update metrics
@@ -325,7 +325,7 @@ class TenantService:
                 tenant_dict[field] = value
         
         # Update the timestamp
-        tenant_dict["updated_at"] = datetime.utcnow().isoformat()
+        tenant_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
         
         # Save updates
         updated_tenant_data = await self.tenant_repo.update(tenant_id, tenant_dict)
@@ -358,7 +358,7 @@ class TenantService:
         
         tenant_dict["is_suspended"] = True
         tenant_dict["suspension_reason"] = reason
-        tenant_dict["suspended_at"] = datetime.utcnow().isoformat()
+        tenant_dict["suspended_at"] = datetime.now(timezone.utc).isoformat()
         
         await self.tenant_repo.update(tenant_id, tenant_dict)
         await self._invalidate_tenant_cache(tenant_id)
@@ -412,7 +412,7 @@ class TenantService:
             tenant_dict = dict(tenant_data) if not isinstance(tenant_data, dict) else tenant_data
         
         tenant_dict["is_active"] = False
-        tenant_dict["deleted_at"] = datetime.utcnow().isoformat()
+        tenant_dict["deleted_at"] = datetime.now(timezone.utc).isoformat()
         
         await self.tenant_repo.update(tenant_id, tenant_dict)
         await self._invalidate_tenant_cache(tenant_id)
@@ -470,7 +470,7 @@ class TenantService:
                 usage_metrics[metric] = current_value + value
         
         tenant_dict["usage_metrics"] = usage_metrics
-        tenant_dict["updated_at"] = datetime.utcnow().isoformat()
+        tenant_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
         
         await self.tenant_repo.update(tenant_id, tenant_dict)
         await self._invalidate_tenant_cache(tenant_id)
@@ -571,7 +571,7 @@ class TenantService:
         hashed_password = password_manager.hash_password(password)
         
         # Prepare user data
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         user_data = {
             "id": str(uuid4()),
             "tenant_id": tenant_id,
@@ -722,7 +722,7 @@ class TenantService:
         user_dict["roles"] = updated_roles
         user_dict["permissions"] = permissions
         user_dict["is_superuser"] = "admin" in updated_roles or "super_admin" in updated_roles
-        user_dict["updated_at"] = datetime.utcnow().isoformat()
+        user_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
         
         # Update user in database
         updated_user_data = await self.user_repo.update(user_id, user_dict)
@@ -773,7 +773,7 @@ class TenantService:
         
         # Deactivate user instead of deleting - update dictionary fields
         user_dict['is_active'] = False
-        user_dict['updated_at'] = datetime.utcnow().isoformat()
+        user_dict['updated_at'] = datetime.now(timezone.utc).isoformat()
         
         # Update user in database with proper parameters (user_id, user_dict)
         await self.user_repo.update(user_id, user_dict)
@@ -811,7 +811,7 @@ class TenantService:
         tenant_dict["subscription_tier"] = tier
         tenant_dict["quota_limits"] = self._get_default_quota_limits(tier).model_dump()
         tenant_dict["feature_flags"] = self._get_default_feature_flags(tier).model_dump()
-        tenant_dict["updated_at"] = datetime.utcnow().isoformat()
+        tenant_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
         
         await self.tenant_repo.update(tenant_id, tenant_dict)
         await self._invalidate_tenant_cache(tenant_id)
@@ -895,11 +895,23 @@ class TenantService:
     
     def _validate_tenant_name(self, name: str) -> bool:
         """Validate tenant name format"""
-        if not name or len(name) < 2 or len(name) > 50:
+        if not name or len(name) < 3 or len(name) > 50:
             return False
         
-        # Only allow lowercase letters, numbers, and hyphens
-        if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', name):
+        # Cannot start or end with hyphen
+        if name.startswith('-') or name.endswith('-'):
+            return False
+        
+        # Cannot have double hyphens
+        if '--' in name:
+            return False
+        
+        # Cannot be numbers only
+        if name.isdigit():
+            return False
+        
+        # Only allow lowercase letters, numbers, and hyphens (no uppercase, underscores, spaces, special chars)
+        if not re.match(r'^[a-z0-9-]+$', name):
             return False
         
         # Check for reserved words
@@ -951,13 +963,28 @@ class TenantService:
         """Get default feature flags for subscription tier"""
         
         return FeatureFlags(
-            advanced_analytics=tier in [SubscriptionTier.PROFESSIONAL, SubscriptionTier.ENTERPRISE],
-            api_access=tier != SubscriptionTier.FREE,
-            custom_branding=tier in [SubscriptionTier.PROFESSIONAL, SubscriptionTier.ENTERPRISE],
-            export_data=tier != SubscriptionTier.FREE,
-            priority_support=tier in [SubscriptionTier.PROFESSIONAL, SubscriptionTier.ENTERPRISE],
-            webhook_integrations=tier == SubscriptionTier.ENTERPRISE,
-            white_label=tier == SubscriptionTier.ENTERPRISE
+            # Core features - enabled for all tiers by default
+            enable_advanced_search=True,
+            enable_bulk_operations=True,
+            enable_export=True,
+            enable_webhooks=tier in [SubscriptionTier.PROFESSIONAL, SubscriptionTier.ENTERPRISE],
+            
+            # AI features - basic enabled, advanced for higher tiers
+            enable_ai_recommendations=tier in [SubscriptionTier.PROFESSIONAL, SubscriptionTier.ENTERPRISE],
+            enable_skill_extraction=True,
+            enable_sentiment_analysis=tier == SubscriptionTier.ENTERPRISE,
+            enable_candidate_scoring=True,
+            
+            # Analytics features - progressive enablement
+            enable_analytics_dashboard=True,
+            enable_custom_reports=tier in [SubscriptionTier.BASIC, SubscriptionTier.PROFESSIONAL, SubscriptionTier.ENTERPRISE],
+            enable_data_insights=tier in [SubscriptionTier.PROFESSIONAL, SubscriptionTier.ENTERPRISE],
+            
+            # Integration features - higher tiers only
+            enable_ats_integration=tier == SubscriptionTier.ENTERPRISE,
+            enable_crm_integration=tier == SubscriptionTier.ENTERPRISE,
+            enable_api_access=True,  # API access for all tiers
+            enable_sso=tier == SubscriptionTier.ENTERPRISE
         )
     
     async def _create_tenant_admin_user(
@@ -1048,6 +1075,15 @@ class TenantService:
         if len(password) < 8:
             raise ValueError("Admin password must be at least 8 characters")
         
+        # Additional password complexity checks
+        if password.isdigit():
+            raise ValueError("Admin password cannot be only numbers")
+        
+        # Check for common weak passwords
+        common_weak_passwords = {'password', 'password123', 'admin', 'admin123', '12345678'}
+        if password.lower() in common_weak_passwords:
+            raise ValueError("Admin password is too weak - use a stronger password")
+        
         logger.debug(
             "Tenant creation inputs validated successfully",
             tenant_name=name,
@@ -1064,7 +1100,7 @@ class TenantService:
     ) -> Dict[str, Any]:
         """Prepare tenant data for creation."""
         
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         
         # Generate slug from display name if name is different, otherwise use name as slug
         slug = SecurityValidator.generate_slug_from_name(display_name) if name != display_name else name
@@ -1100,7 +1136,7 @@ class TenantService:
         hashed_password = password_manager.hash_password(admin_data["password"])
         
         # Prepare user data
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         user_data = {
             "id": str(uuid4()),
             "tenant_id": tenant_id,

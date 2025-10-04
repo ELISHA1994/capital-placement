@@ -19,17 +19,8 @@ from sqlmodel import Field, SQLModel, Relationship
 from pgvector.sqlalchemy import Vector
 
 from app.domain.entities.profile import ExperienceLevel, ProcessingStatus, ProfileStatus
-from .base import AuditableModel, VectorModel, MetadataModel, BaseModel
+from .base import AuditableModel, VectorModel, MetadataModel, BaseModel, create_tenant_id_column
 
-
-def create_tenant_id_column():
-    """Create a unique tenant_id Column instance for each table."""
-    return Column(
-        PostgreSQLUUID(as_uuid=True),
-        ForeignKey("tenants.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
-    )
 
 class ProcessingMetadata(BaseModel):
     """Processing metadata for profile"""

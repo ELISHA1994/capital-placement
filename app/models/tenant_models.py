@@ -82,6 +82,88 @@ class SearchConfiguration(BaseModel):
     diversity_threshold: float = Field(default=0.8, ge=0.0, le=1.0, description="Diversity threshold")
 
 
+class FileTypeValidationConfig(BaseModel):
+    """Configuration for file type validation and security policies"""
+    
+    # File type restrictions
+    allowed_file_extensions: List[str] = Field(
+        default_factory=lambda: [".pdf", ".doc", ".docx", ".txt"],
+        description="Allowed file extensions"
+    )
+    
+    # Size limits per file type (in MB)
+    file_type_limits: Dict[str, int] = Field(
+        default_factory=lambda: {
+            ".pdf": 25,
+            ".doc": 10,
+            ".docx": 10,
+            ".txt": 1
+        },
+        description="Maximum file size per type in MB"
+    )
+    
+    # Content validation settings
+    require_mime_validation: bool = Field(default=True, description="Require MIME type validation")
+    require_signature_validation: bool = Field(default=True, description="Require file signature validation")
+    enable_content_scanning: bool = Field(default=True, description="Enable security content scanning")
+    
+    # Security policies
+    block_executable_content: bool = Field(default=True, description="Block files with executable content")
+    block_macro_documents: bool = Field(default=True, description="Block documents with macros")
+    block_script_content: bool = Field(default=True, description="Block files with script content")
+    
+    # Validation strictness
+    validation_mode: str = Field(
+        default="strict",
+        description="Validation mode: strict, standard, or permissive"
+    )
+    min_confidence_score: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence score for validation"
+    )
+    
+    # Error handling
+    reject_on_validation_errors: bool = Field(default=True, description="Reject files with validation errors")
+    reject_on_security_warnings: bool = Field(default=False, description="Reject files with security warnings")
+    log_validation_details: bool = Field(default=True, description="Log detailed validation information")
+
+
+class RateLimitConfiguration(BaseModel):
+    """Advanced rate limiting configuration"""
+    
+    # Rate limiting behavior
+    enable_rate_limiting: bool = Field(default=True, description="Enable rate limiting")
+    enable_ip_rate_limiting: bool = Field(default=True, description="Enable IP-based rate limiting")
+    enable_user_rate_limiting: bool = Field(default=True, description="Enable user-based rate limiting")
+    enable_endpoint_rate_limiting: bool = Field(default=True, description="Enable endpoint-specific rate limiting")
+    
+    # DDoS protection
+    enable_ddos_protection: bool = Field(default=True, description="Enable DDoS protection features")
+    burst_limit_multiplier: float = Field(default=1.5, ge=1.0, le=5.0, description="Burst limit multiplier")
+    
+    # Admin and whitelist settings
+    bypass_for_admins: bool = Field(default=True, description="Bypass rate limits for admin users")
+    enable_ip_whitelist: bool = Field(default=True, description="Enable IP whitelist functionality")
+    enable_user_whitelist: bool = Field(default=True, description="Enable user whitelist functionality")
+    
+    # Rate limiting strategy
+    fail_open_on_errors: bool = Field(default=True, description="Allow requests if rate limiting fails")
+    use_sliding_window: bool = Field(default=True, description="Use sliding window instead of fixed window")
+    
+    # Custom rate limit rules for specific endpoints
+    custom_endpoint_limits: Dict[str, Dict[str, int]] = Field(
+        default_factory=dict,
+        description="Custom rate limits for specific endpoints"
+    )
+    
+    # Monitoring and alerting
+    enable_rate_limit_logging: bool = Field(default=True, description="Enable rate limit violation logging")
+    enable_rate_limit_alerts: bool = Field(default=False, description="Enable rate limit alerts")
+    alert_threshold_percentage: float = Field(default=80.0, ge=50.0, le=100.0, description="Alert when usage exceeds this percentage")
+
+
 class ProcessingConfiguration(BaseModel):
     """Tenant-specific document processing configuration"""
     
@@ -107,6 +189,18 @@ class ProcessingConfiguration(BaseModel):
     retain_original_documents: bool = Field(default=True, description="Keep original documents")
     document_retention_days: int = Field(default=2555, ge=30, description="Document retention period")
     compress_processed_content: bool = Field(default=True, description="Compress processed content")
+    
+    # File validation settings
+    file_validation: FileTypeValidationConfig = Field(
+        default_factory=FileTypeValidationConfig,
+        description="File type validation configuration"
+    )
+    
+    # Rate limiting settings
+    rate_limit_config: RateLimitConfiguration = Field(
+        default_factory=RateLimitConfiguration,
+        description="Rate limiting configuration"
+    )
 
 
 class QuotaLimits(BaseModel):
@@ -131,6 +225,19 @@ class QuotaLimits(BaseModel):
     max_api_requests_per_minute: int = Field(default=100, ge=1, description="API rate limit per minute")
     max_api_requests_per_hour: int = Field(default=1000, ge=1, description="API rate limit per hour")
     max_api_requests_per_day: Optional[int] = Field(None, ge=1, description="API rate limit per day")
+    
+    # Upload-specific rate limits
+    max_upload_requests_per_minute: int = Field(default=10, ge=1, description="Upload requests per minute")
+    max_upload_requests_per_hour: int = Field(default=100, ge=1, description="Upload requests per hour")
+    max_upload_requests_per_day: Optional[int] = Field(None, ge=1, description="Upload requests per day")
+    
+    # IP-based rate limits (for DDoS protection)
+    max_requests_per_ip_per_minute: int = Field(default=60, ge=1, description="Requests per IP per minute")
+    max_requests_per_ip_per_hour: int = Field(default=1000, ge=1, description="Requests per IP per hour")
+    
+    # User-specific rate limits
+    max_requests_per_user_per_minute: int = Field(default=30, ge=1, description="Requests per user per minute")
+    max_requests_per_user_per_hour: int = Field(default=500, ge=1, description="Requests per user per hour")
     
     # User quotas
     max_users: Optional[int] = Field(None, ge=1, description="Maximum number of users")
@@ -314,6 +421,7 @@ class TenantTable(TimestampedModel, table=True):
     api_keys: List["APIKeyTable"] = Relationship(back_populates="tenant")
     profiles: List["ProfileTable"] = Relationship(back_populates="tenant")
     embeddings: List["EmbeddingTable"] = Relationship(back_populates="tenant")
+    audit_logs: List["AuditLogTable"] = Relationship(back_populates="tenant")
 
 
 class TenantConfigurationTable(TimestampedModel, table=True):
@@ -881,7 +989,7 @@ class TenantConfiguration(TimestampedModel):
         base_limits = tier_limits.get(self.subscription_tier, tier_limits[SubscriptionTier.FREE])
         
         # Override with custom quota limits if set
-        custom_limits = self.quota_limits.dict_exclude_none()
+        custom_limits = self.quota_limits.model_dump(exclude_none=True)
         
         return {**base_limits, **custom_limits}
     
