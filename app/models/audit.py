@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 from enum import Enum
 
-from sqlalchemy import Column, String, DateTime, Integer, Text, ForeignKey, Index
+from sqlalchemy import Boolean, Column, String, DateTime, Integer, Text, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID, JSONB, INET
 from sqlalchemy.sql import func
 from sqlmodel import Field, SQLModel, Relationship
@@ -182,7 +182,7 @@ class AuditLogTable(TenantModel, table=True):
     
     suspicious: bool = Field(
         default=False,
-        sa_column=Column(String(20), nullable=False, index=True),
+        sa_column=Column(Boolean, nullable=False, index=True),
         description="Whether the event is flagged as suspicious"
     )
     

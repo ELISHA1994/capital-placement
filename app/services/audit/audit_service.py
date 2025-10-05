@@ -69,19 +69,19 @@ class AuditService(IAuditService):
         """Check audit service health status."""
         try:
             # Test database connectivity
-            await self.db_adapter.execute("SELECT 1", fetch_mode="val")
-            
+            row = await self.db_adapter.fetch_one("SELECT 1")
+
             # Check audit logs table exists
-            result = await self.db_adapter.execute(
+            row = await self.db_adapter.fetch_one(
                 """
                 SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_schema = 'public' 
+                    SELECT FROM information_schema.tables
+                    WHERE table_schema = 'public'
                     AND table_name = 'audit_logs'
                 )
-                """,
-                fetch_mode="val"
+                """
             )
+            result = list(row.values())[0] if row else None
             
             table_exists = bool(result)
             
@@ -128,7 +128,7 @@ class AuditService(IAuditService):
         try:
             # Generate audit log entry ID
             log_id = str(uuid4())
-            current_time = datetime.now(timezone.utc)
+            current_time = datetime.utcnow()
             
             # Get next sequence number for this tenant
             sequence_number = await self._get_next_sequence_number(tenant_id)
@@ -167,16 +167,16 @@ class AuditService(IAuditService):
             await self.db_adapter.execute(
                 """
                 INSERT INTO audit_logs (
-                    id, tenant_id, event_type, user_id, user_email, session_id, api_key_id,
+                    id, created_at, updated_at, tenant_id, event_type, user_id, user_email, session_id, api_key_id,
                     resource_type, resource_id, action, details, ip_address, user_agent,
                     risk_level, suspicious, event_timestamp, logged_at, log_hash,
                     sequence_number, correlation_id, batch_id, error_code, error_message
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                    $16, $17, $18, $19, $20, $21, $22, $23
+                    $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
                 )
                 """,
-                log_id, tenant_id, event_type, user_id, user_email, session_id, api_key_id,
+                log_id, current_time, current_time, tenant_id, event_type, user_id, user_email, session_id, api_key_id,
                 resource_type, resource_id, action, json.dumps(details or {}), ip_address,
                 user_agent, risk_level, suspicious, current_time, current_time, log_hash,
                 sequence_number, correlation_id, batch_id, error_code, error_message
@@ -441,32 +441,32 @@ class AuditService(IAuditService):
             
             # Get total count
             count_query = f"""
-                SELECT COUNT(*) FROM audit_logs 
+                SELECT COUNT(*) FROM audit_logs
                 WHERE {where_clause}
             """
-            total_count = await self.db_adapter.execute(count_query, *params, fetch_mode="val")
-            
+            row = await self.db_adapter.fetch_one(count_query, *params)
+            total_count = list(row.values())[0] if row else 0
+
             # Get paginated results
             param_count += 1
             limit_param = f"${param_count}"
             param_count += 1
             offset_param = f"${param_count}"
-            
+
             data_query = f"""
                 SELECT id, tenant_id, event_type, user_id, user_email, session_id, api_key_id,
                        resource_type, resource_id, action, details, ip_address, user_agent,
                        risk_level, suspicious, event_timestamp, logged_at, correlation_id,
                        batch_id, error_code, error_message, sequence_number
-                FROM audit_logs 
+                FROM audit_logs
                 WHERE {where_clause}
                 ORDER BY event_timestamp DESC, sequence_number DESC
                 LIMIT {limit_param} OFFSET {offset_param}
             """
-            
-            rows = await self.db_adapter.execute(
-                data_query, 
-                *params, size, offset,
-                fetch_mode="all"
+
+            rows = await self.db_adapter.fetch_all(
+                data_query,
+                *params, size, offset
             )
             
             # Convert rows to audit log responses
@@ -539,76 +539,74 @@ class AuditService(IAuditService):
                 params.append(end_time)
             
             # Get total events count
-            total_events = await self.db_adapter.execute(
+            row = await self.db_adapter.fetch_one(
                 f"SELECT COUNT(*) FROM audit_logs WHERE {base_conditions}",
-                *params,
-                fetch_mode="val"
+                *params
             )
-            
+            total_events = list(row.values())[0] if row else 0
+
             # Get events by type
-            events_by_type = await self.db_adapter.execute(
+            events_by_type = await self.db_adapter.fetch_all(
                 f"""
-                SELECT event_type, COUNT(*) as count 
-                FROM audit_logs 
+                SELECT event_type, COUNT(*) as count
+                FROM audit_logs
                 WHERE {base_conditions}
-                GROUP BY event_type 
+                GROUP BY event_type
                 ORDER BY count DESC
                 """,
-                *params,
-                fetch_mode="all"
+                *params
             )
-            
+
             # Get events by risk level
-            events_by_risk = await self.db_adapter.execute(
+            events_by_risk = await self.db_adapter.fetch_all(
                 f"""
-                SELECT risk_level, COUNT(*) as count 
-                FROM audit_logs 
+                SELECT risk_level, COUNT(*) as count
+                FROM audit_logs
                 WHERE {base_conditions}
-                GROUP BY risk_level 
+                GROUP BY risk_level
                 ORDER BY count DESC
                 """,
-                *params,
-                fetch_mode="all"
+                *params
             )
-            
+
             # Get suspicious events count
-            suspicious_events = await self.db_adapter.execute(
+            row = await self.db_adapter.fetch_one(
                 f"SELECT COUNT(*) FROM audit_logs WHERE {base_conditions} AND suspicious = true",
-                *params,
-                fetch_mode="val"
+                *params
             )
-            
+            suspicious_events = list(row.values())[0] if row else 0
+
             # Get recent events (last 24 hours)
             recent_time = datetime.now(timezone.utc).replace(
                 hour=datetime.now(timezone.utc).hour - 24
             )
-            recent_events = await self.db_adapter.execute(
+            row = await self.db_adapter.fetch_one(
                 f"""
-                SELECT COUNT(*) FROM audit_logs 
+                SELECT COUNT(*) FROM audit_logs
                 WHERE {base_conditions} AND event_timestamp >= ${len(params) + 1}
                 """,
-                *params, recent_time,
-                fetch_mode="val"
+                *params, recent_time
             )
-            
+            recent_events = list(row.values())[0] if row else 0
+
             # Get unique users and IP addresses
-            unique_users = await self.db_adapter.execute(
+            row = await self.db_adapter.fetch_one(
                 f"""
-                SELECT COUNT(DISTINCT user_id) FROM audit_logs 
+                SELECT COUNT(DISTINCT user_id) FROM audit_logs
                 WHERE {base_conditions} AND user_id IS NOT NULL
                 """,
-                *params,
-                fetch_mode="val"
+                *params
             )
-            
-            unique_ips = await self.db_adapter.execute(
+            unique_users = list(row.values())[0] if row else 0
+
+            row = await self.db_adapter.fetch_one(
                 f"""
-                SELECT COUNT(DISTINCT ip_address) FROM audit_logs 
+                SELECT COUNT(DISTINCT ip_address) FROM audit_logs
                 WHERE {base_conditions}
                 """,
-                *params,
-                fetch_mode="val"
+                *params
             )
+            unique_ips = list(row.values())[0] if row else 0
             
             return {
                 "total_events": total_events or 0,
@@ -636,17 +634,16 @@ class AuditService(IAuditService):
         """Verify the integrity of a specific audit log entry."""
         try:
             # Get the audit log entry
-            row = await self.db_adapter.execute(
+            row = await self.db_adapter.fetch_one(
                 """
                 SELECT id, tenant_id, event_type, user_id, user_email, session_id, api_key_id,
                        resource_type, resource_id, action, details, ip_address, user_agent,
                        risk_level, suspicious, event_timestamp, logged_at, log_hash,
                        sequence_number, correlation_id, batch_id, error_code, error_message
-                FROM audit_logs 
+                FROM audit_logs
                 WHERE id = $1 AND tenant_id = $2
                 """,
-                log_id, tenant_id,
-                fetch_mode="row"
+                log_id, tenant_id
             )
             
             if not row:
@@ -741,12 +738,12 @@ class AuditService(IAuditService):
                        resource_type, resource_id, action, details, ip_address, user_agent,
                        risk_level, suspicious, event_timestamp, logged_at, correlation_id,
                        batch_id, error_code, error_message, sequence_number
-                FROM audit_logs 
+                FROM audit_logs
                 WHERE {where_clause}
                 ORDER BY event_timestamp ASC, sequence_number ASC
             """
-            
-            rows = await self.db_adapter.execute(query, *params, fetch_mode="all")
+
+            rows = await self.db_adapter.fetch_all(query, *params)
             
             # Export in requested format
             if format.lower() == "json":
@@ -766,14 +763,14 @@ class AuditService(IAuditService):
         """Get the next sequence number for a tenant."""
         try:
             # Get the current max sequence number for this tenant
-            result = await self.db_adapter.execute(
+            row = await self.db_adapter.fetch_one(
                 "SELECT COALESCE(MAX(sequence_number), 0) FROM audit_logs WHERE tenant_id = $1",
-                tenant_id,
-                fetch_mode="val"
+                tenant_id
             )
-            
+            result = list(row.values())[0] if row else 0
+
             return (result or 0) + 1
-            
+
         except Exception as e:
             logger.warning("Failed to get sequence number, using timestamp", error=str(e))
             # Fallback to timestamp-based sequence
