@@ -1020,9 +1020,9 @@ class AuthenticationService:
     
     async def _create_session(self, user: UserTable, refresh_token: str) -> SessionInfo:
         """Create a new user session"""
-        
+
         session_id = str(uuid4())
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
         expiry = now + timedelta(days=self.settings.REFRESH_TOKEN_EXPIRE_DAYS)
         session_info = SessionInfo(
             session_id=session_id,

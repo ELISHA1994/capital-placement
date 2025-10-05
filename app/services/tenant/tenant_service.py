@@ -325,7 +325,7 @@ class TenantService:
                 tenant_dict[field] = value
         
         # Update the timestamp
-        tenant_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+        tenant_dict["updated_at"] = datetime.utcnow()
         
         # Save updates
         updated_tenant_data = await self.tenant_repo.update(tenant_id, tenant_dict)
@@ -358,7 +358,7 @@ class TenantService:
         
         tenant_dict["is_suspended"] = True
         tenant_dict["suspension_reason"] = reason
-        tenant_dict["suspended_at"] = datetime.now(timezone.utc).isoformat()
+        tenant_dict["suspended_at"] = datetime.utcnow()
         
         await self.tenant_repo.update(tenant_id, tenant_dict)
         await self._invalidate_tenant_cache(tenant_id)
@@ -412,7 +412,7 @@ class TenantService:
             tenant_dict = dict(tenant_data) if not isinstance(tenant_data, dict) else tenant_data
         
         tenant_dict["is_active"] = False
-        tenant_dict["deleted_at"] = datetime.now(timezone.utc).isoformat()
+        tenant_dict["deleted_at"] = datetime.utcnow()
         
         await self.tenant_repo.update(tenant_id, tenant_dict)
         await self._invalidate_tenant_cache(tenant_id)
@@ -470,7 +470,7 @@ class TenantService:
                 usage_metrics[metric] = current_value + value
         
         tenant_dict["usage_metrics"] = usage_metrics
-        tenant_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+        tenant_dict["updated_at"] = datetime.utcnow()
         
         await self.tenant_repo.update(tenant_id, tenant_dict)
         await self._invalidate_tenant_cache(tenant_id)
@@ -569,9 +569,9 @@ class TenantService:
         # Hash the password
         from app.utils.security import password_manager
         hashed_password = password_manager.hash_password(password)
-        
+
         # Prepare user data
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.utcnow()
         user_data = {
             "id": str(uuid4()),
             "tenant_id": tenant_id,
@@ -722,7 +722,7 @@ class TenantService:
         user_dict["roles"] = updated_roles
         user_dict["permissions"] = permissions
         user_dict["is_superuser"] = "admin" in updated_roles or "super_admin" in updated_roles
-        user_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+        user_dict["updated_at"] = datetime.utcnow()
         
         # Update user in database
         updated_user_data = await self.user_repo.update(user_id, user_dict)
@@ -773,7 +773,7 @@ class TenantService:
         
         # Deactivate user instead of deleting - update dictionary fields
         user_dict['is_active'] = False
-        user_dict['updated_at'] = datetime.now(timezone.utc).isoformat()
+        user_dict['updated_at'] = datetime.utcnow()
         
         # Update user in database with proper parameters (user_id, user_dict)
         await self.user_repo.update(user_id, user_dict)
@@ -811,7 +811,7 @@ class TenantService:
         tenant_dict["subscription_tier"] = tier
         tenant_dict["quota_limits"] = self._get_default_quota_limits(tier).model_dump()
         tenant_dict["feature_flags"] = self._get_default_feature_flags(tier).model_dump()
-        tenant_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+        tenant_dict["updated_at"] = datetime.utcnow()
         
         await self.tenant_repo.update(tenant_id, tenant_dict)
         await self._invalidate_tenant_cache(tenant_id)
@@ -1099,12 +1099,12 @@ class TenantService:
         subscription_tier: SubscriptionTier
     ) -> Dict[str, Any]:
         """Prepare tenant data for creation."""
-        
-        now = datetime.now(timezone.utc).isoformat()
-        
+
+        now = datetime.utcnow()
+
         # Generate slug from display name if name is different, otherwise use name as slug
         slug = SecurityValidator.generate_slug_from_name(display_name) if name != display_name else name
-        
+
         return {
             "id": str(uuid4()),
             "name": name,
@@ -1129,14 +1129,14 @@ class TenantService:
         connection
     ) -> Dict[str, Any]:
         """Create admin user within an existing transaction."""
-        
+
         from app.utils.security import password_manager
-        
+
         # Hash password
         hashed_password = password_manager.hash_password(admin_data["password"])
-        
+
         # Prepare user data
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.utcnow()
         user_data = {
             "id": str(uuid4()),
             "tenant_id": tenant_id,
