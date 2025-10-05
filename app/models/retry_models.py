@@ -1,7 +1,5 @@
 """SQLModel models for retry mechanism and error recovery system."""
 
-from __future__ import annotations
-
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
