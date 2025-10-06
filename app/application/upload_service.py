@@ -554,7 +554,7 @@ class UploadApplicationService:
 
             return ProcessingStatusResponse(
                 upload_id=upload_id,
-                profile_id=processing_record["document_id"],
+                profile_id=str(processing_record["document_id"]),
                 status=ProcessingStatus(processing_record["status"]),
                 progress_percentage=progress_percentage,
                 processing_duration_seconds=(
@@ -634,8 +634,8 @@ class UploadApplicationService:
 
                 individual_status.append(
                     {
-                        "upload_id": record["id"],
-                        "profile_id": record["document_id"],
+                        "upload_id": str(record["id"]),
+                        "profile_id": str(record["document_id"]),
                         "filename": record.get("filename", "Unknown"),
                         "status": status,
                         "quality_score": record.get("quality_score"),
@@ -789,6 +789,7 @@ class UploadApplicationService:
 
             # Extract structured data
             analysis_result = await self._deps.content_extractor.extract_cv_data(text_content)
+            logger.info("Processing result", upload_id=upload_id, analysis_result=analysis_result)
 
             # Analyze quality
             quality_assessment = await self._deps.quality_analyzer.analyze_document_quality(
@@ -1244,8 +1245,8 @@ class UploadApplicationService:
 
                 individual_status.append(
                     {
-                        "upload_id": record["id"],
-                        "profile_id": record["document_id"],
+                        "upload_id": str(record["id"]),
+                        "profile_id": str(record["document_id"]),
                         "filename": record.get("filename", "Unknown"),
                         "status": status,
                         "quality_score": record.get("quality_score"),

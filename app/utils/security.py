@@ -146,7 +146,7 @@ class TokenManager:
         except jwt.ExpiredSignatureError:
             logger.warning("Token has expired")
             return None
-        except jwt.JWTError as e:
+        except (jwt.PyJWTError, jwt.InvalidTokenError, Exception) as e:
             logger.warning("Token validation failed", error=str(e))
             return None
     
@@ -191,7 +191,7 @@ class TokenManager:
             return False
         except jwt.ExpiredSignatureError:
             return True
-        except jwt.JWTError:
+        except (jwt.PyJWTError, jwt.InvalidTokenError, Exception):
             return True  # Invalid tokens are considered expired
 
 
