@@ -422,6 +422,7 @@ class TenantTable(TimestampedModel, table=True):
     profiles: List["ProfileTable"] = Relationship(back_populates="tenant")
     embeddings: List["EmbeddingTable"] = Relationship(back_populates="tenant")
     audit_logs: List["AuditLogTable"] = Relationship(back_populates="tenant")
+    document_processing: List["DocumentProcessingTable"] = Relationship(back_populates="tenant")
 
 
 class TenantConfigurationTable(TimestampedModel, table=True):

@@ -25,16 +25,16 @@ class EventPublisherAdapter(IEventPublisher):
         """Publish domain event."""
         try:
             event_type = type(event).__name__
-            
+
             logger.debug(
                 "Publishing domain event",
                 event_type=event_type,
                 event_id=getattr(event, 'id', 'unknown')
             )
-            
+
             # Store event for debugging/auditing
             self._published_events.append(event)
-            
+
             # Notify registered handlers
             handlers = self._handlers.get(event_type, [])
             for handler in handlers:
@@ -48,13 +48,13 @@ class EventPublisherAdapter(IEventPublisher):
                         handler=handler.__name__ if hasattr(handler, '__name__') else str(handler),
                         error=str(e)
                     )
-            
+
             logger.debug(
                 "Domain event published successfully",
                 event_type=event_type,
                 handlers_notified=len(handlers)
             )
-            
+
         except Exception as e:
             logger.error(
                 "Failed to publish domain event",
@@ -62,6 +62,86 @@ class EventPublisherAdapter(IEventPublisher):
                 error=str(e)
             )
             # Don't re-raise to avoid breaking business operations
+
+    async def publish_event(self, topic: str, event_data: Dict[str, Any]) -> bool:
+        """Publish a single event to a topic."""
+        try:
+            logger.debug(
+                "Publishing event to topic",
+                topic=topic,
+                event_id=event_data.get('id', 'unknown')
+            )
+
+            # Store event for debugging/auditing
+            self._published_events.append({'topic': topic, 'data': event_data})
+
+            # Notify registered handlers for this topic
+            handlers = self._handlers.get(topic, [])
+            for handler in handlers:
+                try:
+                    if callable(handler):
+                        await handler(event_data) if hasattr(handler, '__await__') else handler(event_data)
+                except Exception as e:
+                    logger.error(
+                        "Event handler failed",
+                        topic=topic,
+                        handler=handler.__name__ if hasattr(handler, '__name__') else str(handler),
+                        error=str(e)
+                    )
+
+            logger.debug(
+                "Event published successfully to topic",
+                topic=topic,
+                handlers_notified=len(handlers)
+            )
+            return True
+
+        except Exception as e:
+            logger.error(
+                "Failed to publish event to topic",
+                topic=topic,
+                error=str(e)
+            )
+            return False
+
+    async def publish_events(self, topic: str, events: List[Dict[str, Any]]) -> bool:
+        """Publish multiple events to a topic."""
+        try:
+            logger.debug(
+                "Publishing multiple events to topic",
+                topic=topic,
+                event_count=len(events)
+            )
+
+            success = True
+            for event_data in events:
+                result = await self.publish_event(topic, event_data)
+                if not result:
+                    success = False
+
+            logger.debug(
+                "Multiple events published to topic",
+                topic=topic,
+                event_count=len(events),
+                success=success
+            )
+            return success
+
+        except Exception as e:
+            logger.error(
+                "Failed to publish multiple events to topic",
+                topic=topic,
+                error=str(e)
+            )
+            return False
+
+    async def health_check(self) -> Dict[str, Any]:
+        """Health check for event publisher."""
+        return {
+            "status": "healthy",
+            "handlers_registered": len(self._handlers),
+            "events_published": len(self._published_events)
+        }
 
     def register_handler(self, event_type: str, handler: callable) -> None:
         """Register event handler for specific event type."""

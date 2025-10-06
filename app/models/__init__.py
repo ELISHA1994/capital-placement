@@ -12,6 +12,7 @@ from .job import Job, JobCreate, JobUpdate, JobStatus
 from .embedding import EmbeddingTable
 from .retry_models import RetryStateModel, RetryAttemptModel, DeadLetterModel, RetryPolicyTemplate
 from .webhook import WebhookEndpointTable, WebhookDeliveryTable, WebhookDeadLetterTable
+from .document_processing import DocumentProcessingTable, DocumentProcessing
 
 __all__ = [
     # Base models
@@ -76,4 +77,8 @@ __all__ = [
     "WebhookEndpointTable",
     "WebhookDeliveryTable",
     "WebhookDeadLetterTable",
+
+    # Document processing models
+    "DocumentProcessingTable",
+    "DocumentProcessing",
 ]

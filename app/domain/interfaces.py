@@ -490,8 +490,14 @@ class IPDFProcessor(IHealthCheck, ABC):
     """PDF processing service interface."""
 
     @abstractmethod
-    async def extract_content(self, file_content: bytes) -> Dict[str, Any]:
-        """Extract text and metadata from PDF."""
+    async def process_pdf(
+        self,
+        pdf_content: bytes,
+        filename: Optional[str] = None,
+        extract_metadata: bool = True,
+        validate_content: bool = True
+    ) -> Any:  # Returns PDFDocument object
+        """Process PDF document and extract content."""
         pass
 
     @abstractmethod
@@ -504,13 +510,25 @@ class IQualityAnalyzer(IHealthCheck, ABC):
     """Document quality analysis service interface."""
 
     @abstractmethod
-    async def analyze_quality(
+    async def analyze_document_quality(
         self,
-        extracted_text: str,
-        structured_data: Dict[str, Any],
-        document_type: str = "cv",
+        text: str,
+        document_type: str,
+        structured_data: Optional[Dict[str, Any]] = None,
+        use_ai: bool = True
     ) -> Dict[str, Any]:
-        """Analyze document quality."""
+        """
+        Perform comprehensive quality analysis on a document.
+
+        Args:
+            text: Document text content
+            document_type: Type of document being analyzed (e.g., 'cv', 'job_description')
+            structured_data: Optional structured data from content extraction
+            use_ai: Whether to use AI for advanced quality assessment
+
+        Returns:
+            Quality assessment dictionary with scores and recommendations
+        """
         pass
 
     @abstractmethod

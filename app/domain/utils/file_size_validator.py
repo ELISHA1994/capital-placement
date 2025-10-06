@@ -221,29 +221,36 @@ class FileSizeValidator:
     ) -> int:
         """
         Extract maximum file size from tenant configuration.
-        
+
         Args:
-            tenant_config: Tenant configuration dictionary
+            tenant_config: Tenant configuration dictionary or TenantConfiguration entity
             default_mb: Default size limit in MB if not configured
-            
+
         Returns:
             Maximum file size in bytes
         """
-        # Check quota_limits first (new structure)
-        quota_limits = tenant_config.get("quota_limits", {})
-        if "max_document_size_mb" in quota_limits:
-            max_mb = quota_limits["max_document_size_mb"]
+        # Handle both dict and domain entity (TenantConfiguration)
+        if hasattr(tenant_config, 'get'):
+            # It's a dictionary
+            # Check quota_limits first (new structure)
+            quota_limits = tenant_config.get("quota_limits", {})
+            if "max_document_size_mb" in quota_limits:
+                max_mb = quota_limits["max_document_size_mb"]
+            else:
+                # Fallback to direct configuration (legacy)
+                max_mb = tenant_config.get("max_file_size_mb", default_mb)
         else:
-            # Fallback to direct configuration (legacy)
-            max_mb = tenant_config.get("max_file_size_mb", default_mb)
-        
+            # It's a domain entity - use default for now
+            # TODO: Access tenant entity's quota_limits attributes
+            max_mb = default_mb
+
         # Ensure we have a reasonable limit
         if max_mb is None or max_mb <= 0:
             max_mb = default_mb
-        
+
         # Convert to bytes
         max_bytes = max_mb * 1024 * 1024
-        
+
         # Cap at absolute maximum for security
         return min(max_bytes, cls.ABSOLUTE_MAX_SIZE)
     

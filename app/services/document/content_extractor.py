@@ -11,6 +11,7 @@ Advanced content analysis and structured extraction:
 
 import re
 import json
+import hashlib
 from typing import Dict, List, Optional, Any, Tuple, Union
 from datetime import datetime
 from dataclasses import dataclass
@@ -568,7 +569,165 @@ class ContentExtractor:
             logger.error(f"Section parsing failed: {e}")
         
         return sections
-    
+
+    async def extract_cv_data(self, text_content: str) -> Dict[str, Any]:
+        """
+        Extract structured data from CV text.
+
+        This method implements the IContentExtractor interface and provides
+        backward compatibility with existing code.
+
+        Args:
+            text_content: Raw CV text content
+
+        Returns:
+            Dictionary with extracted CV data
+        """
+        if not text_content or not text_content.strip():
+            logger.warning("Empty text content provided for CV extraction")
+            return {}
+
+        try:
+            # Use the existing _extract_cv_information method
+            cv_data = await self._extract_cv_information(text_content)
+
+            logger.debug(
+                "CV data extraction completed",
+                has_data=bool(cv_data),
+                data_keys=list(cv_data.keys()) if cv_data else []
+            )
+
+            return cv_data
+
+        except Exception as e:
+            logger.error(f"CV data extraction failed: {e}")
+            self._stats["extraction_errors"] += 1
+            return {"error": str(e), "extraction_failed": True}
+
+    def prepare_text_for_embedding(
+        self,
+        text_content: str,
+        structured_data: Dict[str, Any]
+    ) -> str:
+        """
+        Prepare text for embedding generation by combining raw text with structured data.
+
+        This creates an optimized representation that includes both the original content
+        and key extracted information for better semantic search.
+
+        Args:
+            text_content: Original text content
+            structured_data: Extracted structured data
+
+        Returns:
+            Prepared text string for embedding
+        """
+        try:
+            # Start with the original text (truncated if needed)
+            max_text_length = 6000
+            prepared_text = text_content[:max_text_length] if len(text_content) > max_text_length else text_content
+
+            # Add structured data for enrichment
+            enrichment_parts = []
+
+            # Add personal information
+            if "personal_info" in structured_data:
+                personal = structured_data["personal_info"]
+                if isinstance(personal, dict):
+                    if personal.get("name"):
+                        enrichment_parts.append(f"Name: {personal['name']}")
+                    if personal.get("email"):
+                        enrichment_parts.append(f"Email: {personal['email']}")
+                    if personal.get("location"):
+                        enrichment_parts.append(f"Location: {personal['location']}")
+
+            # Add skills
+            if "skills" in structured_data:
+                skills = structured_data["skills"]
+                if isinstance(skills, list) and skills:
+                    enrichment_parts.append(f"Skills: {', '.join(str(s) for s in skills[:20])}")
+                elif isinstance(skills, dict) and skills.get("technical_skills"):
+                    tech_skills = skills["technical_skills"]
+                    if isinstance(tech_skills, list):
+                        enrichment_parts.append(f"Technical Skills: {', '.join(str(s) for s in tech_skills[:20])}")
+
+            # Add experience summary
+            if "experience" in structured_data:
+                experience = structured_data["experience"]
+                if isinstance(experience, list) and experience:
+                    exp_summaries = []
+                    for exp in experience[:3]:  # Top 3 experiences
+                        if isinstance(exp, dict):
+                            title = exp.get("title", "")
+                            company = exp.get("company", "")
+                            if title and company:
+                                exp_summaries.append(f"{title} at {company}")
+                    if exp_summaries:
+                        enrichment_parts.append(f"Experience: {'; '.join(exp_summaries)}")
+
+            # Add education
+            if "education" in structured_data:
+                education = structured_data["education"]
+                if isinstance(education, list) and education:
+                    edu_summaries = []
+                    for edu in education[:2]:  # Top 2 education entries
+                        if isinstance(edu, dict):
+                            degree = edu.get("degree", "")
+                            institution = edu.get("institution", "")
+                            if degree and institution:
+                                edu_summaries.append(f"{degree} from {institution}")
+                    if edu_summaries:
+                        enrichment_parts.append(f"Education: {'; '.join(edu_summaries)}")
+
+            # Combine everything
+            if enrichment_parts:
+                enrichment_text = "\n\n--- Extracted Information ---\n" + "\n".join(enrichment_parts)
+                prepared_text = prepared_text + enrichment_text
+
+            logger.debug(
+                "Text prepared for embedding",
+                original_length=len(text_content),
+                prepared_length=len(prepared_text),
+                enrichment_added=bool(enrichment_parts)
+            )
+
+            return prepared_text
+
+        except Exception as e:
+            logger.error(f"Text preparation for embedding failed: {e}")
+            # Return original text as fallback
+            return text_content[:8000]
+
+    def hash_content(self, text: str) -> str:
+        """
+        Generate a hash of content for deduplication and caching.
+
+        Args:
+            text: Text content to hash
+
+        Returns:
+            SHA256 hash of the content
+        """
+        try:
+            # Normalize text before hashing (lowercase, strip whitespace)
+            normalized_text = " ".join(text.lower().split())
+
+            # Generate SHA256 hash
+            content_hash = hashlib.sha256(normalized_text.encode('utf-8')).hexdigest()
+
+            logger.debug(
+                "Content hash generated",
+                text_length=len(text),
+                hash=content_hash[:16] + "..."
+            )
+
+            return content_hash
+
+        except Exception as e:
+            logger.error(f"Content hashing failed: {e}")
+            # Return a basic hash as fallback
+            return hashlib.sha256(text.encode('utf-8', errors='ignore')).hexdigest()
+
     def get_processing_stats(self) -> Dict[str, Any]:
         """Get processing statistics"""
         return {

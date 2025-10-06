@@ -153,7 +153,7 @@ class Settings(BaseSettings):
         description="OpenAI API base URL (default: OpenAI, can be Azure endpoint)"
     )
     OPENAI_MODEL: str = Field(
-        default="gpt-4",
+        default="gpt-4o",
         description="OpenAI chat model name"
     )
     OPENAI_EMBEDDING_MODEL: str = Field(

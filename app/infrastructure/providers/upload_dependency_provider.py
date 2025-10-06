@@ -29,8 +29,19 @@ class MockContentExtractor:
         return hashlib.md5(content.encode()).hexdigest()
 
 class MockQualityAnalyzer:
-    async def analyze_quality(self, extracted_text: str, structured_data: dict, **kwargs) -> dict:
-        return {"overall_score": 0.8, "quality_indicators": ["text_length"]}
+    async def analyze_document_quality(
+        self,
+        text: str,
+        document_type: str,
+        structured_data: Optional[dict] = None,
+        use_ai: bool = True
+    ) -> dict:
+        return {
+            "overall_score": 0.8,
+            "quality_indicators": ["text_length"],
+            "document_type": document_type,
+            "is_acceptable": True
+        }
 
 class MockEmbeddingService:
     async def generate_embedding(self, text: str, **kwargs) -> list[float]:

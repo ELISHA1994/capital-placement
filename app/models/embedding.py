@@ -7,7 +7,7 @@ vector embeddings used in semantic search and similarity operations.
 
 from typing import List, Optional
 from uuid import UUID
-from sqlalchemy import Column, ForeignKey
+from sqlalchemy import Column, ForeignKey, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlmodel import Field, Relationship
 from pgvector.sqlalchemy import Vector
@@ -28,15 +28,18 @@ class EmbeddingTable(VectorModel, TenantModel, table=True):
     )
     
     # Override embedding field with proper Vector column
+    # Using 3072 dimensions for text-embedding-3-large model
     embedding: Optional[List[float]] = Field(
         default=None,
-        sa_column=Column(Vector(1536), nullable=True),
+        sa_column=Column(Vector(3072), nullable=True),
         description="Vector embedding for similarity search"
     )
     
     # Relationship to tenant (required for SQLModel to create foreign key constraints)
     tenant: Optional["TenantTable"] = Relationship(back_populates="embeddings")
-    
-    # Indexes will be created via migrations for optimal performance:
-    # CREATE INDEX embeddings_tenant_entity_idx ON embeddings (tenant_id, entity_id, entity_type);
-    # CREATE INDEX embeddings_embedding_hnsw_idx ON embeddings USING hnsw (embedding vector_cosine_ops);
+
+    # Table constraints and indexes
+    __table_args__ = (
+        UniqueConstraint("entity_id", "entity_type", "tenant_id", name="uq_embeddings_entity_tenant"),
+        Index("ix_embeddings_tenant_entity", "tenant_id", "entity_id", "entity_type"),
+    )

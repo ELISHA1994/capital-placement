@@ -163,13 +163,15 @@ class AuditLogTable(TenantModel, table=True):
     )
     
     # Network and client information
-    ip_address: str = Field(
-        sa_column=Column(INET, nullable=False),
+    ip_address: Optional[str] = Field(
+        default=None,
+        sa_column=Column(INET, nullable=True),
         description="Client IP address"
     )
-    
-    user_agent: str = Field(
-        sa_column=Column(Text, nullable=False),
+
+    user_agent: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
         description="Client user agent string"
     )
     
@@ -280,8 +282,8 @@ class AuditLogCreate(BaseModel):
     resource_id: Optional[str] = Field(None, description="Resource identifier")
     action: str = Field(..., description="Action performed")
     details: Dict[str, Any] = Field(default_factory=dict, description="Action details")
-    ip_address: str = Field(..., description="Client IP address")
-    user_agent: str = Field(..., description="Client user agent")
+    ip_address: Optional[str] = Field(None, description="Client IP address")
+    user_agent: Optional[str] = Field(None, description="Client user agent")
     risk_level: AuditRiskLevel = Field(default=AuditRiskLevel.LOW, description="Risk level")
     suspicious: bool = Field(default=False, description="Suspicious activity flag")
     correlation_id: Optional[str] = Field(None, description="Correlation ID")
@@ -302,7 +304,7 @@ class AuditLogResponse(BaseModel):
     resource_id: Optional[str] = Field(None, description="Resource ID")
     action: str = Field(..., description="Action")
     details: Dict[str, Any] = Field(..., description="Details")
-    ip_address: str = Field(..., description="IP address")
+    ip_address: Optional[str] = Field(None, description="IP address")
     risk_level: str = Field(..., description="Risk level")
     suspicious: bool = Field(..., description="Suspicious flag")
     event_timestamp: str = Field(..., description="Event timestamp")
@@ -321,7 +323,7 @@ class AuditLogResponse(BaseModel):
             resource_id=audit_log.resource_id,
             action=audit_log.action,
             details=audit_log.details,
-            ip_address=str(audit_log.ip_address),
+            ip_address=str(audit_log.ip_address) if audit_log.ip_address else None,
             risk_level=audit_log.risk_level.value,
             suspicious=audit_log.suspicious,
             event_timestamp=audit_log.event_timestamp.isoformat(),

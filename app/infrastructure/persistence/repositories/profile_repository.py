@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from uuid import UUID
+from datetime import datetime, timedelta
 
-from app.domain.entities.profile import Profile
+from app.domain.entities.profile import Profile, ProfileStatus, ExperienceLevel
 from app.domain.repositories.profile_repository import IProfileRepository
-from app.domain.value_objects import ProfileId, TenantId
+from app.domain.value_objects import ProfileId, TenantId, MatchScore
 from app.infrastructure.persistence.mappers.profile_mapper import ProfileMapper
 from app.models.profile import ProfileTable
 from app.infrastructure.providers.postgres_provider import get_postgres_adapter
@@ -290,20 +291,399 @@ class PostgresProfileRepository(IProfileRepository):
     async def update_search_appearances(self, profile_id: ProfileId) -> None:
         """Increment profile search appearances count."""
         adapter = await self._get_adapter()
-        
+
         try:
             await adapter.execute(
                 """
-                UPDATE profiles 
+                UPDATE profiles
                 SET search_appearances = search_appearances + 1,
                     updated_at = NOW()
                 WHERE id = $1
                 """,
                 profile_id.value
             )
-            
+
         except Exception as e:
             raise Exception(f"Failed to update search appearances: {str(e)}")
+
+    # Interface method implementations
+    async def get_by_id(self, profile_id: ProfileId, tenant_id: TenantId) -> Optional[Profile]:
+        """Load a profile aggregate by identifier within tenant scope."""
+        adapter = await self._get_adapter()
+
+        try:
+            record = await adapter.fetch_one(
+                "SELECT * FROM profiles WHERE id = $1 AND tenant_id = $2",
+                profile_id.value, tenant_id.value
+            )
+
+            if not record:
+                return None
+
+            profile_table = ProfileTable(**dict(record))
+            return ProfileMapper.to_domain(profile_table)
+
+        except Exception as e:
+            raise Exception(f"Failed to get profile by ID: {str(e)}")
+
+    async def get_by_email(self, email: str, tenant_id: TenantId) -> Optional[Profile]:
+        """Get a profile by email within tenant scope."""
+        return await self.find_by_email(tenant_id, email)
+
+    async def list_by_tenant(
+        self,
+        tenant_id: TenantId,
+        status: Optional[ProfileStatus] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[Profile]:
+        """List profiles for a tenant with optional filtering."""
+        adapter = await self._get_adapter()
+
+        try:
+            if status:
+                records = await adapter.fetch_all(
+                    "SELECT * FROM profiles WHERE tenant_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4",
+                    tenant_id.value, status.value, limit, offset
+                )
+            else:
+                records = await adapter.fetch_all(
+                    "SELECT * FROM profiles WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+                    tenant_id.value, limit, offset
+                )
+
+            profiles = []
+            for record in records:
+                profile_table = ProfileTable(**dict(record))
+                profiles.append(ProfileMapper.to_domain(profile_table))
+
+            return profiles
+
+        except Exception as e:
+            raise Exception(f"Failed to list profiles by tenant: {str(e)}")
+
+    async def search_by_vector(
+        self,
+        tenant_id: TenantId,
+        query_vector: List[float],
+        *,
+        limit: int = 20,
+        threshold: float = 0.7,
+    ) -> List[Tuple[Profile, MatchScore]]:
+        """Run vector similarity search for candidate discovery."""
+        adapter = await self._get_adapter()
+
+        try:
+            # Use pgvector cosine similarity search
+            vector_str = f"[{','.join(map(str, query_vector))}]"
+
+            records = await adapter.fetch_all(
+                """
+                SELECT *, 1 - (overall_embedding <=> $2::vector) as similarity
+                FROM profiles
+                WHERE tenant_id = $1
+                AND overall_embedding IS NOT NULL
+                AND 1 - (overall_embedding <=> $2::vector) >= $3
+                ORDER BY similarity DESC
+                LIMIT $4
+                """,
+                tenant_id.value, vector_str, threshold, limit
+            )
+
+            results = []
+            for record in records:
+                profile_data = dict(record)
+                similarity = profile_data.pop('similarity', 0.0)
+                profile_table = ProfileTable(**profile_data)
+                profile = ProfileMapper.to_domain(profile_table)
+                match_score = MatchScore(float(similarity))
+                results.append((profile, match_score))
+
+            return results
+
+        except Exception as e:
+            raise Exception(f"Failed to search by vector: {str(e)}")
+
+    async def search_by_skills(
+        self,
+        tenant_id: TenantId,
+        skills: List[str],
+        experience_level: Optional[ExperienceLevel] = None,
+        limit: int = 50
+    ) -> List[Tuple[Profile, MatchScore]]:
+        """Search profiles by required skills."""
+        adapter = await self._get_adapter()
+
+        try:
+            # Build skill conditions
+            skill_conditions = []
+            params = [tenant_id.value]
+            param_idx = 2
+
+            for skill in skills:
+                skill_conditions.append(f"normalized_skills @> ${param_idx}")
+                params.append([skill.lower()])
+                param_idx += 1
+
+            where_clause = " AND ".join(skill_conditions)
+
+            # Add experience level filter if provided
+            if experience_level:
+                where_clause += f" AND experience_level = ${param_idx}"
+                params.append(experience_level.value)
+                param_idx += 1
+
+            query = f"""
+                SELECT * FROM profiles
+                WHERE tenant_id = $1
+                AND ({where_clause})
+                ORDER BY quality_score DESC NULLS LAST, created_at DESC
+                LIMIT ${param_idx}
+            """
+            params.append(limit)
+
+            records = await adapter.fetch_all(query, *params)
+
+            results = []
+            for record in records:
+                profile_table = ProfileTable(**dict(record))
+                profile = ProfileMapper.to_domain(profile_table)
+                # Calculate match score based on quality score (0.0 - 1.0)
+                quality = float(profile_table.quality_score or 0.5)
+                match_score = MatchScore(quality)
+                results.append((profile, match_score))
+
+            return results
+
+        except Exception as e:
+            raise Exception(f"Failed to search profiles by skills: {str(e)}")
+
+    async def delete(self, profile_id: ProfileId, tenant_id: TenantId) -> bool:
+        """Delete a profile (hard delete)."""
+        adapter = await self._get_adapter()
+
+        try:
+            result = await adapter.execute(
+                "DELETE FROM profiles WHERE id = $1 AND tenant_id = $2",
+                profile_id.value, tenant_id.value
+            )
+
+            return result and result.split()[-1] != '0'
+
+        except Exception as e:
+            raise Exception(f"Failed to delete profile: {str(e)}")
+
+    async def count_by_tenant(
+        self,
+        tenant_id: TenantId,
+        status: Optional[ProfileStatus] = None
+    ) -> int:
+        """Count profiles for a tenant."""
+        adapter = await self._get_adapter()
+
+        try:
+            if status:
+                record = await adapter.fetch_one(
+                    "SELECT COUNT(*) as count FROM profiles WHERE tenant_id = $1 AND status = $2",
+                    tenant_id.value, status.value
+                )
+            else:
+                record = await adapter.fetch_one(
+                    "SELECT COUNT(*) as count FROM profiles WHERE tenant_id = $1",
+                    tenant_id.value
+                )
+
+            return record['count'] if record else 0
+
+        except Exception as e:
+            raise Exception(f"Failed to count profiles by tenant: {str(e)}")
+
+    async def get_by_ids(
+        self,
+        profile_ids: List[ProfileId],
+        tenant_id: TenantId
+    ) -> List[Profile]:
+        """Get multiple profiles by IDs."""
+        adapter = await self._get_adapter()
+
+        try:
+            if not profile_ids:
+                return []
+
+            # Convert ProfileId objects to UUIDs
+            id_values = [pid.value for pid in profile_ids]
+
+            records = await adapter.fetch_all(
+                "SELECT * FROM profiles WHERE id = ANY($1) AND tenant_id = $2",
+                id_values, tenant_id.value
+            )
+
+            profiles = []
+            for record in records:
+                profile_table = ProfileTable(**dict(record))
+                profiles.append(ProfileMapper.to_domain(profile_table))
+
+            return profiles
+
+        except Exception as e:
+            raise Exception(f"Failed to get profiles by IDs: {str(e)}")
+
+    async def update_analytics(
+        self,
+        profile_id: ProfileId,
+        tenant_id: TenantId,
+        view_increment: int = 0,
+        search_appearance_increment: int = 0
+    ) -> bool:
+        """Update profile analytics counters."""
+        adapter = await self._get_adapter()
+
+        try:
+            updates = []
+            if view_increment > 0:
+                updates.append(f"view_count = view_count + {view_increment}")
+                updates.append("last_viewed_at = NOW()")
+            if search_appearance_increment > 0:
+                updates.append(f"search_appearances = search_appearances + {search_appearance_increment}")
+
+            if not updates:
+                return True  # No updates needed
+
+            updates.append("updated_at = NOW()")
+            update_clause = ", ".join(updates)
+
+            result = await adapter.execute(
+                f"UPDATE profiles SET {update_clause} WHERE id = $1 AND tenant_id = $2",
+                profile_id.value, tenant_id.value
+            )
+
+            return result and result.split()[-1] != '0'
+
+        except Exception as e:
+            raise Exception(f"Failed to update analytics: {str(e)}")
+
+    async def list_pending_processing(
+        self,
+        tenant_id: Optional[TenantId] = None,
+        limit: int = 100
+    ) -> List[Profile]:
+        """List profiles pending processing."""
+        adapter = await self._get_adapter()
+
+        try:
+            if tenant_id:
+                records = await adapter.fetch_all(
+                    """
+                    SELECT * FROM profiles
+                    WHERE tenant_id = $1 AND processing_status = 'pending'
+                    ORDER BY created_at ASC
+                    LIMIT $2
+                    """,
+                    tenant_id.value, limit
+                )
+            else:
+                records = await adapter.fetch_all(
+                    """
+                    SELECT * FROM profiles
+                    WHERE processing_status = 'pending'
+                    ORDER BY created_at ASC
+                    LIMIT $1
+                    """,
+                    limit
+                )
+
+            profiles = []
+            for record in records:
+                profile_table = ProfileTable(**dict(record))
+                profiles.append(ProfileMapper.to_domain(profile_table))
+
+            return profiles
+
+        except Exception as e:
+            raise Exception(f"Failed to list pending processing profiles: {str(e)}")
+
+    async def list_for_archival(
+        self,
+        tenant_id: TenantId,
+        days_inactive: int = 90
+    ) -> List[Profile]:
+        """List profiles eligible for archival."""
+        adapter = await self._get_adapter()
+
+        try:
+            cutoff_date = datetime.utcnow() - timedelta(days=days_inactive)
+
+            records = await adapter.fetch_all(
+                """
+                SELECT * FROM profiles
+                WHERE tenant_id = $1
+                AND last_activity_at < $2
+                AND status != 'archived'
+                ORDER BY last_activity_at ASC
+                """,
+                tenant_id.value, cutoff_date
+            )
+
+            profiles = []
+            for record in records:
+                profile_table = ProfileTable(**dict(record))
+                profiles.append(ProfileMapper.to_domain(profile_table))
+
+            return profiles
+
+        except Exception as e:
+            raise Exception(f"Failed to list profiles for archival: {str(e)}")
+
+    async def get_statistics(
+        self,
+        tenant_id: TenantId
+    ) -> Dict[str, Any]:
+        """Get profile statistics for a tenant."""
+        adapter = await self._get_adapter()
+
+        try:
+            stats = {}
+
+            # Total count
+            total_record = await adapter.fetch_one(
+                "SELECT COUNT(*) as count FROM profiles WHERE tenant_id = $1",
+                tenant_id.value
+            )
+            stats['total_profiles'] = total_record['count'] if total_record else 0
+
+            # Count by status
+            status_records = await adapter.fetch_all(
+                "SELECT status, COUNT(*) as count FROM profiles WHERE tenant_id = $1 GROUP BY status",
+                tenant_id.value
+            )
+            stats['by_status'] = {record['status']: record['count'] for record in status_records}
+
+            # Average quality score
+            quality_record = await adapter.fetch_one(
+                "SELECT AVG(quality_score) as avg_quality FROM profiles WHERE tenant_id = $1 AND quality_score IS NOT NULL",
+                tenant_id.value
+            )
+            stats['average_quality_score'] = float(quality_record['avg_quality']) if quality_record and quality_record['avg_quality'] else 0.0
+
+            # Profiles with embeddings
+            embedding_record = await adapter.fetch_one(
+                "SELECT COUNT(*) as count FROM profiles WHERE tenant_id = $1 AND overall_embedding IS NOT NULL",
+                tenant_id.value
+            )
+            stats['profiles_with_embeddings'] = embedding_record['count'] if embedding_record else 0
+
+            # Recent activity (last 7 days)
+            recent_cutoff = datetime.utcnow() - timedelta(days=7)
+            recent_record = await adapter.fetch_one(
+                "SELECT COUNT(*) as count FROM profiles WHERE tenant_id = $1 AND last_activity_at >= $2",
+                tenant_id.value, recent_cutoff
+            )
+            stats['recent_activity_count'] = recent_record['count'] if recent_record else 0
+
+            return stats
+
+        except Exception as e:
+            raise Exception(f"Failed to get profile statistics: {str(e)}")
 
 
 __all__ = ["PostgresProfileRepository"]

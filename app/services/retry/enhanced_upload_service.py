@@ -201,23 +201,26 @@ class EnhancedUploadService:
         filename: str
     ) -> Dict[str, Any]:
         """Core content extraction operation."""
-        
+
         # Import here to avoid circular dependencies
-        from app.infrastructure.providers.ai_provider import get_pdf_processor
-        
+        from app.infrastructure.providers.document_provider import get_pdf_processor
+
         pdf_processor = await get_pdf_processor()
-        
-        # Extract content using PDF processor
-        extraction_result = await pdf_processor.extract_content(file_content)
-        
-        if not extraction_result.get("text"):
+
+        # Process PDF using correct method which returns a PDFDocument object
+        pdf_document = await pdf_processor.process_pdf(
+            pdf_content=file_content,
+            filename=filename
+        )
+
+        if not pdf_document.full_text:
             raise ValueError("No text content could be extracted from document")
-        
+
         return {
-            "raw_text": extraction_result["text"],
-            "metadata": extraction_result.get("metadata", {}),
-            "page_count": extraction_result.get("page_count", 1),
-            "word_count": len(extraction_result["text"].split()),
+            "raw_text": pdf_document.full_text,
+            "metadata": {**pdf_document.metadata, **pdf_document.processing_info},
+            "page_count": pdf_document.total_pages,
+            "word_count": pdf_document.total_words,
             "extraction_method": "pdf_processing"
         }
     

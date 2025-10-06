@@ -553,20 +553,27 @@ class FileContentValidator(IFileContentValidator):
     ) -> bool:
         """
         Check if file type is allowed based on extension.
-        
+
         Checks against tenant configuration or default allowed types.
         """
         if not extension:
             return False
-        
+
         if tenant_config:
-            allowed_extensions = tenant_config.get(
-                "allowed_file_extensions", 
-                [".pdf", ".doc", ".docx", ".txt"]
-            )
+            # Handle both dict and domain entity (TenantConfiguration)
+            if hasattr(tenant_config, 'get'):
+                # It's a dictionary
+                allowed_extensions = tenant_config.get(
+                    "allowed_file_extensions",
+                    [".pdf", ".doc", ".docx", ".txt"]
+                )
+            else:
+                # It's a domain entity - use default for now
+                # TODO: Access tenant entity's configuration attributes
+                allowed_extensions = [".pdf", ".doc", ".docx", ".txt"]
         else:
             allowed_extensions = [".pdf", ".doc", ".docx", ".txt"]
-        
+
         return extension.lower() in [ext.lower() for ext in allowed_extensions]
     
     # Private helper methods
@@ -665,10 +672,15 @@ class FileContentValidator(IFileContentValidator):
         tenant_config: Optional[Dict[str, Any]],
     ) -> Optional[int]:
         """Get maximum size limit for specific file type."""
-        if tenant_config and "file_type_limits" in tenant_config:
-            type_limits = tenant_config["file_type_limits"]
-            return type_limits.get(extension)
-        
+        # Handle both dict and domain entity
+        if tenant_config:
+            if hasattr(tenant_config, 'get'):
+                # It's a dictionary
+                if "file_type_limits" in tenant_config:
+                    type_limits = tenant_config["file_type_limits"]
+                    return type_limits.get(extension)
+            # If it's a domain entity, use defaults for now
+
         # Default limits by type
         defaults = {
             '.pdf': 25,   # 25MB for PDFs

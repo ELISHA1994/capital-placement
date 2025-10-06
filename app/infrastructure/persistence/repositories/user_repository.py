@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 from uuid import UUID
+from datetime import datetime, timedelta
 
 from app.domain.entities.user import User, UserRole, UserStatus
 from app.domain.repositories.user_repository import IUserRepository
@@ -314,11 +315,11 @@ class PostgresUserRepository(IUserRepository):
     async def unlock_user_account(self, user_id: UserId) -> None:
         """Unlock user account."""
         adapter = await self._get_adapter()
-        
+
         try:
             await adapter.execute(
                 """
-                UPDATE users 
+                UPDATE users
                 SET locked_until = NULL,
                     failed_login_attempts = 0,
                     updated_at = NOW()
@@ -326,9 +327,223 @@ class PostgresUserRepository(IUserRepository):
                 """,
                 user_id.value
             )
-            
+
         except Exception as e:
             raise Exception(f"Failed to unlock user account: {str(e)}")
+
+    # Abstract method implementations from IUserRepository
+
+    async def get_by_id(self, user_id: UserId, tenant_id: TenantId) -> Optional[User]:
+        """Get a user by ID within tenant scope."""
+        adapter = await self._get_adapter()
+
+        try:
+            record = await adapter.fetch_one(
+                "SELECT * FROM users WHERE id = $1 AND tenant_id = $2",
+                user_id.value, tenant_id.value
+            )
+
+            if not record:
+                return None
+
+            user_table = UserTable(**dict(record))
+            return UserMapper.to_domain(user_table)
+
+        except Exception as e:
+            raise Exception(f"Failed to get user by ID: {str(e)}")
+
+    async def get_by_email(self, email: EmailAddress, tenant_id: TenantId) -> Optional[User]:
+        """Get a user by email within tenant scope."""
+        adapter = await self._get_adapter()
+
+        try:
+            record = await adapter.fetch_one(
+                "SELECT * FROM users WHERE email = $1 AND tenant_id = $2",
+                str(email), tenant_id.value
+            )
+
+            if not record:
+                return None
+
+            user_table = UserTable(**dict(record))
+            return UserMapper.to_domain(user_table)
+
+        except Exception as e:
+            raise Exception(f"Failed to get user by email: {str(e)}")
+
+    async def list_by_tenant(
+        self,
+        tenant_id: TenantId,
+        role: Optional[UserRole] = None,
+        status: Optional[UserStatus] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[User]:
+        """List users for a tenant with optional filtering."""
+        adapter = await self._get_adapter()
+
+        try:
+            where_conditions = ["tenant_id = $1"]
+            params = [tenant_id.value]
+            param_index = 2
+
+            if role is not None:
+                where_conditions.append(f"roles @> ${param_index}")
+                params.append([role.value])
+                param_index += 1
+
+            if status is not None:
+                if status == UserStatus.ACTIVE:
+                    where_conditions.append("is_active = true")
+                elif status == UserStatus.INACTIVE:
+                    where_conditions.append("is_active = false")
+                elif status == UserStatus.SUSPENDED:
+                    where_conditions.append("locked_until IS NOT NULL")
+                elif status == UserStatus.PENDING_VERIFICATION:
+                    where_conditions.append("is_verified = false")
+
+            where_clause = " AND ".join(where_conditions)
+
+            params.append(limit)
+            params.append(offset)
+
+            records = await adapter.fetch_all(
+                f"SELECT * FROM users WHERE {where_clause} ORDER BY created_at DESC LIMIT ${param_index} OFFSET ${param_index + 1}",
+                *params
+            )
+
+            users = []
+            for record in records:
+                user_table = UserTable(**dict(record))
+                users.append(UserMapper.to_domain(user_table))
+
+            return users
+
+        except Exception as e:
+            raise Exception(f"Failed to list users by tenant: {str(e)}")
+
+    async def delete(self, user_id: UserId, tenant_id: TenantId) -> bool:
+        """Delete a user (hard delete)."""
+        adapter = await self._get_adapter()
+
+        try:
+            result = await adapter.execute(
+                "DELETE FROM users WHERE id = $1 AND tenant_id = $2",
+                user_id.value, tenant_id.value
+            )
+
+            return result and result.split()[-1] != '0'
+
+        except Exception as e:
+            raise Exception(f"Failed to delete user: {str(e)}")
+
+    async def count_by_tenant(
+        self,
+        tenant_id: TenantId,
+        status: Optional[UserStatus] = None
+    ) -> int:
+        """Count users for a tenant."""
+        adapter = await self._get_adapter()
+
+        try:
+            where_conditions = ["tenant_id = $1"]
+            params = [tenant_id.value]
+
+            if status is not None:
+                if status == UserStatus.ACTIVE:
+                    where_conditions.append("is_active = true")
+                elif status == UserStatus.INACTIVE:
+                    where_conditions.append("is_active = false")
+                elif status == UserStatus.SUSPENDED:
+                    where_conditions.append("locked_until IS NOT NULL")
+                elif status == UserStatus.PENDING_VERIFICATION:
+                    where_conditions.append("is_verified = false")
+
+            where_clause = " AND ".join(where_conditions)
+
+            record = await adapter.fetch_one(
+                f"SELECT COUNT(*) as count FROM users WHERE {where_clause}",
+                *params
+            )
+
+            return record['count'] if record else 0
+
+        except Exception as e:
+            raise Exception(f"Failed to count users by tenant: {str(e)}")
+
+    async def get_by_password_reset_token(self, token: str) -> Optional[User]:
+        """Get user by password reset token."""
+        adapter = await self._get_adapter()
+
+        try:
+            record = await adapter.fetch_one(
+                "SELECT * FROM users WHERE password_reset_token = $1 AND password_reset_expires_at > NOW()",
+                token
+            )
+
+            if not record:
+                return None
+
+            user_table = UserTable(**dict(record))
+            return UserMapper.to_domain(user_table)
+
+        except Exception as e:
+            raise Exception(f"Failed to get user by password reset token: {str(e)}")
+
+    async def get_by_email_verification_token(self, token: str) -> Optional[User]:
+        """Get user by email verification token."""
+        adapter = await self._get_adapter()
+
+        try:
+            record = await adapter.fetch_one(
+                "SELECT * FROM users WHERE email_verification_token = $1",
+                token
+            )
+
+            if not record:
+                return None
+
+            user_table = UserTable(**dict(record))
+            return UserMapper.to_domain(user_table)
+
+        except Exception as e:
+            raise Exception(f"Failed to get user by email verification token: {str(e)}")
+
+    async def list_inactive_users(
+        self,
+        tenant_id: TenantId,
+        days_inactive: int = 90
+    ) -> List[User]:
+        """List users who have been inactive for specified days."""
+        adapter = await self._get_adapter()
+
+        try:
+            cutoff_date = datetime.utcnow() - timedelta(days=days_inactive)
+
+            records = await adapter.fetch_all(
+                """
+                SELECT * FROM users
+                WHERE tenant_id = $1
+                AND (last_login_at IS NULL OR last_login_at < $2)
+                AND is_active = true
+                ORDER BY created_at DESC
+                """,
+                tenant_id.value, cutoff_date
+            )
+
+            users = []
+            for record in records:
+                user_table = UserTable(**dict(record))
+                users.append(UserMapper.to_domain(user_table))
+
+            return users
+
+        except Exception as e:
+            raise Exception(f"Failed to list inactive users: {str(e)}")
+
+    async def get_admins_by_tenant(self, tenant_id: TenantId) -> List[User]:
+        """Get all admin users for a tenant."""
+        return await self.find_admins_by_tenant_id(tenant_id)
 
 
 __all__ = ["PostgresUserRepository"]

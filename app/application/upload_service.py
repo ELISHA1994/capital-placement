@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
@@ -92,8 +93,8 @@ class UploadApplicationService:
                 filename=file.filename or "unknown",
                 file_size=getattr(file, "size", 0),
                 upload_id=upload_id,
-                ip_address="unknown",  # TODO: Extract from request context
-                user_agent="unknown",  # TODO: Extract from request context
+                ip_address=None,  # TODO: Extract from request context
+                user_agent=None,  # TODO: Extract from request context
             )
         except Exception as e:
             logger.warning("Failed to log file upload start audit event", error=str(e))
@@ -138,8 +139,8 @@ class UploadApplicationService:
                     validation_errors=validation_result.validation_errors,
                     security_warnings=validation_result.security_warnings,
                     error_message="File validation failed",
-                    ip_address="unknown",  # TODO: Extract from request context
-                    user_agent="unknown",  # TODO: Extract from request context
+                    ip_address=None,  # TODO: Extract from request context
+                    user_agent=None,  # TODO: Extract from request context
                 )
             except Exception as e:
                 logger.warning("Failed to log file validation failure audit event", error=str(e))
@@ -160,11 +161,19 @@ class UploadApplicationService:
             raise UploadError(status_code=400, detail=error_details)
         
         # Check if security warnings should cause rejection
-        processing_config = tenant_config.get("processing_configuration", {})
-        file_validation_config = processing_config.get("file_validation", {})
-        
-        if (validation_result.security_warnings and 
-            file_validation_config.get("reject_on_security_warnings", False)):
+        # Handle both dict and domain entity (TenantConfiguration)
+        if hasattr(tenant_config, 'get'):
+            # It's a dictionary
+            processing_config = tenant_config.get("processing_configuration", {})
+            file_validation_config = processing_config.get("file_validation", {})
+            reject_on_warnings = file_validation_config.get("reject_on_security_warnings", False)
+        else:
+            # It's a domain entity - access attributes directly
+            processing_config = tenant_config.processing_configuration
+            file_validation_config = processing_config.file_validation
+            reject_on_warnings = file_validation_config.reject_on_security_warnings
+
+        if validation_result.security_warnings and reject_on_warnings:
             logger.warning(
                 "File rejected due to security warnings",
                 upload_id=upload_id,
@@ -193,10 +202,17 @@ class UploadApplicationService:
         )
 
         # Check quota limits
+        # Handle both dict and domain entity for usage tracking
+        if hasattr(tenant_config, 'get'):
+            current_docs_today = tenant_config.get("documents_processed_today", 0)
+        else:
+            # Domain entity - field doesn't exist in current schema, default to 0
+            current_docs_today = 0
+
         quota_check = await self._deps.tenant_manager.check_quota_limit(
             tenant_id=str(current_user.tenant_id),
             resource_type="documents_per_day",
-            current_usage=tenant_config.get("documents_processed_today", 0),
+            current_usage=current_docs_today,
         )
         if not quota_check["allowed"]:
             raise UploadError(
@@ -284,8 +300,8 @@ class UploadApplicationService:
                 file_size=len(file_content),
                 upload_id=upload_id,
                 processing_duration_ms=processing_duration_ms,
-                ip_address="unknown",  # TODO: Extract from request context
-                user_agent="unknown",  # TODO: Extract from request context
+                ip_address=None,  # TODO: Extract from request context
+                user_agent=None,  # TODO: Extract from request context
             )
         except Exception as e:
             logger.warning("Failed to log file upload success audit event", error=str(e))
@@ -327,10 +343,17 @@ class UploadApplicationService:
         if webhook_url:
             self._deps.webhook_validator.validate_webhook_url(webhook_url)
 
+        # Handle both dict and domain entity for usage tracking
+        if hasattr(tenant_config, 'get'):
+            current_docs_today = tenant_config.get("documents_processed_today", 0)
+        else:
+            # Domain entity - field doesn't exist in current schema, default to 0
+            current_docs_today = 0
+
         quota_check = await self._deps.tenant_manager.check_quota_limit(
             tenant_id=str(current_user.tenant_id),
             resource_type="documents_per_day",
-            current_usage=tenant_config.get("documents_processed_today", 0),
+            current_usage=current_docs_today,
             increment=len(files),
         )
 
@@ -361,13 +384,19 @@ class UploadApplicationService:
                 )
 
                 # Check if security warnings should cause rejection
-                processing_config = tenant_config.get("processing_configuration", {})
-                file_validation_config = processing_config.get("file_validation", {})
-                
-                should_reject_security = (
-                    validation_result.security_warnings and 
-                    file_validation_config.get("reject_on_security_warnings", False)
-                )
+                # Handle both dict and domain entity (TenantConfiguration)
+                if hasattr(tenant_config, 'get'):
+                    # It's a dictionary
+                    processing_config = tenant_config.get("processing_configuration", {})
+                    file_validation_config = processing_config.get("file_validation", {})
+                    reject_on_warnings = file_validation_config.get("reject_on_security_warnings", False)
+                else:
+                    # It's a domain entity - access attributes directly
+                    processing_config = tenant_config.processing_configuration
+                    file_validation_config = processing_config.file_validation
+                    reject_on_warnings = file_validation_config.reject_on_security_warnings
+
+                should_reject_security = validation_result.security_warnings and reject_on_warnings
 
                 if validation_result.is_valid and not should_reject_security:
                     upload_id = str(uuid4())
@@ -725,20 +754,22 @@ class UploadApplicationService:
             # Record processing start
             await self._deps.database_adapter.execute(
                 """
-                INSERT INTO document_processing (id, document_id, tenant_id, processing_type, status, input_metadata, started_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                INSERT INTO document_processing (id, created_at, updated_at, document_id, tenant_id, processing_type, status, input_metadata, started_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 """,
                 upload_id,
+                start_time,  # created_at
+                start_time,  # updated_at
                 profile_id,
                 tenant_id,
                 "ai_analysis",
                 "processing",
-                {
+                json.dumps({
                     "filename": filename,
                     "file_size": len(file_content),
                     "priority": processing_priority,
-                },
-                start_time,
+                }),
+                start_time,  # started_at
             )
 
             # Process document content
@@ -760,10 +791,11 @@ class UploadApplicationService:
             analysis_result = await self._deps.content_extractor.extract_cv_data(text_content)
 
             # Analyze quality
-            quality_assessment = await self._deps.quality_analyzer.analyze_quality(
-                extracted_text=text_content,
-                structured_data=analysis_result,
+            quality_assessment = await self._deps.quality_analyzer.analyze_document_quality(
+                text=text_content,
                 document_type="cv",
+                structured_data=analysis_result,
+                use_ai=True
             )
 
             embedding_vector = None
@@ -781,21 +813,24 @@ class UploadApplicationService:
                     )
 
                     if embedding_vector:
+                        embedding_id = str(uuid4())
+                        current_time = datetime.now()
                         await self._deps.database_adapter.execute(
                             """
-                            INSERT INTO embeddings (entity_id, entity_type, tenant_id, embedding_model, embedding_vector, content_hash, metadata)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7)
+                            INSERT INTO embeddings (id, created_at, updated_at, entity_id, entity_type, tenant_id, embedding_model, embedding)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                             ON CONFLICT (entity_id, entity_type, tenant_id) DO UPDATE SET
-                                embedding_vector = EXCLUDED.embedding_vector,
+                                embedding = EXCLUDED.embedding,
                                 updated_at = NOW()
                             """,
+                            embedding_id,
+                            current_time,
+                            current_time,
                             profile_id,
                             "cv_profile",
                             tenant_id,
                             settings.OPENAI_EMBEDDING_MODEL,
                             f"[{','.join(map(str, embedding_vector))}]",
-                            self._deps.content_extractor.hash_content(text_content),
-                            {"upload_id": upload_id, "filename": filename},
                         )
                         logger.info("Embeddings stored successfully", upload_id=upload_id)
                 except Exception as exc:  # pragma: no cover - embeddings optional
@@ -830,7 +865,7 @@ class UploadApplicationService:
                 "completed",
                 datetime.now(),
                 processing_duration_ms,
-                profile_data,
+                json.dumps(profile_data),
                 quality_assessment.get("overall_score", 0),
                 upload_id,
             )
@@ -878,7 +913,7 @@ class UploadApplicationService:
                     "failed",
                     datetime.now(),
                     processing_duration_ms,
-                    {"error": str(exc), "error_type": type(exc).__name__},
+                    json.dumps({"error": str(exc), "error_type": type(exc).__name__}),
                     upload_id,
                 )
             except Exception as db_error:  # pragma: no cover - best effort logging
@@ -1334,8 +1369,8 @@ class UploadApplicationService:
                     upload_id=upload_id,
                     processing_duration_ms=0,
                     error_message=f"Processing cancelled by user {user_id}",
-                    ip_address="unknown",
-                    user_agent="unknown",
+                    ip_address=None,
+                    user_agent=None,
                 )
             except Exception as audit_error:
                 logger.warning("Failed to log cancellation audit event", error=str(audit_error))
@@ -1457,13 +1492,13 @@ class UploadApplicationService:
                 # Update with tenant_id if provided
                 result = await self._deps.database_adapter.execute(
                     """
-                    UPDATE document_processing 
+                    UPDATE document_processing
                     SET status = $1, completed_at = $2, error_details = $3
                     WHERE id = $4 AND tenant_id = $5 AND status NOT IN ('completed', 'failed', 'cancelled')
                     """,
                     "cancelled",
                     datetime.now(),
-                    {"error": reason or "Processing cancelled", "cancelled_by": "user"},
+                    json.dumps({"error": reason or "Processing cancelled", "cancelled_by": "user"}),
                     upload_id,
                     tenant_id
                 )
@@ -1471,13 +1506,13 @@ class UploadApplicationService:
                 # Update without tenant_id for backward compatibility
                 result = await self._deps.database_adapter.execute(
                     """
-                    UPDATE document_processing 
+                    UPDATE document_processing
                     SET status = $1, completed_at = $2, error_details = $3
                     WHERE id = $4 AND status NOT IN ('completed', 'failed', 'cancelled')
                     """,
                     "cancelled",
                     datetime.now(),
-                    {"error": reason or "Processing cancelled", "cancelled_by": "user"},
+                    json.dumps({"error": reason or "Processing cancelled", "cancelled_by": "user"}),
                     upload_id
                 )
             
@@ -1569,8 +1604,8 @@ class UploadApplicationService:
                     upload_id=batch_id,
                     processing_duration_ms=0,
                     error_message=f"Batch processing cancelled by user {user_id}",
-                    ip_address="unknown",
-                    user_agent="unknown",
+                    ip_address=None,
+                    user_agent=None,
                     additional_data={
                         "batch_id": batch_id,
                         "total_uploads": len(upload_ids),

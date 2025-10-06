@@ -55,7 +55,39 @@ class EmbeddingService:
             "cache_hits": 0,
             "db_operations": 0
         }
-        
+
+    async def generate_embedding(self, text: str, **kwargs) -> List[float]:
+        """
+        Generate embedding vector for text without storing.
+
+        Args:
+            text: Text content to embed
+            **kwargs: Additional arguments (model, etc.)
+
+        Returns:
+            Generated embedding vector
+        """
+        if not text or not text.strip():
+            raise ValueError("Text cannot be empty")
+
+        model = kwargs.get("model", self.settings.OPENAI_EMBEDDING_MODEL)
+
+        try:
+            embedding = await self.openai_service.generate_embedding(text, model)
+            self._metrics["embeddings_generated"] += 1
+
+            logger.debug(
+                "Generated embedding",
+                dimensions=len(embedding),
+                model=model
+            )
+
+            return embedding
+
+        except Exception as e:
+            logger.error(f"Failed to generate embedding: {e}")
+            raise
+
     async def generate_and_store_embedding(
         self,
         entity_id: str,

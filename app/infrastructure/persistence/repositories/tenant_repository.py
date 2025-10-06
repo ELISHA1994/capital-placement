@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import List, Optional
 from uuid import UUID
+from datetime import datetime, timedelta
 
-from app.domain.entities.tenant import Tenant, TenantStatus, SubscriptionTier
+from app.domain.entities.tenant import Tenant, TenantStatus, TenantType, SubscriptionTier
 from app.domain.repositories.tenant_repository import ITenantRepository
 from app.domain.value_objects import TenantId
 from app.infrastructure.persistence.mappers.tenant_mapper import TenantMapper
@@ -311,35 +312,24 @@ class PostgresTenantRepository(ITenantRepository):
     async def delete_by_id(self, tenant_id: TenantId) -> bool:
         """Delete tenant by ID (cascade delete)."""
         adapter = await self._get_adapter()
-        
+
         try:
             # Delete configuration first
             await adapter.execute(
                 "DELETE FROM tenant_configurations WHERE id = $1",
                 tenant_id.value
             )
-            
+
             # Delete tenant (will cascade to related records)
             result = await adapter.execute(
                 "DELETE FROM tenants WHERE id = $1",
                 tenant_id.value
             )
-            
+
             return result and result.split()[-1] != '0'
-            
+
         except Exception as e:
             raise Exception(f"Failed to delete tenant: {str(e)}")
-
-    async def count_all(self) -> int:
-        """Count all tenants."""
-        adapter = await self._get_adapter()
-        
-        try:
-            record = await adapter.fetch_one("SELECT COUNT(*) as count FROM tenants")
-            return record['count'] if record else 0
-            
-        except Exception as e:
-            raise Exception(f"Failed to count tenants: {str(e)}")
 
     async def find_system_tenant(self) -> Optional[Tenant]:
         """Find the system tenant."""
@@ -370,26 +360,282 @@ class PostgresTenantRepository(ITenantRepository):
     async def update_usage_metrics(self, tenant_id: TenantId, metrics_update: dict) -> None:
         """Update tenant usage metrics."""
         adapter = await self._get_adapter()
-        
+
         try:
             # Get current usage
             config_record = await adapter.fetch_one(
                 "SELECT current_usage FROM tenant_configurations WHERE id = $1",
                 tenant_id.value
             )
-            
+
             if config_record:
                 current_usage = config_record['current_usage'] or {}
                 current_usage.update(metrics_update)
                 current_usage['metrics_updated_at'] = "NOW()"
-                
+
                 await adapter.execute(
                     "UPDATE tenant_configurations SET current_usage = $1, updated_at = NOW() WHERE id = $2",
                     current_usage, tenant_id.value
                 )
-            
+
         except Exception as e:
             raise Exception(f"Failed to update usage metrics: {str(e)}")
+
+    # Abstract method implementations from ITenantRepository
+
+    async def get_by_id(self, tenant_id: TenantId) -> Optional[Tenant]:
+        """Get a tenant by ID."""
+        return await self.find_by_id(tenant_id)
+
+    async def get_by_name(self, name: str) -> Optional[Tenant]:
+        """Get a tenant by name."""
+        return await self.find_by_name(name)
+
+    async def list_all(
+        self,
+        status: Optional[TenantStatus] = None,
+        tenant_type: Optional[TenantType] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[Tenant]:
+        """List all tenants with optional filtering."""
+        adapter = await self._get_adapter()
+
+        try:
+            where_conditions = []
+            params = []
+            param_index = 1
+
+            if status is not None:
+                is_active = status == TenantStatus.ACTIVE
+                where_conditions.append(f"is_active = ${param_index}")
+                params.append(is_active)
+                param_index += 1
+
+            if tenant_type is not None:
+                # Check if tenant is system tenant for SYSTEM type
+                if tenant_type == TenantType.SYSTEM:
+                    where_conditions.append(f"is_system_tenant = ${param_index}")
+                    params.append(True)
+                    param_index += 1
+                else:
+                    where_conditions.append(f"is_system_tenant = ${param_index}")
+                    params.append(False)
+                    param_index += 1
+
+            where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+
+            params.append(limit)
+            params.append(offset)
+
+            tenant_records = await adapter.fetch_all(
+                f"SELECT * FROM tenants WHERE {where_clause} ORDER BY created_at DESC LIMIT ${param_index} OFFSET ${param_index + 1}",
+                *params
+            )
+
+            tenants = []
+            for tenant_record in tenant_records:
+                tenant_table = TenantTable(**dict(tenant_record))
+
+                config_record = await adapter.fetch_one(
+                    "SELECT * FROM tenant_configurations WHERE id = $1",
+                    tenant_table.id
+                )
+
+                config_table = None
+                if config_record:
+                    config_table = TenantConfigurationTable(**dict(config_record))
+
+                tenants.append(TenantMapper.to_domain(tenant_table, config_table))
+
+            return tenants
+
+        except Exception as e:
+            raise Exception(f"Failed to list all tenants: {str(e)}")
+
+    async def delete(self, tenant_id: TenantId) -> bool:
+        """Delete a tenant (hard delete)."""
+        return await self.delete_by_id(tenant_id)
+
+    async def count_all(self, status: Optional[TenantStatus] = None) -> int:
+        """Count all tenants."""
+        adapter = await self._get_adapter()
+
+        try:
+            if status is None:
+                record = await adapter.fetch_one("SELECT COUNT(*) as count FROM tenants")
+            else:
+                is_active = status == TenantStatus.ACTIVE
+                record = await adapter.fetch_one(
+                    "SELECT COUNT(*) as count FROM tenants WHERE is_active = $1",
+                    is_active
+                )
+
+            return record['count'] if record else 0
+
+        except Exception as e:
+            raise Exception(f"Failed to count tenants: {str(e)}")
+
+    async def get_system_tenant(self) -> Optional[Tenant]:
+        """Get the system tenant."""
+        return await self.find_system_tenant()
+
+    async def list_by_subscription_tier(
+        self,
+        tier: SubscriptionTier,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[Tenant]:
+        """List tenants by subscription tier."""
+        adapter = await self._get_adapter()
+
+        try:
+            tenant_records = await adapter.fetch_all(
+                "SELECT * FROM tenants WHERE subscription_tier = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+                tier.value, limit, offset
+            )
+
+            tenants = []
+            for tenant_record in tenant_records:
+                tenant_table = TenantTable(**dict(tenant_record))
+
+                config_record = await adapter.fetch_one(
+                    "SELECT * FROM tenant_configurations WHERE id = $1",
+                    tenant_table.id
+                )
+
+                config_table = None
+                if config_record:
+                    config_table = TenantConfigurationTable(**dict(config_record))
+
+                tenants.append(TenantMapper.to_domain(tenant_table, config_table))
+
+            return tenants
+
+        except Exception as e:
+            raise Exception(f"Failed to list tenants by subscription tier: {str(e)}")
+
+    async def list_expiring_subscriptions(
+        self,
+        days_until_expiry: int = 7
+    ) -> List[Tenant]:
+        """List tenants with subscriptions expiring soon."""
+        adapter = await self._get_adapter()
+
+        try:
+            expiry_threshold = datetime.utcnow() + timedelta(days=days_until_expiry)
+
+            config_records = await adapter.fetch_all(
+                """
+                SELECT * FROM tenant_configurations
+                WHERE subscription_end_date IS NOT NULL
+                AND subscription_end_date <= $1
+                AND subscription_end_date >= NOW()
+                AND is_active = true
+                ORDER BY subscription_end_date ASC
+                """,
+                expiry_threshold
+            )
+
+            tenants = []
+            for config_record in config_records:
+                config_table = TenantConfigurationTable(**dict(config_record))
+
+                tenant_record = await adapter.fetch_one(
+                    "SELECT * FROM tenants WHERE id = $1",
+                    config_table.id
+                )
+
+                if tenant_record:
+                    tenant_table = TenantTable(**dict(tenant_record))
+                    tenants.append(TenantMapper.to_domain(tenant_table, config_table))
+
+            return tenants
+
+        except Exception as e:
+            raise Exception(f"Failed to list expiring subscriptions: {str(e)}")
+
+    async def list_over_limits(self) -> List[Tenant]:
+        """List tenants that have exceeded their usage limits."""
+        adapter = await self._get_adapter()
+
+        try:
+            # Query tenants where current usage exceeds quota limits
+            config_records = await adapter.fetch_all(
+                """
+                SELECT * FROM tenant_configurations
+                WHERE is_active = true
+                AND (
+                    (current_usage->>'user_count')::int > (quota_limits->>'max_users')::int
+                    OR (current_usage->>'profile_count')::int > (quota_limits->>'max_profiles')::int
+                    OR (current_usage->>'storage_gb')::float > (quota_limits->>'max_storage_gb')::float
+                    OR (current_usage->>'monthly_searches')::int > (quota_limits->>'max_searches_per_month')::int
+                    OR (current_usage->>'monthly_api_calls')::int > (quota_limits->>'max_api_calls_per_month')::int
+                )
+                ORDER BY created_at DESC
+                """
+            )
+
+            tenants = []
+            for config_record in config_records:
+                config_table = TenantConfigurationTable(**dict(config_record))
+
+                tenant_record = await adapter.fetch_one(
+                    "SELECT * FROM tenants WHERE id = $1",
+                    config_table.id
+                )
+
+                if tenant_record:
+                    tenant_table = TenantTable(**dict(tenant_record))
+                    tenants.append(TenantMapper.to_domain(tenant_table, config_table))
+
+            return tenants
+
+        except Exception as e:
+            raise Exception(f"Failed to list tenants over limits: {str(e)}")
+
+    async def update_usage_counters(
+        self,
+        tenant_id: TenantId,
+        user_count_delta: int = 0,
+        profile_count_delta: int = 0,
+        storage_delta_gb: float = 0.0,
+        searches_delta: int = 0,
+        api_calls_delta: int = 0
+    ) -> bool:
+        """Update tenant usage counters atomically."""
+        adapter = await self._get_adapter()
+
+        try:
+            # Get current usage
+            config_record = await adapter.fetch_one(
+                "SELECT current_usage FROM tenant_configurations WHERE id = $1",
+                tenant_id.value
+            )
+
+            if not config_record:
+                return False
+
+            current_usage = config_record['current_usage'] or {}
+
+            # Update counters
+            current_usage['user_count'] = current_usage.get('user_count', 0) + user_count_delta
+            current_usage['profile_count'] = current_usage.get('profile_count', 0) + profile_count_delta
+            current_usage['storage_gb'] = current_usage.get('storage_gb', 0.0) + storage_delta_gb
+            current_usage['monthly_searches'] = current_usage.get('monthly_searches', 0) + searches_delta
+            current_usage['monthly_api_calls'] = current_usage.get('monthly_api_calls', 0) + api_calls_delta
+            current_usage['last_updated_at'] = datetime.utcnow().isoformat()
+
+            # Atomic update
+            await adapter.execute(
+                "UPDATE tenant_configurations SET current_usage = $1, updated_at = NOW() WHERE id = $2",
+                current_usage, tenant_id.value
+            )
+
+            return True
+
+        except Exception as e:
+            raise Exception(f"Failed to update usage counters: {str(e)}")
 
 
 __all__ = ["PostgresTenantRepository"]

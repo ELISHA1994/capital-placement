@@ -30,7 +30,14 @@ async def get_content_extractor() -> ContentExtractor:
         if _content_extractor is not None:
             return _content_extractor
 
-        _content_extractor = ContentExtractor()
+        # Content extractor requires AI services
+        openai_service = await get_openai_service()
+        prompt_manager = await get_prompt_manager()
+
+        _content_extractor = ContentExtractor(
+            openai_service=openai_service,
+            prompt_manager=prompt_manager,
+        )
         return _content_extractor
 
 

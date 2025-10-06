@@ -328,10 +328,11 @@ async def analyze_document(
             prompt_manager=prompt_manager
         )
         
-        quality_scores = await quality_analyzer.analyze_quality(
-            extracted_text=request.text_content,
+        quality_scores = await quality_analyzer.analyze_document_quality(
+            text=request.text_content,
+            document_type=request.document_type,
             structured_data=analysis_result,
-            document_type=request.document_type
+            use_ai=True
         )
         
         # Generate summary if requested

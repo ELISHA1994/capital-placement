@@ -115,8 +115,8 @@ class AuditService(IAuditService):
         api_key_id: Optional[str] = None,
         resource_id: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
-        ip_address: str = "unknown",
-        user_agent: str = "unknown",
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
         risk_level: str = "low",
         suspicious: bool = False,
         correlation_id: Optional[str] = None,
@@ -259,13 +259,14 @@ class AuditService(IAuditService):
         upload_id: str,
         *,
         session_id: Optional[str] = None,
-        ip_address: str = "unknown",
-        user_agent: str = "unknown",
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
         validation_errors: Optional[List[str]] = None,
         security_warnings: Optional[List[str]] = None,
         processing_duration_ms: Optional[int] = None,
         batch_id: Optional[str] = None,
         error_message: Optional[str] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Log file upload and processing events with file-specific details."""
         details = {
@@ -275,6 +276,7 @@ class AuditService(IAuditService):
             "validation_errors": validation_errors or [],
             "security_warnings": security_warnings or [],
             "processing_duration_ms": processing_duration_ms,
+            **(additional_data or {}),
         }
         
         # Determine risk level based on validation and security issues

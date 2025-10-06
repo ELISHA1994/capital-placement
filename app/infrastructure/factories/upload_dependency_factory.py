@@ -25,6 +25,7 @@ from app.infrastructure.adapters.storage_adapter import StorageAdapter
 from app.infrastructure.adapters.notification_adapter import NotificationAdapter
 from app.infrastructure.providers.validation_provider import get_webhook_validator
 from app.infrastructure.providers.validation_provider import get_file_content_validator
+from app.infrastructure.providers.resource_provider import get_file_resource_service
 
 
 class UploadDependencyFactory(IUploadDependencyFactory):
@@ -58,35 +59,41 @@ class UploadDependencyFactory(IUploadDependencyFactory):
         # Validation services
         webhook_validator = await get_webhook_validator()
         file_content_validator = await get_file_content_validator()
-        
+
+        # Resource management
+        file_resource_manager = await get_file_resource_service()
+
         # Wrap document processor to use PDFProcessor
         document_processor = DocumentProcessorAdapter(
             pdf_processor=pdf_processor,
             content_extractor=content_extractor
         )
-        
+
         return UploadDependencies(
             # Repositories
             profile_repository=profile_repository,
             user_repository=user_repository,
             tenant_repository=tenant_repository,
-            
+
             # Document processing
             document_processor=document_processor,
             content_extractor=content_extractor,
             quality_analyzer=quality_analyzer,
             embedding_service=embedding_service,
-            
+
             # Infrastructure
             storage_service=storage_service,
             notification_service=notification_service,
             tenant_manager=tenant_manager,
             database_adapter=database_adapter,
             event_publisher=event_publisher,
-            
+
             # Validation services
             webhook_validator=webhook_validator,
-            file_content_validator=file_content_validator
+            file_content_validator=file_content_validator,
+
+            # Resource management
+            file_resource_manager=file_resource_manager
         )
 
 
@@ -100,12 +107,19 @@ class DocumentProcessorAdapter:
     async def process_document(self, file_content: bytes, filename: str, **kwargs) -> dict:
         """Process document and extract content."""
         file_extension = filename.lower().split(".")[-1] if "." in filename else "unknown"
-        
+
         if file_extension == "pdf":
-            extracted_content = await self.pdf_processor.extract_content(file_content)
+            # Call process_pdf method which returns a PDFDocument object
+            pdf_document = await self.pdf_processor.process_pdf(
+                pdf_content=file_content,
+                filename=filename
+            )
             return {
-                "text": extracted_content.get("text", ""),
-                "metadata": extracted_content.get("metadata", {})
+                "text": pdf_document.full_text,
+                "metadata": {
+                    **pdf_document.metadata,
+                    **pdf_document.processing_info
+                }
             }
         else:
             # Handle text files

@@ -41,9 +41,26 @@ class IContentExtractor(Protocol):
 @runtime_checkable
 class IQualityAnalyzer(Protocol):
     """Interface for document quality analysis."""
-    
-    async def analyze_quality(self, extracted_text: str, structured_data: dict, **kwargs) -> dict:
-        """Analyze document quality."""
+
+    async def analyze_document_quality(
+        self,
+        text: str,
+        document_type: str,
+        structured_data: dict | None = None,
+        use_ai: bool = True
+    ) -> dict:
+        """
+        Perform comprehensive quality analysis on a document.
+
+        Args:
+            text: Document text content
+            document_type: Type of document being analyzed (e.g., 'cv', 'job_description')
+            structured_data: Optional structured data from content extraction
+            use_ai: Whether to use AI for advanced quality assessment
+
+        Returns:
+            Quality assessment dictionary with scores and recommendations
+        """
         ...
 
 
