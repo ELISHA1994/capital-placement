@@ -297,6 +297,7 @@ async def cancel_batch_processing(
 @router.get("/history", response_model=PaginatedResponse)
 async def get_upload_history(
     current_user: CurrentUserDep,
+    upload_service: UploadServiceDep,
     pagination: PaginationModel = Depends(),
     status_filter: Optional[ProcessingStatus] = Query(None, description="Filter by processing status"),
     start_date: Optional[datetime] = Query(None, description="Filter uploads from this date"),
@@ -304,30 +305,28 @@ async def get_upload_history(
 ) -> PaginatedResponse:
     """
     Get upload and processing history for the current user/tenant.
-    
+
     Provides comprehensive upload history with:
     - Processing status and duration
     - Quality scores and metrics
     - Error analysis and patterns
     - Usage analytics over time
+
+    Returns paginated list of uploaded documents with their processing status.
     """
     try:
-        # TODO: Implement database query for upload history
-        
-        upload_history = []  # Mock empty history
-        total_count = 0
-        
-        response = PaginatedResponse.create(
-            items=upload_history,
-            total=total_count,
-            page=pagination.page,
-            size=pagination.size
+        return await upload_service.get_upload_history(
+            tenant_id=str(current_user.tenant_id),
+            pagination=pagination,
+            status_filter=status_filter,
+            start_date=start_date,
+            end_date=end_date
         )
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"Failed to get upload history: {e}")
+    except DomainException as domain_exc:
+        # Map domain exceptions to appropriate HTTP responses
+        raise map_domain_exception_to_http(domain_exc)
+    except Exception as exc:  # pragma: no cover
+        logger.error("Failed to retrieve upload history", error=str(exc))
         raise HTTPException(
             status_code=500,
             detail="Failed to retrieve upload history"

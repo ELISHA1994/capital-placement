@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -66,9 +67,37 @@ class ProcessingStatusResponse(BaseModel):
     )
 
 
+class UploadHistoryItem(BaseModel):
+    """Individual upload history record for document listing."""
+
+    upload_id: str = Field(..., description="Upload identifier")
+    profile_id: str = Field(..., description="Profile identifier")
+    filename: str = Field(..., description="Original filename")
+    status: ProcessingStatus = Field(..., description="Processing status")
+    created_at: datetime = Field(..., description="Upload timestamp")
+    completed_at: Optional[datetime] = Field(None, description="Completion timestamp")
+    processing_duration_seconds: Optional[float] = Field(
+        None,
+        description="Processing duration in seconds",
+    )
+    quality_score: Optional[float] = Field(
+        None,
+        description="Document quality score",
+    )
+    error_message: Optional[str] = Field(
+        None,
+        description="Error message if processing failed",
+    )
+    file_size_bytes: Optional[int] = Field(
+        None,
+        description="File size in bytes",
+    )
+
+
 __all__ = [
     "UploadResponse",
     "BatchUploadResponse",
     "ProcessingStatusResponse",
+    "UploadHistoryItem",
 ]
 

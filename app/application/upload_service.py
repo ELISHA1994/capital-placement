@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 import structlog
 from fastapi import UploadFile
+from sqlmodel import select
 
 from app.core.config import get_settings
+from app.database.sqlmodel_engine import get_sqlmodel_db_manager
 from app.models.auth import CurrentUser
+from app.models.document_processing import DocumentProcessingTable
 from app.models.profile import ProcessingStatus
 from app.models.upload_models import (
     BatchUploadResponse,
@@ -1607,12 +1610,6 @@ class UploadApplicationService:
                     error_message=f"Batch processing cancelled by user {user_id}",
                     ip_address=None,
                     user_agent=None,
-                    additional_data={
-                        "batch_id": batch_id,
-                        "total_uploads": len(upload_ids),
-                        "cancelled_count": total_cancelled,
-                        "failed_count": total_failed
-                    }
                 )
             except Exception as audit_error:
                 logger.warning("Failed to log batch cancellation audit event", error=str(audit_error))
@@ -1694,6 +1691,155 @@ class UploadApplicationService:
                 error=str(e)
             )
             return []
+
+    async def get_upload_history(
+        self,
+        *,
+        tenant_id: str,
+        pagination: Any,
+        status_filter: Optional[Any] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> Any:
+        """
+        Get paginated upload history for a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            pagination: Pagination parameters (page, size, offset, limit)
+            status_filter: Optional status filter
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+
+        Returns:
+            PaginatedResponse with list of UploadHistoryItem records
+        """
+        from app.models.base import PaginatedResponse
+        from app.models.upload_models import UploadHistoryItem
+
+        logger.debug(
+            "Upload history requested",
+            tenant_id=tenant_id,
+            page=pagination.page,
+            size=pagination.size,
+            status_filter=status_filter,
+            start_date=start_date,
+            end_date=end_date
+        )
+
+        try:
+            # Build WHERE clause with filters
+            where_conditions = ["tenant_id = $1"]
+            params = [tenant_id]
+            param_counter = 2
+
+            if status_filter:
+                where_conditions.append(f"status = ${param_counter}")
+                params.append(status_filter.value if hasattr(status_filter, 'value') else str(status_filter))
+                param_counter += 1
+
+            if start_date:
+                where_conditions.append(f"started_at >= ${param_counter}")
+                params.append(start_date)
+                param_counter += 1
+
+            if end_date:
+                where_conditions.append(f"started_at <= ${param_counter}")
+                params.append(end_date)
+                param_counter += 1
+
+            where_clause = " AND ".join(where_conditions)
+
+            # Get total count
+            count_query = f"""
+                SELECT COUNT(*) as total
+                FROM document_processing
+                WHERE {where_clause}
+            """
+
+            count_result = await self._deps.database_adapter.fetch_one(count_query, *params)
+            total_count = count_result["total"] if count_result else 0
+
+            # Get paginated records
+            query = f"""
+                SELECT
+                    id as upload_id,
+                    document_id as profile_id,
+                    input_metadata->>'filename' as filename,
+                    status,
+                    started_at as created_at,
+                    completed_at,
+                    processing_duration_ms,
+                    quality_score,
+                    error_details->>'error' as error_message,
+                    (input_metadata->>'file_size')::bigint as file_size_bytes
+                FROM document_processing
+                WHERE {where_clause}
+                ORDER BY started_at DESC
+                OFFSET ${param_counter} LIMIT ${param_counter + 1}
+            """
+
+            params.extend([pagination.offset, pagination.limit])
+
+            records = await self._deps.database_adapter.fetch_all(query, *params)
+
+            # Convert records to UploadHistoryItem models
+            upload_history = []
+            for record in records:
+                try:
+                    history_item = UploadHistoryItem(
+                        upload_id=str(record["upload_id"]),
+                        profile_id=str(record["profile_id"]),
+                        filename=record.get("filename") or "Unknown",
+                        status=record["status"],
+                        created_at=record["created_at"],
+                        completed_at=record.get("completed_at"),
+                        processing_duration_seconds=(
+                            record["processing_duration_ms"] / 1000.0
+                            if record.get("processing_duration_ms")
+                            else None
+                        ),
+                        quality_score=record.get("quality_score"),
+                        error_message=record.get("error_message"),
+                        file_size_bytes=record.get("file_size_bytes")
+                    )
+                    upload_history.append(history_item)
+                except Exception as item_error:
+                    logger.warning(
+                        "Failed to parse upload history item",
+                        upload_id=record.get("upload_id"),
+                        error=str(item_error)
+                    )
+                    continue
+
+            logger.info(
+                "Upload history retrieved",
+                tenant_id=tenant_id,
+                total_count=total_count,
+                returned_count=len(upload_history),
+                page=pagination.page
+            )
+
+            return PaginatedResponse.create(
+                items=upload_history,
+                total=total_count,
+                page=pagination.page,
+                size=pagination.size
+            )
+
+        except Exception as exc:
+            logger.error(
+                "Failed to retrieve upload history",
+                tenant_id=tenant_id,
+                error=str(exc)
+            )
+            # Return empty paginated response as fallback
+            return PaginatedResponse.create(
+                items=[],
+                total=0,
+                page=pagination.page,
+                size=pagination.size
+            )
 
     async def _enqueue_background(self, scheduler: Optional[Any], func, *args) -> Optional[str]:
         """Enqueue a background task with task manager tracking."""
