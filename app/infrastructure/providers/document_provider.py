@@ -5,18 +5,24 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-from app.services.document.content_extractor import ContentExtractor
-from app.services.document.pdf_processor import PDFProcessor
-from app.services.document.quality_analyzer import QualityAnalyzer
-from app.infrastructure.providers.ai_provider import get_openai_service, get_prompt_manager
+from app.infrastructure.document.content_extractor import ContentExtractor
+from app.infrastructure.document.pdf_processor import PDFProcessor
+from app.infrastructure.document.quality_analyzer import QualityAnalyzer
+from app.infrastructure.document.embedding_generator import EmbeddingGenerator
+from app.application.document.document_processor import DocumentProcessor
+from app.infrastructure.providers.ai_provider import get_openai_service, get_prompt_manager, get_embedding_service
 
 _content_extractor: Optional[ContentExtractor] = None
 _pdf_processor: Optional[PDFProcessor] = None
 _quality_analyzer: Optional[QualityAnalyzer] = None
+_embedding_generator: Optional[EmbeddingGenerator] = None
+_document_processor: Optional[DocumentProcessor] = None
 
 _content_extractor_lock = asyncio.Lock()
 _pdf_processor_lock = asyncio.Lock()
 _quality_analyzer_lock = asyncio.Lock()
+_embedding_generator_lock = asyncio.Lock()
+_document_processor_lock = asyncio.Lock()
 
 
 async def get_content_extractor() -> ContentExtractor:
@@ -99,6 +105,55 @@ async def reset_quality_analyzer() -> None:
         _quality_analyzer = None
 
 
+async def get_embedding_generator() -> EmbeddingGenerator:
+    """Return singleton embedding generator service."""
+    global _embedding_generator
+
+    if _embedding_generator is not None:
+        return _embedding_generator
+
+    async with _embedding_generator_lock:
+        if _embedding_generator is not None:
+            return _embedding_generator
+
+        # Embedding generator requires embedding service
+        embedding_service = await get_embedding_service()
+
+        _embedding_generator = EmbeddingGenerator(
+            embedding_service=embedding_service
+        )
+        return _embedding_generator
+
+
+async def reset_embedding_generator() -> None:
+    """Reset embedding generator singleton."""
+    global _embedding_generator
+    async with _embedding_generator_lock:
+        _embedding_generator = None
+
+
+async def get_document_processor() -> DocumentProcessor:
+    """Return singleton document processor service."""
+    global _document_processor
+
+    if _document_processor is not None:
+        return _document_processor
+
+    async with _document_processor_lock:
+        if _document_processor is not None:
+            return _document_processor
+
+        _document_processor = DocumentProcessor()
+        return _document_processor
+
+
+async def reset_document_processor() -> None:
+    """Reset document processor singleton."""
+    global _document_processor
+    async with _document_processor_lock:
+        _document_processor = None
+
+
 __all__ = [
     "get_content_extractor",
     "reset_content_extractor",
@@ -106,4 +161,8 @@ __all__ = [
     "reset_pdf_processor",
     "get_quality_analyzer",
     "reset_quality_analyzer",
+    "get_embedding_generator",
+    "reset_embedding_generator",
+    "get_document_processor",
+    "reset_document_processor",
 ]

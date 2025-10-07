@@ -9,18 +9,18 @@ import structlog
 
 from app.core.config import get_settings
 from app.api.schemas.search_schemas import SearchMode, SearchRequest, SearchResponse
-from app.services.search.hybrid_search import (
+from app.application.search.hybrid_search import (
     FusionMethod,
     HybridSearchConfig,
 )
-from app.services.search.hybrid_search import (
+from app.application.search.hybrid_search import (
     SearchMode as HybridSearchMode,
 )
-from app.services.search.result_reranker import (
+from app.application.search.result_reranker import (
     RankingStrategy,
     RerankingConfig,
 )
-from app.services.search.vector_search import SearchFilter as VectorSearchFilter
+from app.infrastructure.search.vector_search import SearchFilter as VectorSearchFilter
 
 if TYPE_CHECKING:
     from app.application.dependencies.search_dependencies import SearchDependencies

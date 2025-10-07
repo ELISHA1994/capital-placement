@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from unittest.mock import Mock
 
 from app.utils.security import password_manager
-from app.services.auth.authentication_service import AuthenticationService
+from app.infrastructure.auth.authentication_service import AuthenticationService
 
 
 class TestPasswordPolicyRules:

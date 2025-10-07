@@ -20,7 +20,7 @@ from app.infrastructure.providers.document_provider import (
     get_quality_analyzer
 )
 from app.infrastructure.providers.storage_provider import get_file_storage
-from app.services.core.tenant_manager_provider import get_tenant_manager
+from app.infrastructure.providers.tenant_provider import get_tenant_service as get_tenant_manager
 from app.infrastructure.adapters.event_publisher_adapter import EventPublisherAdapter
 from app.infrastructure.adapters.notification_adapter import NotificationAdapter
 from app.infrastructure.providers.validation_provider import get_webhook_validator

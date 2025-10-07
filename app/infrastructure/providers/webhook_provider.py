@@ -8,12 +8,12 @@ following the established provider pattern in the application.
 from typing import Optional
 
 from app.domain.interfaces import IDatabase
-from app.services.webhook.signature_service import WebhookSignatureService
-from app.services.webhook.circuit_breaker_service import WebhookCircuitBreakerService
-from app.services.webhook.delivery_service import WebhookDeliveryService
-from app.services.webhook.dead_letter_service import WebhookDeadLetterService
-from app.services.webhook.stats_service import WebhookStatsService
-from app.services.webhook.reliable_notification_adapter import ReliableWebhookNotificationService
+from app.infrastructure.webhook.signature_service import WebhookSignatureService
+from app.infrastructure.webhook.circuit_breaker_service import WebhookCircuitBreakerService
+from app.infrastructure.webhook.delivery_service import WebhookDeliveryService
+from app.infrastructure.webhook.dead_letter_service import WebhookDeadLetterService
+from app.infrastructure.webhook.stats_service import WebhookStatsService
+from app.infrastructure.webhook.reliable_notification_adapter import ReliableWebhookNotificationService
 from app.infrastructure.providers.postgres_provider import get_postgres_adapter
 from app.infrastructure.providers.audit_provider import get_audit_service
 

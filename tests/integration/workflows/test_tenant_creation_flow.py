@@ -8,7 +8,7 @@ transaction management, error handling, and integration between services.
 import pytest
 from unittest.mock import AsyncMock
 
-from app.services.tenant.tenant_service import TenantService
+from app.infrastructure.tenant.tenant_service import TenantService
 from app.infrastructure.persistence.models.tenant_table import SubscriptionTier
 from tests.mocks.mock_repositories import MockTenantRepository, MockUserRepository
 from tests.mocks.mock_services import MockCacheService

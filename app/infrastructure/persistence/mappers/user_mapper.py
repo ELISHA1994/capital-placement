@@ -49,7 +49,7 @@ class UserMapper:
         # Map role from roles array (take first role or default to VIEWER)
         user_role = UserRole.VIEWER
         if user_table.roles and len(user_table.roles) > 0:
-            role_str = user_table.roles[0].upper()
+            role_str = user_table.roles[0].lower()  # UserRole enum values are lowercase
             try:
                 user_role = UserRole(role_str)
             except ValueError:
@@ -175,15 +175,24 @@ class UserMapper:
     ) -> UserSecurity:
         """Map security fields to domain UserSecurity."""
         security_settings = settings.get('security', {}) if settings else {}
-        
+
+        # Convert ISO string datetimes back to datetime objects
+        password_reset_expires = security_settings.get('password_reset_expires')
+        if isinstance(password_reset_expires, str):
+            password_reset_expires = datetime.fromisoformat(password_reset_expires)
+
+        email_verified_at = security_settings.get('email_verified_at')
+        if isinstance(email_verified_at, str):
+            email_verified_at = datetime.fromisoformat(email_verified_at)
+
         return UserSecurity(
             password_hash=hashed_password,
             password_salt=security_settings.get('password_salt'),
             password_reset_token=security_settings.get('password_reset_token'),
-            password_reset_expires=security_settings.get('password_reset_expires'),
+            password_reset_expires=password_reset_expires,
             email_verification_token=security_settings.get('email_verification_token'),
             email_verified=is_verified,
-            email_verified_at=security_settings.get('email_verified_at'),
+            email_verified_at=email_verified_at,
             two_factor_enabled=security_settings.get('two_factor_enabled', False),
             two_factor_secret=security_settings.get('two_factor_secret'),
             recovery_codes=security_settings.get('recovery_codes', [])

@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-from app.services.search.vector_search import VectorSearchService
-from app.services.search.hybrid_search import HybridSearchService
-from app.services.search.result_reranker import ResultRerankerService
-from app.services.search.query_processor import QueryProcessor
-from app.services.search.search_analytics import SearchAnalyticsService
+from app.infrastructure.search.vector_search import VectorSearchService
+from app.infrastructure.search.query_processor import QueryProcessor
+from app.infrastructure.search.search_analytics import SearchAnalyticsService
+from app.application.search.hybrid_search import HybridSearchService
+from app.application.search.result_reranker import ResultRerankerService
 
 from app.infrastructure.providers.ai_provider import (
     get_embedding_service,

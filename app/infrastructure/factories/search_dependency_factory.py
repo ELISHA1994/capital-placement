@@ -14,7 +14,7 @@ from app.infrastructure.providers.search_provider import (
     get_search_analytics_service,
 )
 from app.infrastructure.providers.cache_provider import get_cache_service
-from app.services.core.tenant_manager_provider import get_tenant_manager
+from app.infrastructure.providers.tenant_provider import get_tenant_service as get_tenant_manager
 from app.infrastructure.adapters.event_publisher_adapter import EventPublisherAdapter
 
 

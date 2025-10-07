@@ -106,7 +106,7 @@ class ServiceFactory:
     async def _create_redis_cache(self) -> ICacheService:
         """Create Redis cache service"""
         try:
-            from app.services.adapters.redis_cache_adapter import RedisCacheService
+            from app.infrastructure.adapters.redis_cache_adapter import RedisCacheService
             
             redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
             return await RedisCacheService.create(redis_url)
@@ -118,7 +118,7 @@ class ServiceFactory:
     async def _create_openai_service(self) -> IAIService:
         """Create cloud-agnostic OpenAI service"""
         try:
-            from app.services.ai.openai_service import OpenAIService
+            from app.infrastructure.ai.openai_service import OpenAIService
             return await OpenAIService.create()
         except ImportError:
             logger.error("OpenAI SDK not available. Install with: pip install openai")
@@ -127,7 +127,7 @@ class ServiceFactory:
     # Local service creation methods
     async def _create_memory_cache(self) -> ICacheService:
         """Create in-memory cache service"""
-        from app.services.adapters.memory_cache_adapter import MemoryCacheService
+        from app.infrastructure.adapters.memory_cache_adapter import MemoryCacheService
         return MemoryCacheService()
     
     async def _create_local_database(self) -> IDatabase:
@@ -139,10 +139,10 @@ class ServiceFactory:
     
     async def _create_local_search(self) -> ISearchService:
         """Create local search service with SQLModel repositories"""
-        from app.services.search.vector_search import VectorSearchService
-        from app.services.ai.openai_service import OpenAIService
-        from app.services.ai.embedding_service import EmbeddingService
-        from app.services.adapters.postgres_adapter import PostgresAdapter
+        from app.infrastructure.search.vector_search import VectorSearchService
+        from app.infrastructure.ai.openai_service import OpenAIService
+        from app.infrastructure.ai.embedding_service import EmbeddingService
+        from app.infrastructure.adapters.postgres_adapter import PostgresAdapter
 
         cache_service = await self.create_cache_service()
         openai_service = await OpenAIService.create(cache_service=cache_service)
@@ -163,18 +163,18 @@ class ServiceFactory:
     
     async def _create_local_queue(self) -> IMessageQueue:
         """Create local message queue service"""
-        from app.services.adapters.messaging_adapters import InMemoryMessageQueue
+        from app.infrastructure.adapters.messaging_adapters import InMemoryMessageQueue
         return InMemoryMessageQueue()
     
     async def _create_local_notification(self) -> INotificationService:
         """Create local notification service"""
-        from app.services.adapters.notification_adapter import LocalNotificationService
+        from app.infrastructure.adapters.notification_adapter import LocalNotificationService
         return LocalNotificationService()
     
     async def _create_local_analytics(self) -> IAnalyticsService:
         """Create local analytics service"""
-        from app.services.adapters.postgres_adapter import PostgresAdapter
-        from app.services.search.search_analytics import SearchAnalyticsService
+        from app.infrastructure.adapters.postgres_adapter import PostgresAdapter
+        from app.infrastructure.search.search_analytics import SearchAnalyticsService
 
         postgres_adapter = PostgresAdapter()
         notification_service = await self.create_notification_service()

@@ -10,10 +10,10 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
-from app.services.audit.audit_service import AuditService, AuditServiceError
+from app.infrastructure.audit import AuditService, AuditServiceError
 from app.infrastructure.providers.audit_provider import get_audit_service, reset_audit_service
 from app.infrastructure.persistence.models.audit_table import AuditEventType, AuditRiskLevel
-from app.services.adapters.postgres_adapter import PostgresAdapter
+from app.infrastructure.adapters.postgres_adapter import PostgresAdapter
 
 
 class TestAuditService:
@@ -342,7 +342,7 @@ class TestAuditIntegration:
         """Test that authentication events are properly audited."""
         # This would be an integration test that requires actual database
         # For now, just verify the interface exists
-        from app.services.auth.authentication_service import AuthenticationService
+        from app.infrastructure.auth.authentication_service import AuthenticationService
         from app.infrastructure.persistence.models.audit_table import AuditEventType
         
         # Verify that audit event types exist for authentication

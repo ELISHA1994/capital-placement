@@ -1,17 +1,94 @@
-"""Notification adapter implementation."""
+"""Notification adapter implementations for local and production environments."""
 
 from __future__ import annotations
 
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import structlog
 import httpx
+
+from app.domain.interfaces import INotificationService
 
 logger = structlog.get_logger(__name__)
 
 
+class LocalNotificationService(INotificationService):
+    """Simple notification service that logs messages locally for development."""
+
+    def __init__(self):
+        self._sent_email_count = 0
+        self._sent_webhooks = 0
+        self._sent_push = 0
+
+    async def check_health(self) -> Dict[str, Any]:
+        """Check service health."""
+        return {
+            "status": "healthy",
+            "service": "LocalNotificationService",
+            "emails_sent": self._sent_email_count,
+            "webhooks_sent": self._sent_webhooks,
+            "push_sent": self._sent_push,
+        }
+
+    async def send_email(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        is_html: bool = False
+    ) -> bool:
+        """Send email notification (logs locally)."""
+        try:
+            self._sent_email_count += 1
+            logger.info(
+                "Email notification dispatched (local)",
+                recipient=to,
+                subject=subject,
+                is_html=is_html,
+                body_length=len(body),
+                body_content=body,
+            )
+            return True
+        except Exception as err:
+            logger.error("Failed to send email", recipient=to, error=str(err))
+            return False
+
+    async def send_webhook(
+        self,
+        url: str,
+        payload: Dict[str, Any],
+        secret: Optional[str] = None
+    ) -> bool:
+        """Send webhook notification (logs locally)."""
+        try:
+            self._sent_webhooks += 1
+            logger.info("Webhook notification dispatched (local)", url=url)
+            logger.debug("Webhook payload", url=url, payload=payload, secret_provided=bool(secret))
+            return True
+        except Exception as err:
+            logger.error("Failed to send webhook", url=url, error=str(err))
+            return False
+
+    async def send_push_notification(
+        self,
+        user_id: str,
+        title: str,
+        message: str,
+        data: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Send push notification (logs locally)."""
+        try:
+            self._sent_push += 1
+            logger.info("Push notification dispatched (local)", user_id=user_id, title=title)
+            logger.debug("Push payload", user_id=user_id, title=title, message=message, data=data)
+            return True
+        except Exception as err:
+            logger.error("Failed to send push notification", user_id=user_id, error=str(err))
+            return False
+
+
 class NotificationAdapter:
-    """Notification adapter implementing INotificationService interface."""
+    """Production notification adapter with HTTP webhook support."""
 
     def __init__(self):
         self.timeout = 30.0
@@ -160,4 +237,4 @@ class NotificationAdapter:
             # Don't re-raise to avoid breaking business flow
 
 
-__all__ = ["NotificationAdapter"]
+__all__ = ["LocalNotificationService", "NotificationAdapter"]

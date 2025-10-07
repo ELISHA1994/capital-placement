@@ -31,9 +31,11 @@ from app.core.dependencies import get_current_user, CurrentUserDep, TenantContex
 from app.infrastructure.persistence.models.auth_tables import CurrentUser, TenantContext
 from app.api.dependencies import SearchServiceDep, map_domain_exception_to_http
 from app.domain.exceptions import DomainException
+from app.core.config import get_settings
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/search", tags=["search"])
+settings = get_settings()
 
 
 @router.post("/", response_model=SearchResponse)
@@ -77,7 +79,7 @@ async def search_profiles(
             detail={
                 "error": "search_failed",
                 "message": "Search request could not be completed",
-                "details": str(exc) if logger.level == "DEBUG" else None,
+                "details": str(exc) if settings.ENVIRONMENT in ("local", "development") else None,
             },
         )
 

@@ -6,7 +6,7 @@ import asyncio
 from typing import Optional
 
 from app.domain.interfaces import IAuditService
-from app.services.audit.audit_service import AuditService
+from app.infrastructure.audit import AuditService
 from app.infrastructure.providers.postgres_provider import get_postgres_adapter
 
 _audit_service: Optional[IAuditService] = None

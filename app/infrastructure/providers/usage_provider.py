@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-from app.services.usage.usage_tracker import UsageTracker, usage_tracker as global_usage_tracker
+from app.infrastructure.analytics import UsageTracker, usage_tracker as global_usage_tracker
 
 _usage_service: Optional[UsageTracker] = None
 _usage_lock = asyncio.Lock()

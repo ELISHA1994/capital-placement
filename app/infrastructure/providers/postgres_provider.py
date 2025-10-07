@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-from app.services.adapters.postgres_adapter import PostgresAdapter
+from app.infrastructure.adapters.postgres_adapter import PostgresAdapter
 
 _postgres_adapter: Optional[PostgresAdapter] = None
 _lock = asyncio.Lock()

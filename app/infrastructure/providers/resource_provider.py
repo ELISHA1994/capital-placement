@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Optional
 
 from app.domain.interfaces import IFileResourceManager
-from app.services.resource.file_resource_manager import (
+from app.infrastructure.resource.file_resource_manager import (
     FileResourceManager,
     get_file_resource_manager,
 )
-from app.services.resource.periodic_cleanup import (
+from app.infrastructure.resource.periodic_cleanup import (
     PeriodicResourceCleanup,
     get_periodic_cleanup,
 )

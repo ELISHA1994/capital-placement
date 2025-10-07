@@ -13,7 +13,7 @@ import asyncio
 from datetime import datetime, timedelta
 from unittest.mock import Mock, AsyncMock
 
-from app.services.security.rate_limit_service import RateLimitService
+from app.infrastructure.security.rate_limit_service import RateLimitService
 from app.domain.interfaces import (
     IRateLimitService, ICacheService, RateLimitType, TimeWindow,
     RateLimitRule, RateLimitResult

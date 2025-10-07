@@ -11,12 +11,12 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
-from app.services.webhook.signature_service import WebhookSignatureService
-from app.services.webhook.circuit_breaker_service import WebhookCircuitBreakerService
-from app.services.webhook.delivery_service import WebhookDeliveryService
-from app.services.webhook.dead_letter_service import WebhookDeadLetterService
-from app.services.webhook.stats_service import WebhookStatsService
-from app.services.webhook.reliable_notification_adapter import ReliableWebhookNotificationService
+from app.infrastructure.webhook.signature_service import WebhookSignatureService
+from app.infrastructure.webhook.circuit_breaker_service import WebhookCircuitBreakerService
+from app.infrastructure.webhook.delivery_service import WebhookDeliveryService
+from app.infrastructure.webhook.dead_letter_service import WebhookDeadLetterService
+from app.infrastructure.webhook.stats_service import WebhookStatsService
+from app.infrastructure.webhook.reliable_notification_adapter import ReliableWebhookNotificationService
 from app.api.schemas.webhook_schemas import (
     WebhookEventType,
     WebhookDeliveryStatus,

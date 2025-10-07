@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-from app.services.ai.openai_service import OpenAIService
-from app.services.ai.embedding_service import EmbeddingService
-from app.services.ai.prompt_manager import PromptManager
-from app.services.ai.cache_manager import CacheManager
+from app.infrastructure.ai.openai_service import OpenAIService
+from app.infrastructure.ai.embedding_service import EmbeddingService
+from app.infrastructure.ai.prompt_manager import PromptManager
+from app.infrastructure.ai.cache_manager import CacheManager
 
 from app.infrastructure.providers.cache_provider import get_cache_service
 from app.infrastructure.providers.postgres_provider import get_postgres_adapter

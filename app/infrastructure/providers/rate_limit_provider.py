@@ -12,7 +12,7 @@ from typing import Optional
 import structlog
 
 from app.domain.interfaces import IRateLimitService
-from app.services.security.rate_limit_service import RateLimitService
+from app.infrastructure.security.rate_limit_service import RateLimitService
 from app.infrastructure.providers.cache_provider import get_cache_service
 
 

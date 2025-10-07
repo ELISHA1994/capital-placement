@@ -29,7 +29,7 @@ from app.infrastructure.providers.usage_provider import get_usage_service
 from app.api.dependencies import map_domain_exception_to_http
 from app.domain.exceptions import DomainException, ProfileNotFoundError
 from app.infrastructure.providers.ai_provider import get_embedding_service
-from app.services.core.tenant_manager_provider import get_tenant_manager
+from app.infrastructure.providers.tenant_provider import get_tenant_service as get_tenant_manager
 from app.infrastructure.providers.postgres_provider import get_postgres_adapter
 
 

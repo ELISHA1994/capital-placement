@@ -9,7 +9,7 @@ from typing import Optional
 import structlog
 
 from app.domain.interfaces import IFileContentValidator, IWebhookValidator
-from app.services.validation.file_content_validator import FileContentValidator
+from app.infrastructure.validation.file_content_validator import FileContentValidator
 from app.domain.services.webhook_validator import WebhookValidator
 
 logger = structlog.get_logger(__name__)

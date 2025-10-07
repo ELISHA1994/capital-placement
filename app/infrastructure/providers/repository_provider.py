@@ -10,7 +10,7 @@ from sqlmodel import SQLModel
 from app.database.repositories.postgres import SQLModelRepository, VectorRepository
 from app.database.sqlmodel_engine import get_sqlmodel_db_manager
 from app.domain.repositories import IProfileRepository
-from app.services.adapters import ProfileRepositoryAdapter
+from app.infrastructure.adapters import ProfileRepositoryAdapter
 
 _sqlmodel_repositories: Dict[Type[SQLModel], SQLModelRepository] = {}
 _vector_repositories: Dict[Type[SQLModel], VectorRepository] = {}

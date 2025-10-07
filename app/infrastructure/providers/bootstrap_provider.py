@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-from app.services.bootstrap_service import BootstrapService
+from app.infrastructure.bootstrap import BootstrapService
 
 _bootstrap_service: Optional[BootstrapService] = None
 _bootstrap_lock = asyncio.Lock()

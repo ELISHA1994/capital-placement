@@ -6,7 +6,7 @@ import asyncio
 from typing import Optional
 
 from app.domain.interfaces import IEventPublisher
-from app.services.adapters.messaging_adapters import LocalEventPublisher
+from app.infrastructure.adapters.messaging_adapters import LocalEventPublisher
 
 _event_publisher: Optional[IEventPublisher] = None
 _lock = asyncio.Lock()

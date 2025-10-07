@@ -7,7 +7,7 @@ Tests role hierarchies, permission inheritance, and access control policies.
 
 import pytest
 from uuid import uuid4
-from app.services.auth.authorization_service import (
+from app.infrastructure.auth.authorization_service import (
     AuthorizationService, 
     SystemRole, 
     ResourceAction, 

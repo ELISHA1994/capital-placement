@@ -22,9 +22,9 @@ from app.infrastructure.providers.bootstrap_provider import (
 from app.infrastructure.providers.cache_provider import (
     get_cache_service as resolve_cache_service,
 )
-from app.services.auth.authentication_service import AuthenticationService
-from app.services.auth.authorization_service import AuthorizationService
-from app.services.bootstrap_service import BootstrapService
+from app.infrastructure.auth.authentication_service import AuthenticationService
+from app.infrastructure.auth.authorization_service import AuthorizationService
+from app.infrastructure.bootstrap import BootstrapService
 # from app.services.core.document_processor import DocumentProcessor  # Temporarily disabled until CV models are created
 # from app.services.core.search_engine import SearchEngine  # Temporarily disabled until CV models are created
 # NotificationService and ProfileService - to be implemented later
@@ -388,7 +388,7 @@ AuthzService = Annotated[AuthorizationService, Depends(get_async_authz_service)]
 # DocumentService = Annotated[DocumentProcessor, Depends(get_document_service)]  # Temporarily disabled
 # Import TenantService for type annotation
 if TYPE_CHECKING:
-    from app.services.tenant.tenant_service import TenantService
+    from app.infrastructure.tenant.tenant_service import TenantService
 
 TenantServiceDep = Annotated["TenantService", Depends(get_async_tenant_service)]
 # NotificationService = Annotated[NotificationService, Depends(get_notification_service)]  # Not implemented yet

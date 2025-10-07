@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-from app.services.auth.authentication_service import AuthenticationService
-from app.services.auth.authorization_service import AuthorizationService
-from app.services.bootstrap_service import BootstrapService
-from app.services.tenant.tenant_service import TenantService
+from app.infrastructure.auth.authentication_service import AuthenticationService
+from app.infrastructure.auth.authorization_service import AuthorizationService
+from app.infrastructure.bootstrap import BootstrapService
+from app.infrastructure.tenant.tenant_service import TenantService
 from app.database.repositories.postgres import (
     UserRepository,
     TenantRepository,

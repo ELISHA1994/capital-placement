@@ -33,10 +33,12 @@ from app.api.schemas.upload_schemas import (
 from app.api.dependencies import UploadServiceDep, map_domain_exception_to_http
 from app.api.rate_limit import UploadRateLimitDep
 from app.domain.exceptions import DomainException
+from app.core.config import get_settings
 
 # Core Services
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/upload", tags=["upload"])
+settings = get_settings()
 
 
 
@@ -89,7 +91,7 @@ async def upload_cv_document(
             detail={
                 "error": "upload_failed",
                 "message": "Document upload could not be completed",
-                "details": str(exc) if logger.level == "DEBUG" else None,
+                "details": str(exc) if settings.ENVIRONMENT in ("local", "development") else None,
             },
         )
 
@@ -138,7 +140,7 @@ async def upload_cv_documents_batch(
             detail={
                 "error": "batch_upload_failed",
                 "message": "Batch upload could not be completed",
-                "details": str(exc) if logger.level == "DEBUG" else None,
+                "details": str(exc) if settings.ENVIRONMENT in ("local", "development") else None,
             },
         )
 

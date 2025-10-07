@@ -26,7 +26,7 @@ from app.api.dependencies import map_domain_exception_to_http
 from app.domain.exceptions import DomainException
 
 # DocumentAnalyzer replaced with QualityAnalyzer for document analysis
-from app.services.document.quality_analyzer import QualityAnalyzer
+from app.infrastructure.providers.document_provider import get_quality_analyzer
 
 # Core Services
 from app.core.config import get_settings
@@ -302,12 +302,9 @@ async def analyze_document(
         openai_service = await get_openai_service()
         prompt_manager = await get_prompt_manager()
         postgres_adapter = await get_postgres_adapter()
-        
-        # Initialize document analyzer (using QualityAnalyzer)
-        document_analyzer = QualityAnalyzer(
-            openai_service=openai_service,
-            prompt_manager=prompt_manager
-        )
+
+        # Get document analyzer (using QualityAnalyzer via provider)
+        document_analyzer = await get_quality_analyzer()
         
         # Perform comprehensive analysis
         analysis_result = await document_analyzer.analyze_document_quality(
@@ -322,13 +319,8 @@ async def analyze_document(
             }
         )
         
-        # Perform quality analysis
-        quality_analyzer = QualityAnalyzer(
-            openai_service=openai_service,
-            prompt_manager=prompt_manager
-        )
-        
-        quality_scores = await quality_analyzer.analyze_document_quality(
+        # Perform quality analysis (reuse same analyzer instance)
+        quality_scores = await document_analyzer.analyze_document_quality(
             text=request.text_content,
             document_type=request.document_type,
             structured_data=analysis_result,

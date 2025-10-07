@@ -9,7 +9,7 @@ import pytest
 from datetime import datetime, timedelta
 from uuid import uuid4
 from unittest.mock import Mock, AsyncMock, patch
-from app.services.auth.authentication_service import AuthenticationService
+from app.infrastructure.auth.authentication_service import AuthenticationService
 from app.infrastructure.persistence.models.auth_tables import UserCreate, UserLogin, PasswordChangeRequest, PasswordResetRequest, PasswordResetConfirm
 from app.infrastructure.persistence.models.tenant_table import SubscriptionTier
 from tests.mocks.mock_repositories import MockUserRepository, MockTenantRepository, MockUserSessionRepository

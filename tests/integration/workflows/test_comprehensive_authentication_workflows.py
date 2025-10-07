@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from unittest.mock import patch, AsyncMock, Mock
 
-from app.services.auth.authentication_service import AuthenticationService
+from app.infrastructure.auth.authentication_service import AuthenticationService
 from app.infrastructure.persistence.models.auth_tables import (
     UserCreate, UserLogin, PasswordChangeRequest, PasswordResetRequest, 
     PasswordResetConfirm, RefreshTokenRequest, CurrentUser, UserUpdate,

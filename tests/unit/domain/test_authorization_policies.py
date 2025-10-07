@@ -8,7 +8,7 @@ permission validation, and authorization policies without external dependencies.
 import pytest
 from uuid import uuid4
 from unittest.mock import Mock, AsyncMock, patch
-from app.services.auth.authorization_service import (
+from app.infrastructure.auth.authorization_service import (
     AuthorizationService, SystemRole, ResourceAction, ResourceType
 )
 from app.infrastructure.persistence.models.auth_tables import AuthorizationResult

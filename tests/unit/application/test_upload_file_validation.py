@@ -62,9 +62,10 @@ class MockUploadDependencies:
         self.tenant_repository = AsyncMock()
 
 
+@pytest.mark.asyncio
 class TestUploadServiceFileValidation:
     """Test cases for upload service file validation."""
-    
+
     @pytest.fixture
     def upload_dependencies(self):
         """Mock upload dependencies."""
@@ -82,7 +83,10 @@ class TestUploadServiceFileValidation:
             user_id="user123",
             tenant_id="tenant123",
             email="test@example.com",
-            roles=["user"]
+            full_name="Test User",
+            roles=["user"],
+            permissions=[],
+            is_active=True
         )
     
     @pytest.fixture

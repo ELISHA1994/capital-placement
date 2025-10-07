@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 from unittest.mock import patch, AsyncMock
 
-from app.services.tenant.tenant_service import TenantService
+from app.infrastructure.tenant.tenant_service import TenantService
 from app.infrastructure.persistence.models.tenant_table import SubscriptionTier, TenantConfiguration
 from app.infrastructure.persistence.models.auth_tables import CurrentUser
 from tests.mocks.mock_repositories import MockTenantRepository, MockUserRepository

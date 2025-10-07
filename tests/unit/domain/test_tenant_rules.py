@@ -7,7 +7,7 @@ Fast execution and high coverage of edge cases.
 
 import pytest
 from app.infrastructure.persistence.models.tenant_table import SubscriptionTier, QuotaLimits, FeatureFlags
-from app.services.tenant.tenant_service import TenantService
+from app.infrastructure.tenant.tenant_service import TenantService
 
 
 class TestTenantNameValidation:

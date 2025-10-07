@@ -20,7 +20,7 @@ import structlog
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.services.usage import usage_tracker
+from app.infrastructure.providers.usage_provider import get_usage_service
 
 logger = structlog.get_logger(__name__)
 
@@ -128,7 +128,8 @@ class UsageTrackingMiddleware(BaseHTTPMiddleware):
             method = request.method
             status_code = response.status_code
             
-            # Track API usage
+            # Track API usage (get tracker from provider)
+            usage_tracker = await get_usage_service()
             await usage_tracker.track_api_usage(
                 tenant_id=tenant_id,
                 endpoint=endpoint,

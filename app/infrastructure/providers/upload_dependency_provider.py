@@ -10,11 +10,20 @@ from app.domain.interfaces import IFileResourceManager
 # Import all required service providers
 from app.infrastructure.providers.postgres_provider import get_postgres_adapter
 from app.infrastructure.providers.resource_provider import get_file_resource_service
+from app.infrastructure.providers.storage_provider import get_file_storage
+from app.infrastructure.providers.validation_provider import (
+    get_file_content_validator_sync,
+    get_webhook_validator_sync
+)
 
-# Create mock implementations for services that might not exist
-from app.services.validation.webhook_validator import WebhookValidator
-from app.services.document.document_processor import DocumentProcessor
-from app.services.storage.local_storage import LocalStorageService
+# Import document processing services
+from app.infrastructure.providers.document_provider import (
+    get_document_processor,
+    get_content_extractor,
+    get_quality_analyzer,
+    get_embedding_generator
+)
+from app.infrastructure.providers.ai_provider import get_embedding_service
 
 # Mock implementations for missing services
 class MockContentExtractor:
@@ -82,19 +91,6 @@ class MockRepository:
     def __init__(self, database_adapter):
         self.database_adapter = database_adapter
 
-class MockFileContentValidator:
-    async def validate_upload_file(self, file, tenant_config=None):
-        # Mock validation result
-        class MockValidationResult:
-            def __init__(self):
-                self.is_valid = True
-                self.file_size = getattr(file, 'size', len(getattr(file, 'file', b'')))
-                self.validation_errors = []
-                self.security_warnings = []
-                self.confidence_score = 1.0
-                self.validation_details = {}
-        
-        return MockValidationResult()
 
 
 class UploadDependencyFactory(IUploadDependencyFactory):
@@ -116,31 +112,33 @@ class UploadDependencyFactory(IUploadDependencyFactory):
         
         # Get database and core services
         database_adapter = await get_postgres_adapter()
-        
+
         # Get resource management services
         file_resource_manager = await get_file_resource_service()
-        
+
+        # Get file storage service (uses hexagonal architecture adapter)
+        storage_service = await get_file_storage()
+
         # Create service instances using mock implementations
         content_extractor = MockContentExtractor()
         quality_analyzer = MockQualityAnalyzer()
         embedding_service = MockEmbeddingService()
-        
+
         tenant_manager = MockTenantManagerService()
         notification_service = MockNotificationService()
         event_publisher = MockEventPublisher()
-        
+
         # Create repositories using mock implementation
         profile_repository = MockRepository(database_adapter)
         user_repository = MockRepository(database_adapter)
         tenant_repository = MockRepository(database_adapter)
-        
-        # Create validation services
-        webhook_validator = WebhookValidator()
-        file_content_validator = MockFileContentValidator()
-        
-        # Create document processor and storage service
+
+        # Get validation services from providers
+        webhook_validator = get_webhook_validator_sync()
+        file_content_validator = get_file_content_validator_sync()
+
+        # Create document processor
         document_processor = DocumentProcessor()
-        storage_service = LocalStorageService()
         
         # Create dependencies
         self._dependencies_cache = UploadDependencies(
@@ -148,24 +146,24 @@ class UploadDependencyFactory(IUploadDependencyFactory):
             profile_repository=profile_repository,
             user_repository=user_repository,
             tenant_repository=tenant_repository,
-            
+
             # Document processing services
             document_processor=document_processor,
             content_extractor=content_extractor,
             quality_analyzer=quality_analyzer,
             embedding_service=embedding_service,
-            
+
             # Infrastructure services
-            storage_service=storage_service,
+            file_storage=storage_service,
             notification_service=notification_service,
             tenant_manager=tenant_manager,
             database_adapter=database_adapter,
             event_publisher=event_publisher,
-            
+
             # Validation services
             webhook_validator=webhook_validator,
             file_content_validator=file_content_validator,
-            
+
             # Resource management
             file_resource_manager=file_resource_manager,
         )

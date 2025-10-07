@@ -5,12 +5,14 @@ from __future__ import annotations
 from typing import Optional
 
 from app.domain.retry import IDeadLetterService, IRetryService, IRetryOperationExecutor
-from app.services.retry.dead_letter_service import DeadLetterService
-from app.services.retry.error_classifier import (
-    DatabaseErrorClassifier, DefaultErrorClassifier, OpenAIErrorClassifier
+from app.infrastructure.retry import (
+    DatabaseErrorClassifier,
+    DeadLetterService,
+    DefaultErrorClassifier,
+    OpenAIErrorClassifier,
+    RetryOperationExecutor,
+    RetryService,
 )
-from app.services.retry.retry_executor import RetryOperationExecutor
-from app.services.retry.retry_service import RetryService
 
 
 # Global service instances

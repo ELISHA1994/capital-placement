@@ -17,7 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.config import get_settings
 from app.core.environment import log_environment_info
 from app.core.service_factory import get_service_factory
-from app.api import api_router
+from app.api import create_api_router
 from app.infrastructure.providers.ai_provider import (
     get_openai_service,
     reset_ai_services,
@@ -226,8 +226,9 @@ def create_app() -> FastAPI:
     
     # Add basic middleware that doesn't require async initialization
     setup_basic_middleware(app, settings)
-    
-    # Include API routes
+
+    # Include API routes (create router with lazy imports to avoid circular dependencies)
+    api_router = create_api_router()
     app.include_router(api_router)
     
     # Basic health check endpoint
