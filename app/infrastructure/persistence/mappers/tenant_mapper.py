@@ -17,7 +17,7 @@ from app.domain.entities.tenant import (
     SubscriptionTier
 )
 from app.domain.value_objects import TenantId
-from app.models.tenant_models import TenantTable, TenantConfigurationTable  # SQLModel persistence models
+from app.infrastructure.persistence.models.tenant_table import TenantTable, TenantConfigurationTable  # SQLModel persistence models
 
 
 class TenantMapper:
@@ -114,7 +114,7 @@ class TenantMapper:
         config_table.set_feature_flags(TenantMapper._map_settings_to_feature_flags(tenant.settings))
         
         # Set billing configuration
-        from app.models.tenant_models import BillingConfiguration
+        from app.infrastructure.persistence.models.tenant_table import BillingConfiguration
         billing_config = BillingConfiguration(
             billing_cycle="monthly",
             currency="USD",
@@ -123,7 +123,7 @@ class TenantMapper:
         config_table.set_billing_configuration(billing_config)
         
         # Set search and processing configurations with defaults
-        from app.models.tenant_models import SearchConfiguration, ProcessingConfiguration
+        from app.infrastructure.persistence.models.tenant_table import SearchConfiguration, ProcessingConfiguration
         search_config = SearchConfiguration()
         processing_config = ProcessingConfiguration()
         config_table.set_search_configuration(search_config)
@@ -155,7 +155,7 @@ class TenantMapper:
     @staticmethod
     def _map_limits_to_persistence(limits: TenantLimits):
         """Map domain TenantLimits to persistence QuotaLimits."""
-        from app.models.tenant_models import QuotaLimits
+        from app.infrastructure.persistence.models.tenant_table import QuotaLimits
         from decimal import Decimal
         
         return QuotaLimits(
@@ -191,7 +191,7 @@ class TenantMapper:
     @staticmethod
     def _map_usage_to_persistence(usage: TenantUsage):
         """Map domain TenantUsage to persistence UsageMetrics."""
-        from app.models.tenant_models import UsageMetrics
+        from app.infrastructure.persistence.models.tenant_table import UsageMetrics
         from decimal import Decimal
         
         return UsageMetrics(
@@ -233,7 +233,7 @@ class TenantMapper:
     @staticmethod
     def _map_settings_to_feature_flags(settings: TenantSettings):
         """Map domain TenantSettings to persistence FeatureFlags."""
-        from app.models.tenant_models import FeatureFlags
+        from app.infrastructure.persistence.models.tenant_table import FeatureFlags
         
         return FeatureFlags(
             enable_advanced_search=True,

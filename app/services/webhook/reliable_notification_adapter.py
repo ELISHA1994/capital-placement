@@ -17,7 +17,7 @@ from app.domain.interfaces import (
     IWebhookDeliveryService,
     IAuditService
 )
-from app.models.webhook_models import WebhookEventType
+from app.api.schemas.webhook_schemas import WebhookEventType
 
 logger = structlog.get_logger(__name__)
 

@@ -19,11 +19,11 @@ import re
 import structlog
 from app.core.config import get_settings
 from app.utils.security import SecurityValidator
-from app.models.tenant_models import (
+from app.infrastructure.persistence.models.tenant_table import (
     TenantConfiguration, SubscriptionTier, QuotaLimits, 
     UsageMetrics, FeatureFlags, BillingConfiguration
 )
-from app.models.auth import User, CurrentUser
+from app.infrastructure.persistence.models.auth_tables import User, CurrentUser
 from app.database.repositories.postgres import TenantRepository, UserRepository
 from app.domain.interfaces import ICacheService
 from app.core.transaction_manager import transactional, get_transaction_manager
@@ -1184,7 +1184,7 @@ class TenantService:
     def _deserialize_tenant_json_fields(self, tenant_data: Dict[str, Any]) -> Dict[str, Any]:
         """Deserialize JSON fields from database data for Pydantic model creation."""
         import json
-        from app.models.tenant_models import (
+        from app.infrastructure.persistence.models.tenant_table import (
             SearchConfiguration, ProcessingConfiguration, ProcessingPriority,
             UsageMetrics, QuotaLimits, FeatureFlags, BillingConfiguration
         )

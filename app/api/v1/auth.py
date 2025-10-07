@@ -20,7 +20,7 @@ from app.core.dependencies import (
     get_async_auth_service, get_async_authz_service, get_current_user, 
     get_current_user_optional, security
 )
-from app.models.auth import (
+from app.infrastructure.persistence.models.auth_tables import (
     UserCreate, UserLogin, UserUpdate, TokenResponse, RefreshTokenRequest,
     CurrentUser, PasswordChangeRequest, PasswordResetRequest, PasswordResetConfirm,
     APIKeyCreate, APIKeyResponse, APIKeyInfo, SessionInfo

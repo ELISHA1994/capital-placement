@@ -15,8 +15,8 @@ from pydantic import BaseModel, Field
 
 import structlog
 
-from app.models.auth import CurrentUser
-from app.models.webhook_models import (
+from app.infrastructure.persistence.models.auth_tables import CurrentUser
+from app.api.schemas.webhook_schemas import (
     WebhookEventType,
     WebhookEndpointCreate,
     WebhookEndpointUpdate,

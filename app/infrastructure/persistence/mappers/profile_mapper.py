@@ -1,161 +1,315 @@
-"""Mapper between Profile domain entities and ProfileTable persistence models."""
+"""
+Comprehensive mapper between Profile domain entities and ProfileTable persistence models.
+
+This mapper handles bidirectional conversion between the rich domain model (Profile)
+and the database persistence model (ProfileTable), managing:
+- Value object conversions (ProfileId, TenantId, EmailAddress, etc.)
+- JSONB serialization for complex nested structures
+- Vector embedding transformations
+- Datetime timezone handling
+- Enum conversions
+- Denormalized field synchronization
+"""
 
 from __future__ import annotations
 
-from typing import List, Optional, Dict, Any
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from app.domain.entities.profile import (
-    Profile, 
-    ProfileData, 
-    ProfileEmbeddings, 
-    ProcessingMetadata,
-    PrivacySettings,
-    ProfileAnalytics,
-    Location,
-    Experience,
     Education,
-    Skill,
-    ProfileStatus,
+    Experience,
+    ExperienceLevel,
+    Location,
+    PrivacySettings,
+    ProcessingMetadata,
     ProcessingStatus,
-    ExperienceLevel
+    Profile,
+    ProfileAnalytics,
+    ProfileData,
+    ProfileEmbeddings,
+    ProfileStatus,
+    Skill,
 )
 from app.domain.value_objects import (
-    ProfileId, 
-    TenantId, 
-    EmbeddingVector, 
-    SkillName,
     EmailAddress,
-    PhoneNumber
+    EmbeddingVector,
+    PhoneNumber,
+    ProfileId,
+    SkillName,
+    TenantId,
 )
-from app.models.profile import ProfileTable  # SQLModel persistence model
+from app.infrastructure.persistence.models.profile_table import ProfileTable
 
 
 class ProfileMapper:
-    """Maps between Profile domain entities and ProfileTable persistence models."""
+    """
+    Maps between Profile domain entities and ProfileTable persistence models.
+
+    This mapper ensures complete bidirectional conversion while handling:
+    - Domain value objects ↔ Primitive types
+    - Nested structures ↔ JSONB fields
+    - Vector embeddings ↔ Database vector columns
+    - Denormalized fields for query performance
+    """
+
+    # Vector dimension constant (OpenAI text-embedding-3-large)
+    EMBEDDING_DIMENSIONS = 1536
 
     @staticmethod
-    def to_domain(profile_table: ProfileTable) -> Profile:
-        """Convert ProfileTable (persistence) to Profile (domain)."""
-        # Map profile data
-        profile_data_dict = profile_table.profile_data or {}
+    def to_domain(table: ProfileTable) -> Profile:
+        """
+        Convert ProfileTable (persistence) to Profile (domain entity).
+
+        Args:
+            table: ProfileTable instance from database
+
+        Returns:
+            Profile domain entity with all value objects properly constructed
+
+        Raises:
+            ValueError: If required fields are missing or invalid
+        """
+        # Map profile data from JSONB
+        profile_data_dict = table.profile_data or {}
         profile_data = ProfileMapper._map_profile_data_to_domain(profile_data_dict)
-        
-        # Map embeddings
+
+        # Map embeddings from vector columns
         embeddings = ProfileMapper._map_embeddings_to_domain(
-            profile_table.overall_embedding,
-            profile_table.skills_embedding,
-            profile_table.experience_embedding,
-            profile_table.summary_embedding
+            overall=table.overall_embedding,
+            skills=table.skills_embedding,
+            experience=table.experience_embedding,
+            education=getattr(table, 'education_embedding', None),
+            summary=table.summary_embedding
         )
-        
-        # Map processing metadata
+
+        # Map processing metadata from JSONB
         processing = ProfileMapper._map_processing_metadata_to_domain(
-            profile_table.processing_metadata or {},
-            profile_table.processing_status
+            metadata_dict=table.processing_metadata or {},
+            status=table.processing_status
         )
-        
-        # Map privacy settings
+
+        # Map privacy settings from JSONB and denormalized fields
         privacy = ProfileMapper._map_privacy_settings_to_domain(
-            profile_table.privacy_settings or {},
-            profile_table.consent_given,
-            profile_table.consent_date
+            privacy_dict=table.privacy_settings or {},
+            consent_given=table.consent_given,
+            consent_date=table.consent_date
         )
-        
-        # Map analytics
+
+        # Map analytics from denormalized fields
         analytics = ProfileAnalytics(
-            view_count=profile_table.view_count,
-            search_appearances=profile_table.search_appearances,
-            last_viewed_at=profile_table.last_viewed_at,
-            match_score=None  # Calculated dynamically
+            view_count=table.view_count,
+            search_appearances=table.search_appearances,
+            last_viewed_at=table.last_viewed_at,
+            match_score=None  # Calculated dynamically during search
         )
-        
+
         # Create domain entity
         return Profile(
-            id=ProfileId(profile_table.id),
-            tenant_id=TenantId(profile_table.tenant_id),
-            status=ProfileStatus(profile_table.status),
+            id=ProfileId(table.id),
+            tenant_id=TenantId(table.tenant_id),
+            status=ProfileStatus(table.status),
             profile_data=profile_data,
-            searchable_text=profile_table.searchable_text,
-            normalized_skills=profile_table.normalized_skills or [],
-            keywords=profile_table.keywords or [],
-            experience_level=ExperienceLevel(profile_table.experience_level) if profile_table.experience_level else None,
+            searchable_text=table.searchable_text or "",
+            normalized_skills=table.normalized_skills or [],
+            keywords=table.keywords or [],
+            experience_level=ExperienceLevel(table.experience_level) if table.experience_level else None,
             embeddings=embeddings,
-            metadata=profile_table.metadata if hasattr(profile_table, 'metadata') else {},
+            metadata={},  # Can be extended to map additional metadata
             processing=processing,
             privacy=privacy,
             analytics=analytics,
-            created_at=profile_table.created_at,
-            updated_at=profile_table.updated_at,
-            last_activity_at=profile_table.last_activity_at
+            created_at=table.created_at,
+            updated_at=table.updated_at,
+            last_activity_at=table.last_activity_at
         )
 
     @staticmethod
-    def to_persistence(profile: Profile) -> ProfileTable:
-        """Convert Profile (domain) to ProfileTable (persistence)."""
+    def to_table(entity: Profile) -> ProfileTable:
+        """
+        Convert Profile (domain entity) to ProfileTable (persistence).
+
+        Args:
+            entity: Profile domain entity
+
+        Returns:
+            ProfileTable ready for database persistence
+        """
         # Map profile data to JSONB
-        profile_data_dict = ProfileMapper._map_profile_data_to_persistence(profile.profile_data)
-        
+        profile_data_dict = ProfileMapper._map_profile_data_to_persistence(entity.profile_data)
+
         # Map processing metadata to JSONB
-        processing_dict = ProfileMapper._map_processing_metadata_to_persistence(profile.processing)
-        
+        processing_dict = ProfileMapper._map_processing_metadata_to_persistence(entity.processing)
+
         # Map privacy settings to JSONB
-        privacy_dict = ProfileMapper._map_privacy_settings_to_persistence(profile.privacy)
-        
+        privacy_dict = ProfileMapper._map_privacy_settings_to_persistence(entity.privacy)
+
         # Create persistence model
-        profile_table = ProfileTable(
-            id=profile.id.value,
-            tenant_id=profile.tenant_id.value,
-            status=profile.status.value,
-            experience_level=profile.experience_level.value if profile.experience_level else None,
+        table = ProfileTable(
+            id=entity.id.value,
+            tenant_id=entity.tenant_id.value,
+
+            # Status fields
+            status=entity.status.value,
+            experience_level=entity.experience_level.value if entity.experience_level else None,
+
+            # Profile data (JSONB)
             profile_data=profile_data_dict,
-            searchable_text=profile.searchable_text,
-            keywords=profile.keywords,
-            normalized_skills=profile.normalized_skills,
-            name=profile.profile_data.name,
-            email=str(profile.profile_data.email),
-            phone=str(profile.profile_data.phone) if profile.profile_data.phone else None,
-            location_city=profile.profile_data.location.city if profile.profile_data.location else None,
-            location_state=profile.profile_data.location.state if profile.profile_data.location else None,
-            location_country=profile.profile_data.location.country if profile.profile_data.location else None,
-            overall_embedding=profile.embeddings.overall.values if profile.embeddings.overall else None,
-            skills_embedding=profile.embeddings.skills.values if profile.embeddings.skills else None,
-            experience_embedding=profile.embeddings.experience.values if profile.embeddings.experience else None,
-            summary_embedding=profile.embeddings.summary.values if profile.embeddings.summary else None,
-            processing_status=profile.processing.status.value,
+
+            # Search fields
+            searchable_text=entity.searchable_text,
+            keywords=entity.keywords,
+            normalized_skills=entity.normalized_skills,
+
+            # Denormalized contact fields for performance
+            name=entity.profile_data.name,
+            email=str(entity.profile_data.email),
+            phone=str(entity.profile_data.phone) if entity.profile_data.phone else None,
+
+            # Denormalized location fields for geo queries
+            location_city=entity.profile_data.location.city if entity.profile_data.location else None,
+            location_state=entity.profile_data.location.state if entity.profile_data.location else None,
+            location_country=entity.profile_data.location.country if entity.profile_data.location else None,
+
+            # Vector embeddings
+            overall_embedding=entity.embeddings.overall.values if entity.embeddings.overall else None,
+            skills_embedding=entity.embeddings.skills.values if entity.embeddings.skills else None,
+            experience_embedding=entity.embeddings.experience.values if entity.embeddings.experience else None,
+            summary_embedding=entity.embeddings.summary.values if entity.embeddings.summary else None,
+
+            # Processing metadata
+            processing_status=entity.processing.status.value,
             processing_metadata=processing_dict,
-            quality_score=profile.processing.quality_score,
+            quality_score=entity.processing.quality_score,
+
+            # Privacy settings
             privacy_settings=privacy_dict,
-            consent_given=profile.privacy.consent_given,
-            consent_date=profile.privacy.consent_date,
-            view_count=profile.analytics.view_count,
-            search_appearances=profile.analytics.search_appearances,
-            last_viewed_at=profile.analytics.last_viewed_at,
-            last_activity_at=profile.last_activity_at,
-            created_at=profile.created_at,
-            updated_at=profile.updated_at
+            consent_given=entity.privacy.consent_given,
+            consent_date=entity.privacy.consent_date,
+
+            # Analytics
+            view_count=entity.analytics.view_count,
+            search_appearances=entity.analytics.search_appearances,
+            last_viewed_at=entity.analytics.last_viewed_at,
+
+            # Timestamps
+            last_activity_at=entity.last_activity_at,
+            created_at=entity.created_at,
+            updated_at=entity.updated_at
         )
-        
-        return profile_table
+
+        return table
+
+    @staticmethod
+    def update_table_from_domain(table: ProfileTable, entity: Profile) -> ProfileTable:
+        """
+        Update existing ProfileTable with data from Profile domain entity.
+
+        This method preserves the table's database identity while syncing all
+        fields from the domain entity. Useful for updates without creating new instances.
+
+        Args:
+            table: Existing ProfileTable instance to update
+            entity: Profile domain entity with updated data
+
+        Returns:
+            Updated ProfileTable (same instance, modified in place)
+        """
+        # Update status fields
+        table.status = entity.status.value
+        table.experience_level = entity.experience_level.value if entity.experience_level else None
+
+        # Update search fields
+        table.searchable_text = entity.searchable_text
+        table.keywords = entity.keywords
+        table.normalized_skills = entity.normalized_skills
+
+        # Update denormalized contact fields
+        table.name = entity.profile_data.name
+        table.email = str(entity.profile_data.email)
+        table.phone = str(entity.profile_data.phone) if entity.profile_data.phone else None
+
+        # Update denormalized location fields
+        if entity.profile_data.location:
+            table.location_city = entity.profile_data.location.city
+            table.location_state = entity.profile_data.location.state
+            table.location_country = entity.profile_data.location.country
+        else:
+            table.location_city = None
+            table.location_state = None
+            table.location_country = None
+
+        # Update JSONB fields
+        table.profile_data = ProfileMapper._map_profile_data_to_persistence(entity.profile_data)
+        table.processing_metadata = ProfileMapper._map_processing_metadata_to_persistence(entity.processing)
+        table.privacy_settings = ProfileMapper._map_privacy_settings_to_persistence(entity.privacy)
+
+        # Update vector embeddings
+        table.overall_embedding = entity.embeddings.overall.values if entity.embeddings.overall else None
+        table.skills_embedding = entity.embeddings.skills.values if entity.embeddings.skills else None
+        table.experience_embedding = entity.embeddings.experience.values if entity.embeddings.experience else None
+        table.summary_embedding = entity.embeddings.summary.values if entity.embeddings.summary else None
+
+        # Update processing metadata
+        table.processing_status = entity.processing.status.value
+        table.quality_score = entity.processing.quality_score
+
+        # Update privacy settings
+        table.consent_given = entity.privacy.consent_given
+        table.consent_date = entity.privacy.consent_date
+
+        # Update analytics
+        table.view_count = entity.analytics.view_count
+        table.search_appearances = entity.analytics.search_appearances
+        table.last_viewed_at = entity.analytics.last_viewed_at
+
+        # Update timestamps
+        table.updated_at = entity.updated_at
+        table.last_activity_at = entity.last_activity_at
+
+        return table
+
+    # ========================================================================
+    # Private helper methods for complex nested structures
+    # ========================================================================
 
     @staticmethod
     def _map_profile_data_to_domain(data: Dict[str, Any]) -> ProfileData:
-        """Map JSONB profile data to domain ProfileData."""
+        """
+        Map JSONB profile data dictionary to domain ProfileData.
+
+        Args:
+            data: Dictionary from profile_data JSONB field
+
+        Returns:
+            ProfileData with all nested value objects constructed
+        """
         # Map location
-        location_data = data.get('location')
         location = None
+        location_data = data.get('location')
         if location_data:
+            # Handle both tuple and dict formats for coordinates
+            coords = location_data.get('coordinates')
+            if coords:
+                if isinstance(coords, dict):
+                    coords = (coords.get('lat'), coords.get('lng'))
+                elif isinstance(coords, list):
+                    coords = tuple(coords)
+
             location = Location(
                 city=location_data.get('city'),
                 state=location_data.get('state'),
                 country=location_data.get('country'),
-                coordinates=tuple(location_data['coordinates']) if location_data.get('coordinates') else None
+                coordinates=coords
             )
-        
-        # Map experience
+
+        # Map experience entries
         experience = []
         for exp_data in data.get('experience', []):
+            # Convert skill strings to SkillName value objects
             skills = [SkillName(skill) for skill in exp_data.get('skills', [])]
+
             experience.append(Experience(
                 title=exp_data['title'],
                 company=exp_data['company'],
@@ -167,8 +321,8 @@ class ProfileMapper:
                 achievements=exp_data.get('achievements', []),
                 skills=skills
             ))
-        
-        # Map education
+
+        # Map education entries
         education = []
         for edu_data in data.get('education', []):
             education.append(Education(
@@ -180,8 +334,8 @@ class ProfileMapper:
                 gpa=edu_data.get('gpa'),
                 achievements=edu_data.get('achievements', [])
             ))
-        
-        # Map skills
+
+        # Map skills with SkillName value objects
         skills = []
         for skill_data in data.get('skills', []):
             skills.append(Skill(
@@ -192,7 +346,8 @@ class ProfileMapper:
                 endorsed=skill_data.get('endorsed', False),
                 last_used=skill_data.get('last_used')
             ))
-        
+
+        # Construct ProfileData with value objects
         return ProfileData(
             name=data['name'],
             email=EmailAddress(data['email']),
@@ -208,7 +363,15 @@ class ProfileMapper:
 
     @staticmethod
     def _map_profile_data_to_persistence(profile_data: ProfileData) -> Dict[str, Any]:
-        """Map domain ProfileData to JSONB dict."""
+        """
+        Map domain ProfileData to JSONB dictionary.
+
+        Args:
+            profile_data: ProfileData domain object
+
+        Returns:
+            Dictionary suitable for JSONB storage
+        """
         # Map location
         location_dict = None
         if profile_data.location:
@@ -218,8 +381,8 @@ class ProfileMapper:
                 'country': profile_data.location.country,
                 'coordinates': list(profile_data.location.coordinates) if profile_data.location.coordinates else None
             }
-        
-        # Map experience
+
+        # Map experience entries
         experience_list = []
         for exp in profile_data.experience:
             experience_list.append({
@@ -231,10 +394,10 @@ class ProfileMapper:
                 'current': exp.current,
                 'location': exp.location,
                 'achievements': exp.achievements,
-                'skills': [str(skill) for skill in exp.skills]
+                'skills': [str(skill) for skill in exp.skills]  # Convert SkillName to string
             })
-        
-        # Map education
+
+        # Map education entries
         education_list = []
         for edu in profile_data.education:
             education_list.append({
@@ -246,23 +409,23 @@ class ProfileMapper:
                 'gpa': edu.gpa,
                 'achievements': edu.achievements
             })
-        
+
         # Map skills
         skills_list = []
         for skill in profile_data.skills:
             skills_list.append({
-                'name': str(skill.name),
+                'name': str(skill.name),  # Convert SkillName to string
                 'category': skill.category,
                 'proficiency': skill.proficiency,
                 'years_of_experience': skill.years_of_experience,
                 'endorsed': skill.endorsed,
                 'last_used': skill.last_used
             })
-        
+
         return {
             'name': profile_data.name,
-            'email': str(profile_data.email),
-            'phone': str(profile_data.phone) if profile_data.phone else None,
+            'email': str(profile_data.email),  # Convert EmailAddress to string
+            'phone': str(profile_data.phone) if profile_data.phone else None,  # Convert PhoneNumber to string
             'location': location_dict,
             'summary': profile_data.summary,
             'headline': profile_data.headline,
@@ -277,14 +440,43 @@ class ProfileMapper:
         overall: Optional[List[float]],
         skills: Optional[List[float]],
         experience: Optional[List[float]],
+        education: Optional[List[float]],
         summary: Optional[List[float]]
     ) -> ProfileEmbeddings:
-        """Map embedding vectors to domain ProfileEmbeddings."""
+        """
+        Map embedding vector lists to domain ProfileEmbeddings.
+
+        Args:
+            overall: Overall profile embedding vector
+            skills: Skills-specific embedding vector
+            experience: Experience-specific embedding vector
+            education: Education-specific embedding vector
+            summary: Summary-specific embedding vector
+
+        Returns:
+            ProfileEmbeddings with EmbeddingVector value objects
+        """
         return ProfileEmbeddings(
-            overall=EmbeddingVector(1536, overall) if overall else None,
-            skills=EmbeddingVector(1536, skills) if skills else None,
-            experience=EmbeddingVector(1536, experience) if experience else None,
-            summary=EmbeddingVector(1536, summary) if summary else None
+            overall=EmbeddingVector(
+                dimensions=ProfileMapper.EMBEDDING_DIMENSIONS,
+                values=overall
+            ) if overall else None,
+            skills=EmbeddingVector(
+                dimensions=ProfileMapper.EMBEDDING_DIMENSIONS,
+                values=skills
+            ) if skills else None,
+            experience=EmbeddingVector(
+                dimensions=ProfileMapper.EMBEDDING_DIMENSIONS,
+                values=experience
+            ) if experience else None,
+            education=EmbeddingVector(
+                dimensions=ProfileMapper.EMBEDDING_DIMENSIONS,
+                values=education
+            ) if education else None,
+            summary=EmbeddingVector(
+                dimensions=ProfileMapper.EMBEDDING_DIMENSIONS,
+                values=summary
+            ) if summary else None
         )
 
     @staticmethod
@@ -292,12 +484,31 @@ class ProfileMapper:
         metadata_dict: Dict[str, Any],
         status: str
     ) -> ProcessingMetadata:
-        """Map processing metadata to domain ProcessingMetadata."""
+        """
+        Map processing metadata dictionary to domain ProcessingMetadata.
+
+        Args:
+            metadata_dict: Dictionary from processing_metadata JSONB field
+            status: Processing status string
+
+        Returns:
+            ProcessingMetadata domain object
+        """
+        # Parse datetime from ISO string if present
+        last_processed = None
+        if metadata_dict.get('last_processed'):
+            try:
+                last_processed = datetime.fromisoformat(
+                    metadata_dict['last_processed'].replace('Z', '+00:00')
+                )
+            except (ValueError, AttributeError):
+                pass
+
         return ProcessingMetadata(
             status=ProcessingStatus(status),
             version=metadata_dict.get('version', '1.0'),
             time_ms=metadata_dict.get('time_ms'),
-            last_processed=metadata_dict.get('last_processed'),
+            last_processed=last_processed,
             error_message=metadata_dict.get('error_message'),
             extraction_method=metadata_dict.get('extraction_method'),
             quality_score=metadata_dict.get('quality_score'),
@@ -308,7 +519,15 @@ class ProfileMapper:
 
     @staticmethod
     def _map_processing_metadata_to_persistence(processing: ProcessingMetadata) -> Dict[str, Any]:
-        """Map domain ProcessingMetadata to JSONB dict."""
+        """
+        Map domain ProcessingMetadata to JSONB dictionary.
+
+        Args:
+            processing: ProcessingMetadata domain object
+
+        Returns:
+            Dictionary suitable for JSONB storage
+        """
         return {
             'version': processing.version,
             'time_ms': processing.time_ms,
@@ -325,71 +544,53 @@ class ProfileMapper:
     def _map_privacy_settings_to_domain(
         privacy_dict: Dict[str, Any],
         consent_given: bool,
-        consent_date: Optional[Any]
+        consent_date: Optional[datetime]
     ) -> PrivacySettings:
-        """Map privacy settings to domain PrivacySettings."""
+        """
+        Map privacy settings dictionary to domain PrivacySettings.
+
+        Args:
+            privacy_dict: Dictionary from privacy_settings JSONB field
+            consent_given: Consent flag from denormalized field
+            consent_date: Consent date from denormalized field
+
+        Returns:
+            PrivacySettings domain object
+        """
+        # Parse datetime fields
+        data_retention_date = None
+        if privacy_dict.get('data_retention_date'):
+            try:
+                data_retention_date = datetime.fromisoformat(
+                    privacy_dict['data_retention_date'].replace('Z', '+00:00')
+                )
+            except (ValueError, AttributeError):
+                pass
+
         return PrivacySettings(
             consent_given=consent_given,
             consent_date=consent_date,
-            data_retention_date=privacy_dict.get('data_retention_date'),
+            data_retention_date=data_retention_date,
             gdpr_export_requested=privacy_dict.get('gdpr_export_requested', False),
             deletion_requested=privacy_dict.get('deletion_requested', False)
         )
 
     @staticmethod
     def _map_privacy_settings_to_persistence(privacy: PrivacySettings) -> Dict[str, Any]:
-        """Map domain PrivacySettings to JSONB dict."""
+        """
+        Map domain PrivacySettings to JSONB dictionary.
+
+        Args:
+            privacy: PrivacySettings domain object
+
+        Returns:
+            Dictionary suitable for JSONB storage
+        """
         return {
             'data_retention_date': privacy.data_retention_date.isoformat() if privacy.data_retention_date else None,
             'gdpr_export_requested': privacy.gdpr_export_requested,
             'deletion_requested': privacy.deletion_requested
         }
-
-    @staticmethod
-    def update_persistence_from_domain(profile_table: ProfileTable, profile: Profile) -> ProfileTable:
-        """Update existing ProfileTable with data from Profile domain entity."""
-        # Update denormalized fields
-        profile_table.status = profile.status.value
-        profile_table.experience_level = profile.experience_level.value if profile.experience_level else None
-        profile_table.searchable_text = profile.searchable_text
-        profile_table.keywords = profile.keywords
-        profile_table.normalized_skills = profile.normalized_skills
-        profile_table.name = profile.profile_data.name
-        profile_table.email = str(profile.profile_data.email)
-        profile_table.phone = str(profile.profile_data.phone) if profile.profile_data.phone else None
-        
-        if profile.profile_data.location:
-            profile_table.location_city = profile.profile_data.location.city
-            profile_table.location_state = profile.profile_data.location.state
-            profile_table.location_country = profile.profile_data.location.country
-        
-        # Update JSONB fields
-        profile_table.profile_data = ProfileMapper._map_profile_data_to_persistence(profile.profile_data)
-        profile_table.processing_metadata = ProfileMapper._map_processing_metadata_to_persistence(profile.processing)
-        profile_table.privacy_settings = ProfileMapper._map_privacy_settings_to_persistence(profile.privacy)
-        
-        # Update embeddings
-        profile_table.overall_embedding = profile.embeddings.overall.values if profile.embeddings.overall else None
-        profile_table.skills_embedding = profile.embeddings.skills.values if profile.embeddings.skills else None
-        profile_table.experience_embedding = profile.embeddings.experience.values if profile.embeddings.experience else None
-        profile_table.summary_embedding = profile.embeddings.summary.values if profile.embeddings.summary else None
-        
-        # Update status and metadata
-        profile_table.processing_status = profile.processing.status.value
-        profile_table.quality_score = profile.processing.quality_score
-        profile_table.consent_given = profile.privacy.consent_given
-        profile_table.consent_date = profile.privacy.consent_date
-        
-        # Update analytics
-        profile_table.view_count = profile.analytics.view_count
-        profile_table.search_appearances = profile.analytics.search_appearances
-        profile_table.last_viewed_at = profile.analytics.last_viewed_at
-        
-        # Update timestamps
-        profile_table.updated_at = profile.updated_at
-        profile_table.last_activity_at = profile.last_activity_at
-        
-        return profile_table
 
 
 __all__ = ["ProfileMapper"]

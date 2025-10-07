@@ -19,7 +19,7 @@ from sqlalchemy import and_, func, or_, text
 from sqlalchemy.orm import selectinload
 
 from app.domain.interfaces import IAuditService
-from app.models.audit import (
+from app.infrastructure.persistence.models.audit_table import (
     AuditLogTable,
     AuditEventType,
     AuditRiskLevel,

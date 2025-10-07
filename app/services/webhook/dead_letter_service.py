@@ -12,7 +12,7 @@ from uuid import uuid4
 import structlog
 
 from app.domain.interfaces import IWebhookDeadLetterService, IDatabase
-from app.models.webhook_models import WebhookDeliveryStatus, WebhookFailureReason
+from app.api.schemas.webhook_schemas import WebhookDeliveryStatus, WebhookFailureReason
 
 logger = structlog.get_logger(__name__)
 

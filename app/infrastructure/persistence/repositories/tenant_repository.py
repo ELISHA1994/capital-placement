@@ -10,7 +10,7 @@ from app.domain.entities.tenant import Tenant, TenantStatus, TenantType, Subscri
 from app.domain.repositories.tenant_repository import ITenantRepository
 from app.domain.value_objects import TenantId
 from app.infrastructure.persistence.mappers.tenant_mapper import TenantMapper
-from app.models.tenant_models import TenantTable, TenantConfigurationTable
+from app.infrastructure.persistence.models.tenant_table import TenantTable, TenantConfigurationTable
 from app.infrastructure.providers.postgres_provider import get_postgres_adapter
 
 

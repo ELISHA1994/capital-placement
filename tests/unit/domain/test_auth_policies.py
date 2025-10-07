@@ -122,7 +122,7 @@ class TestAuthenticationBusinessLogic:
         
         for input_email, expected_output in test_cases:
             # Test through the UserLogin validator
-            from app.models.auth import UserLogin
+            from app.infrastructure.persistence.models.auth_tables import UserLogin
             login = UserLogin(email=input_email, password="test")
             assert login.email == expected_output
     
@@ -282,7 +282,7 @@ class TestAuthenticationResultValidation:
     
     def test_successful_authentication_result(self):
         """Test validation of successful authentication results."""
-        from app.models.auth import AuthenticationResult, CurrentUser, TokenResponse
+        from app.infrastructure.persistence.models.auth_tables import AuthenticationResult, CurrentUser, TokenResponse
         
         # Mock successful result
         current_user = CurrentUser(
@@ -322,7 +322,7 @@ class TestAuthenticationResultValidation:
     
     def test_failed_authentication_result(self):
         """Test validation of failed authentication results."""
-        from app.models.auth import AuthenticationResult
+        from app.infrastructure.persistence.models.auth_tables import AuthenticationResult
         
         result = AuthenticationResult(
             success=False,

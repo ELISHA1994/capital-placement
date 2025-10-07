@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from decimal import Decimal
 import structlog
 
-from app.models.tenant_models import (
+from app.infrastructure.persistence.models.tenant_table import (
     TenantConfiguration, SubscriptionTier, IndexStrategy,
     UsageMetrics, QuotaLimits, FeatureFlags, BillingConfiguration
 )

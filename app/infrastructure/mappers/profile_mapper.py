@@ -16,7 +16,7 @@ from app.domain.entities.profile import (
     ProfileStatus,
 )
 from app.domain.value_objects import ProfileId, TenantId
-from app.models.profile import (
+from app.infrastructure.persistence.models.profile_table import (
     ProcessingMetadata,
     PrivacySettings,
     ProfileEmbeddings,

@@ -16,11 +16,11 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 
-from app.models.tenant_models import (
+from app.infrastructure.persistence.models.tenant_table import (
     TenantConfiguration, SubscriptionTier, QuotaLimits, 
     UsageMetrics, FeatureFlags
 )
-from app.models.auth import CurrentUser, User
+from app.infrastructure.persistence.models.auth_tables import CurrentUser, User
 from app.core.dependencies import (
     get_current_user,
     CurrentUserDep, TenantServiceDep

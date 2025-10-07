@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from app.core.dependencies import CurrentUserDep, TenantContextDep
 from app.domain.interfaces import IAuditService
 from app.infrastructure.providers.audit_provider import get_audit_service
-from app.models.audit import (
+from app.infrastructure.persistence.models.audit_table import (
     AuditEventType,
     AuditRiskLevel,
     AuditLogQuery,

@@ -17,7 +17,7 @@ from app.services.webhook.delivery_service import WebhookDeliveryService
 from app.services.webhook.dead_letter_service import WebhookDeadLetterService
 from app.services.webhook.stats_service import WebhookStatsService
 from app.services.webhook.reliable_notification_adapter import ReliableWebhookNotificationService
-from app.models.webhook_models import (
+from app.api.schemas.webhook_schemas import (
     WebhookEventType,
     WebhookDeliveryStatus,
     WebhookFailureReason,

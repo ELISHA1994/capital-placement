@@ -15,7 +15,7 @@ from sqlalchemy.sql import func
 from sqlmodel import Field, SQLModel, Relationship
 from pydantic import field_validator
 
-from .base import AuditableModel, BaseModel, TenantModel, create_tenant_id_column
+from app.infrastructure.persistence.models.base import AuditableModel, BaseModel, TenantModel, create_tenant_id_column
 
 
 # Validation and data models (non-table models)
@@ -38,21 +38,21 @@ class Permission(BaseModel):
 class UserTable(TenantModel, table=True):
     """
     User account table model with SQLModel.
-    
+
     Matches the actual database schema for the users table.
     """
     __tablename__ = "users"
-    
+
     # Tenant isolation field (each table model must define its own)
     tenant_id: UUID = Field(
         sa_column=create_tenant_id_column(),
         description="Tenant identifier for multi-tenant isolation"
     )
-    
+
     # Relationships (required for SQLModel to create foreign key constraints)
     tenant: Optional["TenantTable"] = Relationship(back_populates="users")
     sessions: List["UserSessionTable"] = Relationship(back_populates="user")
-    
+
     # Core user fields
     email: str = Field(
         sa_column=Column(String(255), nullable=False, unique=True, index=True),
@@ -74,7 +74,7 @@ class UserTable(TenantModel, table=True):
         sa_column=Column(String(255), nullable=False),
         description="Full name"
     )
-    
+
     # Status flags
     is_active: bool = Field(
         default=True,
@@ -91,7 +91,7 @@ class UserTable(TenantModel, table=True):
         sa_column=Column(Boolean, default=False, nullable=False),
         description="Superuser status"
     )
-    
+
     # Roles and permissions (JSONB arrays)
     roles: List[str] = Field(
         default_factory=list,
@@ -103,7 +103,7 @@ class UserTable(TenantModel, table=True):
         sa_column=Column(JSONB, nullable=False, default=list),
         description="Direct permissions array"
     )
-    
+
     # Activity tracking
     last_login_at: Optional[datetime] = Field(
         default=None,
@@ -120,7 +120,7 @@ class UserTable(TenantModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=True),
         description="Account locked until timestamp"
     )
-    
+
     # Profile settings and AI preferences (JSONB)
     settings: Dict[str, Any] = Field(
         default_factory=dict,
@@ -132,59 +132,59 @@ class UserTable(TenantModel, table=True):
         sa_column=Column(JSONB, nullable=False, default={}),
         description="AI-related preferences"
     )
-    
+
     # User methods (preserve original functionality)
     def has_role(self, role: str) -> bool:
         """Check if user has a specific role."""
         return role in self.roles
-    
+
     def add_role(self, role: str) -> None:
         """Add a role if not already present."""
         if role not in self.roles:
             self.roles.append(role)
-    
+
     def remove_role(self, role: str) -> None:
         """Remove a role if present."""
         if role in self.roles:
             self.roles.remove(role)
-    
+
     def has_permission(self, permission: str) -> bool:
         """Check if user has a specific permission."""
         return permission in self.permissions
-    
+
     def add_permission(self, permission: str) -> None:
         """Add a permission if not already present."""
         if permission not in self.permissions:
             self.permissions.append(permission)
-    
+
     def remove_permission(self, permission: str) -> None:
         """Remove a permission if present."""
         if permission in self.permissions:
             self.permissions.remove(permission)
-    
+
     def update_login(self) -> None:
         """Update login tracking information."""
         self.last_login_at = datetime.now(timezone.utc)
         self.failed_login_attempts = 0  # Reset on successful login
         self.locked_until = None
         self.updated_at = datetime.now(timezone.utc)
-    
+
     def increment_failed_login(self) -> None:
         """Increment failed login attempts."""
         self.failed_login_attempts += 1
         self.updated_at = datetime.now(timezone.utc)
-    
+
     def lock_account(self, until: datetime) -> None:
         """Lock account until specified time."""
         self.locked_until = until
         self.updated_at = datetime.now(timezone.utc)
-    
+
     def unlock_account(self) -> None:
         """Unlock account and reset failed attempts."""
         self.locked_until = None
         self.failed_login_attempts = 0
         self.updated_at = datetime.now(timezone.utc)
-    
+
     @property
     def is_locked(self) -> bool:
         """Check if account is currently locked."""
@@ -196,67 +196,67 @@ class UserTable(TenantModel, table=True):
 class UserSessionTable(AuditableModel, table=True):
     """
     User session management table.
-    
+
     Tracks active user sessions for security and session management.
     """
     __tablename__ = "user_sessions"
-    
+
     # Tenant isolation field (each table model must define its own)
     tenant_id: UUID = Field(
         sa_column=create_tenant_id_column(),
         description="Tenant identifier for multi-tenant isolation"
     )
-    
+
     user_id: UUID = Field(
         sa_column=Column(
-            PostgreSQLUUID(as_uuid=True), 
+            PostgreSQLUUID(as_uuid=True),
             ForeignKey("users.id", ondelete="CASCADE"),
-            nullable=False, 
+            nullable=False,
             index=True
         ),
         description="User ID with CASCADE DELETE constraint"
     )
-    
+
     # Relationships (required for SQLModel to create foreign key constraints)
     tenant: Optional["TenantTable"] = Relationship(back_populates="user_sessions")
     user: Optional["UserTable"] = Relationship(back_populates="sessions")
-    
+
     session_token: str = Field(
         sa_column=Column(String(255), nullable=False, unique=True, index=True),
         description="Session token hash"
     )
-    
+
     ip_address: str = Field(
         sa_column=Column(String(45), nullable=False),  # IPv6 support
         description="Client IP address"
     )
-    
+
     user_agent: str = Field(
         sa_column=Column(Text, nullable=False),
         description="Client user agent"
     )
-    
+
     expires_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False, index=True),
         description="Session expiration time"
     )
-    
+
     last_activity: datetime = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(
-            DateTime(timezone=True), 
-            nullable=False, 
+            DateTime(timezone=True),
+            nullable=False,
             default=func.now(),
             onupdate=func.now()
         ),
         description="Last activity timestamp"
     )
-    
+
     @property
     def is_expired(self) -> bool:
         """Check if session is expired."""
         return datetime.now(timezone.utc) > self.expires_at
-    
+
     def extend_session(self, additional_seconds: int = 3600) -> None:
         """Extend session expiration time."""
         now = datetime.now(timezone.utc)
@@ -275,76 +275,76 @@ class UserSessionTable(AuditableModel, table=True):
 class APIKeyTable(AuditableModel, table=True):
     """
     API Key management table.
-    
+
     Manages API keys for programmatic access to the system.
     """
     __tablename__ = "api_keys"
-    
+
     # Tenant isolation field (each table model must define its own)
     tenant_id: UUID = Field(
         sa_column=create_tenant_id_column(),
         description="Tenant identifier for multi-tenant isolation"
     )
-    
+
     # Relationship to tenant (required for SQLModel to create foreign key constraints)
     tenant: Optional["TenantTable"] = Relationship(back_populates="api_keys")
-    
+
     key_hash: str = Field(
         sa_column=Column(String(255), nullable=False, unique=True, index=True),
         description="Hashed API key"
     )
-    
+
     name: str = Field(
         sa_column=Column(String(255), nullable=False),
         description="Key name/description"
     )
-    
+
     permissions: List[str] = Field(
         default_factory=list,
         sa_column=Column(JSONB, nullable=False, default=list),
         description="API key permissions"
     )
-    
+
     # Usage tracking
     usage_count: int = Field(
         default=0,
         sa_column=Column(Integer, default=0, nullable=False),
         description="Number of uses"
     )
-    
+
     last_used_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
         description="Last used timestamp"
     )
-    
+
     # Rate limiting
     rate_limit_requests: int = Field(
         default=1000,
         sa_column=Column(Integer, default=1000, nullable=False),
         description="Requests per hour limit"
     )
-    
+
     # Expiration
     expires_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True, index=True),
         description="Expiration timestamp"
     )
-    
+
     def record_usage(self) -> None:
         """Record API key usage."""
         self.usage_count += 1
         self.last_used_at = datetime.now(timezone.utc)
         self.update_timestamp()
-    
+
     @property
     def is_expired(self) -> bool:
         """Check if API key is expired."""
         if self.expires_at is None:
             return False
         return datetime.now(timezone.utc) > self.expires_at
-    
+
     def has_permission(self, permission: str) -> bool:
         """Check if API key has specific permission."""
         return permission in self.permissions
@@ -359,7 +359,7 @@ class UserCreate(BaseModel):
     tenant_id: str = Field(..., description="Tenant ID for multi-tenant isolation")
     username: Optional[str] = Field(None, description="Username (optional)")
     roles: List[str] = Field(default_factory=list, description="Assigned roles")
-    
+
     @field_validator("email")
     @classmethod
     def validate_email(cls, v):
@@ -384,7 +384,7 @@ class UserLogin(BaseModel):
     email: str = Field(..., description="Email address")
     password: str = Field(..., description="Password")
     tenant_id: Optional[str] = Field(None, description="Tenant ID for multi-tenant authentication")
-    
+
     @field_validator("email")
     @classmethod
     def validate_email(cls, v):
@@ -426,7 +426,7 @@ class CurrentUser(BaseModel):
     permissions: List[str] = Field(..., description="User permissions")
     is_active: bool = Field(..., description="Account is active")
     is_superuser: bool = Field(False, description="Superuser status")
-    
+
     @classmethod
     def from_user_table(cls, user: UserTable) -> "CurrentUser":
         """Create CurrentUser from UserTable instance."""
@@ -471,7 +471,7 @@ class APIKeyInfo(BaseModel):
     created_at: str
     expires_at: Optional[str]
     rate_limit_requests: int
-    
+
     @classmethod
     def from_api_key_table(cls, api_key: APIKeyTable) -> "APIKeyInfo":
         """Create APIKeyInfo from APIKeyTable instance."""
@@ -502,7 +502,7 @@ class PasswordResetRequest(BaseModel):
         None,
         description="Client URL that will handle the reset flow"
     )
-    
+
     @field_validator("email")
     @classmethod
     def validate_email(cls, v):
@@ -521,12 +521,12 @@ class TenantContext(BaseModel):
     tenant_type: str = Field(..., description="Tenant type")
     configuration: Dict[str, Any] = Field(default_factory=dict)
     is_active: bool = Field(True, description="Tenant is active")
-    
+
     def get_config_value(self, key: str, default: Any = None) -> Any:
         """Get configuration value with dot notation support."""
         keys = key.split(".")
         value = self.configuration
-        
+
         try:
             for k in keys:
                 value = value[k]
@@ -560,7 +560,7 @@ class SessionInfo(BaseModel):
     created_at: str = Field(..., description="Session start time")
     last_activity: str = Field(..., description="Last activity time")
     expires_at: str = Field(..., description="Session expiration time")
-    
+
     @classmethod
     def from_session_table(cls, session: UserSessionTable, user: UserTable) -> "SessionInfo":
         """Create SessionInfo from UserSessionTable instance."""
@@ -588,7 +588,7 @@ class AuditLog(BaseModel):
     ip_address: str = Field(..., description="Client IP address")
     user_agent: str = Field(..., description="Client user agent")
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    
+
     # Risk assessment
     risk_level: str = Field("low", description="Risk level: low, medium, high")
     suspicious: bool = Field(False, description="Flagged as suspicious activity")
@@ -596,3 +596,31 @@ class AuditLog(BaseModel):
 
 # Backward compatibility aliases
 User = UserTable  # For backward compatibility during migration
+
+
+__all__ = [
+    "UserRole",
+    "Permission",
+    "UserTable",
+    "UserSessionTable",
+    "APIKeyTable",
+    "UserCreate",
+    "UserUpdate",
+    "UserLogin",
+    "TokenData",
+    "TokenResponse",
+    "RefreshTokenRequest",
+    "CurrentUser",
+    "APIKeyCreate",
+    "APIKeyResponse",
+    "APIKeyInfo",
+    "PasswordChangeRequest",
+    "PasswordResetRequest",
+    "PasswordResetConfirm",
+    "TenantContext",
+    "AuthenticationResult",
+    "AuthorizationResult",
+    "SessionInfo",
+    "AuditLog",
+    "User",  # Backward compatibility
+]

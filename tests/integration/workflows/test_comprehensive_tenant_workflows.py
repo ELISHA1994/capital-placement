@@ -17,8 +17,8 @@ from uuid import uuid4
 from unittest.mock import patch, AsyncMock
 
 from app.services.tenant.tenant_service import TenantService
-from app.models.tenant_models import SubscriptionTier, TenantConfiguration
-from app.models.auth import CurrentUser
+from app.infrastructure.persistence.models.tenant_table import SubscriptionTier, TenantConfiguration
+from app.infrastructure.persistence.models.auth_tables import CurrentUser
 from tests.mocks.mock_repositories import MockTenantRepository, MockUserRepository
 from tests.mocks.mock_services import MockCacheService
 

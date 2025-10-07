@@ -18,7 +18,7 @@ from app.core.system_constants import (
     SUPER_ADMIN_ROLE
 )
 # Database schema matches simpler structure
-from app.models.auth import User, CurrentUser, UserCreate, UserLogin
+from app.infrastructure.persistence.models.auth_tables import User, CurrentUser, UserCreate, UserLogin
 from app.database.repositories.postgres import TenantRepository, UserRepository
 from app.services.auth import AuthenticationService
 from app.utils.security import password_manager

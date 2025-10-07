@@ -17,14 +17,14 @@ import httpx
 import structlog
 
 from app.domain.interfaces import (
-    IWebhookDeliveryService, 
+    IWebhookDeliveryService,
     IWebhookCircuitBreakerService,
     IWebhookSignatureService,
     IDatabase,
     WebhookDeliveryResult,
     WebhookRetrySchedule
 )
-from app.models.webhook_models import (
+from app.api.schemas.webhook_schemas import (
     WebhookDeliveryStatus,
     WebhookFailureReason,
     RetryPolicy

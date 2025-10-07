@@ -21,9 +21,9 @@ from app.database.sqlmodel_engine import get_sqlmodel_db_manager, SQLModelDataba
 from app.domain.entities.profile import Profile
 from app.domain.value_objects import ProfileId
 from app.infrastructure.mappers.profile_mapper import ProfileMapper
-from app.models.auth import UserTable, UserSessionTable
-from app.models.profile import ProfileTable
-from app.models.tenant_models import TenantTable, TenantConfigurationTable
+from app.infrastructure.persistence.models.auth_tables import UserTable, UserSessionTable
+from app.infrastructure.persistence.models.profile_table import ProfileTable
+from app.infrastructure.persistence.models.tenant_table import TenantTable, TenantConfigurationTable
 
 logger = structlog.get_logger(__name__)
 

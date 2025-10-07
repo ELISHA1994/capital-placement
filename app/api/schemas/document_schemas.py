@@ -1,8 +1,8 @@
 """
-Document models for file upload and processing.
+Document API Schemas - DTOs for document upload and processing endpoints.
 
-This module defines models for document management, processing status,
-and extracted content.
+This module contains all request/response models for document management API layer,
+separated from domain entities and persistence tables following hexagonal architecture.
 """
 
 from datetime import datetime
@@ -10,9 +10,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import Field, HttpUrl, validator
-
-from .base import AuditableModel, BaseModel, MetadataModel
+from pydantic import BaseModel, Field, field_validator, HttpUrl
 
 
 class DocumentType(str, Enum):
@@ -57,7 +55,7 @@ class ExtractionMethod(str, Enum):
 
 class DocumentContent(BaseModel):
     """Extracted document content model."""
-    
+
     raw_text: str = Field(..., description="Raw extracted text")
     formatted_text: Optional[str] = Field(
         None,
@@ -67,18 +65,18 @@ class DocumentContent(BaseModel):
         None,
         description="HTML representation of document content"
     )
-    
+
     # Structured extraction
     sections: Dict[str, str] = Field(
         default_factory=dict,
         description="Document sections (e.g., 'summary', 'experience', 'education')"
     )
-    
+
     # Metadata extraction
     detected_language: Optional[str] = Field(None, description="Detected content language")
     word_count: int = Field(default=0, description="Total word count")
     page_count: int = Field(default=1, description="Number of pages")
-    
+
     # AI extraction results
     extracted_entities: Dict[str, List[str]] = Field(
         default_factory=dict,
@@ -104,7 +102,7 @@ class DocumentContent(BaseModel):
         default_factory=dict,
         description="Contact information extracted"
     )
-    
+
     # Quality metrics
     extraction_confidence: Optional[float] = Field(
         None,
@@ -122,7 +120,7 @@ class DocumentContent(BaseModel):
 
 class DocumentProcessingError(BaseModel):
     """Document processing error details."""
-    
+
     error_code: str = Field(..., description="Error code")
     error_message: str = Field(..., description="Error message")
     error_details: Optional[Dict[str, Any]] = Field(
@@ -137,9 +135,13 @@ class DocumentProcessingError(BaseModel):
     is_recoverable: bool = Field(default=True, description="Whether error is recoverable")
 
 
-class Document(AuditableModel, MetadataModel):
+class Document(BaseModel):
     """Document model for file management and processing."""
-    
+
+    # IDs
+    id: UUID = Field(..., description="Document ID")
+    tenant_id: UUID = Field(..., description="Tenant ID")
+
     # Basic Information
     filename: str = Field(..., min_length=1, max_length=255, description="Original filename")
     original_filename: str = Field(
@@ -152,12 +154,12 @@ class Document(AuditableModel, MetadataModel):
     mime_type: str = Field(..., description="MIME type of the file")
     file_format: DocumentFormat = Field(..., description="Document format")
     document_type: DocumentType = Field(..., description="Document type/category")
-    
+
     # Storage Information
     blob_url: str = Field(..., description="Azure Blob Storage URL")
     blob_container: str = Field(..., description="Blob storage container name")
     blob_path: str = Field(..., description="Blob storage path")
-    
+
     # Processing Status
     status: DocumentStatus = Field(
         default=DocumentStatus.UPLOADED,
@@ -175,13 +177,13 @@ class Document(AuditableModel, MetadataModel):
         None,
         description="Content extraction method used"
     )
-    
+
     # Content
     content: Optional[DocumentContent] = Field(
         None,
         description="Extracted content and metadata"
     )
-    
+
     # Processing Results
     processing_errors: List[DocumentProcessingError] = Field(
         default_factory=list,
@@ -191,21 +193,21 @@ class Document(AuditableModel, MetadataModel):
         default_factory=list,
         description="Processing warnings"
     )
-    
+
     # Security and Validation
     virus_scan_status: Optional[str] = Field(
         None,
         description="Virus scan status (clean/infected/pending)"
     )
     checksum: Optional[str] = Field(None, description="File checksum for integrity")
-    
+
     # Associations
     profile_id: Optional[UUID] = Field(
         None,
         description="Associated profile ID"
     )
     uploaded_by: UUID = Field(..., description="User who uploaded the document")
-    
+
     # Search and Indexing
     is_indexed: bool = Field(default=False, description="Whether document is indexed for search")
     index_updated_at: Optional[datetime] = Field(
@@ -216,16 +218,24 @@ class Document(AuditableModel, MetadataModel):
         None,
         description="Document embedding vector for similarity search"
     )
-    
+
     # Access Control
     is_public: bool = Field(default=False, description="Whether document is publicly accessible")
     access_level: str = Field(default="private", description="Access level (private/tenant/public)")
-    
+
+    # Metadata
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    tags: List[str] = Field(default_factory=list, description="Document tags")
+
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
     @property
     def file_size_mb(self) -> float:
         """Get file size in megabytes."""
         return round(self.file_size / (1024 * 1024), 2)
-    
+
     @property
     def processing_duration(self) -> Optional[int]:
         """Get processing duration in seconds."""
@@ -233,80 +243,54 @@ class Document(AuditableModel, MetadataModel):
             return None
         delta = self.processing_completed_at - self.processing_started_at
         return int(delta.total_seconds())
-    
+
     @property
     def has_errors(self) -> bool:
         """Check if document has processing errors."""
         return len(self.processing_errors) > 0
-    
+
     @property
     def is_processed(self) -> bool:
         """Check if document processing is completed."""
         return self.status == DocumentStatus.COMPLETED
-    
+
     @property
     def file_extension(self) -> str:
         """Get file extension from filename."""
         return self.filename.split('.')[-1].lower() if '.' in self.filename else ''
-    
-    def add_processing_error(
-        self,
-        error_code: str,
-        error_message: str,
-        error_details: Optional[Dict[str, Any]] = None,
-        is_recoverable: bool = True
-    ) -> None:
-        """Add a processing error."""
-        error = DocumentProcessingError(
-            error_code=error_code,
-            error_message=error_message,
-            error_details=error_details,
-            is_recoverable=is_recoverable
-        )
-        self.processing_errors.append(error)
-        self.update_timestamp()
-    
-    def get_latest_error(self) -> Optional[DocumentProcessingError]:
-        """Get the most recent processing error."""
-        return self.processing_errors[-1] if self.processing_errors else None
-    
-    def get_text_content(self) -> Optional[str]:
-        """Get the primary text content."""
-        if not self.content:
-            return None
-        return self.content.formatted_text or self.content.raw_text
 
 
 class DocumentCreate(BaseModel):
     """Model for document creation/upload."""
-    
+
     filename: str = Field(..., min_length=1, max_length=255)
     file_size: int = Field(..., ge=0)
     mime_type: str = Field(...)
     document_type: DocumentType = Field(...)
     profile_id: Optional[UUID] = None
-    
+
     # Optional metadata
     description: Optional[str] = Field(None, max_length=1000)
     is_public: bool = Field(default=False)
-    
-    @validator('filename')
+
+    @field_validator('filename')
+    @classmethod
     def validate_filename(cls, v):
         """Validate filename format."""
         if not '.' in v:
             raise ValueError('Filename must have an extension')
-        
+
         extension = v.split('.')[-1].lower()
         allowed_extensions = ['pdf', 'doc', 'docx', 'txt', 'rtf', 'html', 'odt']
         if extension not in allowed_extensions:
             raise ValueError(f'File extension {extension} is not supported')
-        
+
         return v
 
 
 class DocumentUpdate(BaseModel):
     """Model for document updates."""
-    
+
     document_type: Optional[DocumentType] = None
     profile_id: Optional[UUID] = None
     is_public: Optional[bool] = None
@@ -316,7 +300,7 @@ class DocumentUpdate(BaseModel):
 
 class DocumentResponse(BaseModel):
     """Document response model."""
-    
+
     id: UUID
     filename: str
     original_filename: str
@@ -335,7 +319,7 @@ class DocumentResponse(BaseModel):
     is_public: bool
     created_at: datetime
     updated_at: datetime
-    
+
     @classmethod
     def from_document(cls, document: Document) -> "DocumentResponse":
         """Create DocumentResponse from Document model."""
@@ -363,13 +347,14 @@ class DocumentResponse(BaseModel):
 
 class BulkUploadRequest(BaseModel):
     """Model for bulk document upload requests."""
-    
-    documents: List[DocumentCreate] = Field(..., max_items=100, description="Documents to upload")
+
+    documents: List[DocumentCreate] = Field(..., max_length=100, description="Documents to upload")
     profile_id: Optional[UUID] = Field(None, description="Associate all documents with this profile")
     process_async: bool = Field(default=True, description="Process documents asynchronously")
     notify_on_completion: bool = Field(default=True, description="Send notification when complete")
-    
-    @validator('documents')
+
+    @field_validator('documents')
+    @classmethod
     def validate_documents(cls, v):
         """Validate document list."""
         if len(v) == 0:
@@ -379,7 +364,7 @@ class BulkUploadRequest(BaseModel):
 
 class BulkUploadResponse(BaseModel):
     """Response for bulk upload operations."""
-    
+
     batch_id: UUID = Field(..., description="Batch processing ID")
     total_documents: int = Field(..., description="Total number of documents")
     accepted_documents: int = Field(..., description="Number of accepted documents")
@@ -396,31 +381,31 @@ class BulkUploadResponse(BaseModel):
 
 class DocumentSearchFilters(BaseModel):
     """Filters for document search."""
-    
+
     # Basic filters
     keywords: Optional[str] = Field(None, description="Search keywords")
     document_types: Optional[List[DocumentType]] = Field(None, description="Document types")
     file_formats: Optional[List[DocumentFormat]] = Field(None, description="File formats")
     statuses: Optional[List[DocumentStatus]] = Field(None, description="Processing statuses")
-    
+
     # Size filters
     min_file_size: Optional[int] = Field(None, ge=0, description="Minimum file size in bytes")
     max_file_size: Optional[int] = Field(None, ge=0, description="Maximum file size in bytes")
-    
+
     # Content filters
     has_content: Optional[bool] = Field(None, description="Has extracted content")
     min_word_count: Optional[int] = Field(None, ge=0, description="Minimum word count")
     languages: Optional[List[str]] = Field(None, description="Content languages")
-    
+
     # Association filters
     profile_ids: Optional[List[UUID]] = Field(None, description="Associated profile IDs")
     uploaded_by: Optional[List[UUID]] = Field(None, description="Uploader user IDs")
-    
+
     # Date filters
     uploaded_after: Optional[datetime] = Field(None, description="Uploaded after date")
     uploaded_before: Optional[datetime] = Field(None, description="Uploaded before date")
     processed_after: Optional[datetime] = Field(None, description="Processed after date")
-    
+
     # Access filters
     is_public: Optional[bool] = Field(None, description="Public documents only")
     is_indexed: Optional[bool] = Field(None, description="Indexed documents only")
@@ -428,7 +413,7 @@ class DocumentSearchFilters(BaseModel):
 
 class DocumentStats(BaseModel):
     """Document statistics model."""
-    
+
     total_documents: int = Field(default=0, description="Total document count")
     by_status: Dict[str, int] = Field(
         default_factory=dict,
@@ -457,7 +442,7 @@ class DocumentStats(BaseModel):
 
 class DocumentAnalytics(BaseModel):
     """Document analytics model."""
-    
+
     upload_trends: Dict[str, int] = Field(
         default_factory=dict,
         description="Upload trends by date"
@@ -478,3 +463,22 @@ class DocumentAnalytics(BaseModel):
         default_factory=dict,
         description="Content extraction quality metrics"
     )
+
+
+__all__ = [
+    "DocumentType",
+    "DocumentStatus",
+    "DocumentFormat",
+    "ExtractionMethod",
+    "DocumentContent",
+    "DocumentProcessingError",
+    "Document",
+    "DocumentCreate",
+    "DocumentUpdate",
+    "DocumentResponse",
+    "BulkUploadRequest",
+    "BulkUploadResponse",
+    "DocumentSearchFilters",
+    "DocumentStats",
+    "DocumentAnalytics",
+]

@@ -17,11 +17,12 @@ from collections import defaultdict
 import structlog
 import json
 
-from app.models.search_models import (
+from app.api.schemas.search_schemas import (
     SearchRequest, SearchResponse, SearchResult, MatchScore,
     SearchFacet, FacetValue, SearchAnalytics, SearchMode, SortOrder
 )
-from app.models.profile import CVProfile
+# Import CVProfile directly to avoid circular imports
+from app.api.schemas.profile_schemas import CVProfile
 from app.domain.interfaces import ISearchService, IAIService
 from app.services.core.embedding_generator import EmbeddingGenerator
 

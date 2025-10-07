@@ -18,12 +18,12 @@ from uuid import uuid4
 from unittest.mock import patch, AsyncMock, Mock
 
 from app.services.auth.authentication_service import AuthenticationService
-from app.models.auth import (
+from app.infrastructure.persistence.models.auth_tables import (
     UserCreate, UserLogin, PasswordChangeRequest, PasswordResetRequest, 
     PasswordResetConfirm, RefreshTokenRequest, CurrentUser, UserUpdate,
     TokenResponse, AuthenticationResult
 )
-from app.models.tenant_models import SubscriptionTier
+from app.infrastructure.persistence.models.tenant_table import SubscriptionTier
 from tests.mocks.mock_repositories import MockUserRepository, MockTenantRepository, MockUserSessionRepository
 from tests.mocks.mock_services import MockCacheService, MockNotificationService
 

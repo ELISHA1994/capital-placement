@@ -9,13 +9,13 @@ from sqlmodel import SQLModel
 from alembic import context
 
 # CRITICAL: Import ALL models for autogenerate to detect schema changes
-from app.models.auth import UserTable, UserSessionTable, APIKeyTable
-from app.models.profile import ProfileTable
-from app.models.embedding import EmbeddingTable
-from app.models.tenant_models import TenantTable
-from app.models.audit import AuditLogTable
-from app.models.retry_models import RetryStateModel, RetryAttemptModel, DeadLetterModel, RetryPolicyTemplate
-from app.models.webhook import WebhookEndpointTable, WebhookDeliveryTable, WebhookDeadLetterTable
+from app.infrastructure.persistence.models.auth_tables import UserTable, UserSessionTable, APIKeyTable
+from app.infrastructure.persistence.models.profile_table import ProfileTable
+from app.infrastructure.persistence.models.embedding_table import EmbeddingTable
+from app.infrastructure.persistence.models.tenant_table import TenantTable
+from app.infrastructure.persistence.models.audit_table import AuditLogTable
+from app.infrastructure.persistence.models.retry_table import RetryStateModel, RetryAttemptModel, DeadLetterModel
+from app.infrastructure.persistence.models.webhook_table import WebhookEndpointTable, WebhookDeliveryTable
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

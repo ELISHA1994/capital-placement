@@ -11,7 +11,7 @@ from uuid import uuid4
 from unittest.mock import patch
 
 from app.services.auth.authentication_service import AuthenticationService
-from app.models.auth import UserLogin, PasswordResetRequest, PasswordResetConfirm
+from app.infrastructure.persistence.models.auth_tables import UserLogin, PasswordResetRequest, PasswordResetConfirm
 from tests.mocks.mock_repositories import MockUserRepository, MockTenantRepository, MockUserSessionRepository
 from tests.mocks.mock_services import MockCacheService, MockNotificationService
 from tests.fixtures.tenant_fixtures import TenantTestBuilder

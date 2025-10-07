@@ -10,7 +10,7 @@ from typing import Dict, Any
 from io import BytesIO
 
 from app.services.validation.file_content_validator import FileContentValidator
-from app.models.tenant_models import FileTypeValidationConfig, ProcessingConfiguration
+from app.infrastructure.persistence.models.tenant_table import FileTypeValidationConfig, ProcessingConfiguration
 from app.domain.interfaces import FileValidationResult
 
 

@@ -19,7 +19,7 @@ from app.domain.value_objects import (
     TenantId,
     EmailAddress
 )
-from app.models.auth import UserTable  # SQLModel persistence model
+from app.infrastructure.persistence.models.auth_tables import UserTable  # SQLModel persistence model
 
 
 class UserMapper:

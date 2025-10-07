@@ -10,7 +10,7 @@ from app.domain.entities.profile import Profile, ProfileStatus, ExperienceLevel
 from app.domain.repositories.profile_repository import IProfileRepository
 from app.domain.value_objects import ProfileId, TenantId, MatchScore
 from app.infrastructure.persistence.mappers.profile_mapper import ProfileMapper
-from app.models.profile import ProfileTable
+from app.infrastructure.persistence.models.profile_table import ProfileTable
 from app.infrastructure.providers.postgres_provider import get_postgres_adapter
 
 
@@ -36,7 +36,7 @@ class PostgresProfileRepository(IProfileRepository):
             
             if existing:
                 # Update existing profile
-                profile_table = ProfileMapper.to_persistence(profile)
+                profile_table = ProfileMapper.to_table(profile)
                 
                 # Use UPDATE query
                 await adapter.execute(
@@ -71,7 +71,7 @@ class PostgresProfileRepository(IProfileRepository):
                 )
             else:
                 # Insert new profile
-                profile_table = ProfileMapper.to_persistence(profile)
+                profile_table = ProfileMapper.to_table(profile)
                 
                 await adapter.execute(
                     """

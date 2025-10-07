@@ -23,11 +23,11 @@ T = TypeVar("T", bound="BaseModel")
 class BaseModel(SQLModel):
     """
     Base SQLModel with common configuration and utilities.
-    
+
     Replaces the original Pydantic BaseModel while preserving all functionality
     and adding database persistence capabilities.
     """
-    
+
     model_config = {
         # Enable arbitrary types for complex objects
         "arbitrary_types_allowed": True,
@@ -44,11 +44,11 @@ class BaseModel(SQLModel):
         # Ignore SQLAlchemy hybrid properties for Pydantic validation
         "ignored_types": (hybrid_property,),
     }
-    
+
     def dict_exclude_none(self, **kwargs) -> Dict[str, Any]:
         """Export to dict excluding None values."""
         return self.model_dump(exclude_none=True, **kwargs)
-    
+
     def dict_exclude_unset(self, **kwargs) -> Dict[str, Any]:
         """Export to dict excluding unset values."""
         return self.model_dump(exclude_unset=True, **kwargs)
@@ -57,24 +57,24 @@ class BaseModel(SQLModel):
 class TimestampedModel(BaseModel):
     """
     Base model with automatic timestamp management.
-    
+
     Preserves the original functionality while adding database-level
     automatic timestamp handling with PostgreSQL functions.
-    
+
     Note: Table models must define their own sa_column for these fields
     to avoid SQLAlchemy column conflicts in inheritance.
     """
-    
+
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
         description="Record creation timestamp"
     )
-    
+
     updated_at: datetime = Field(
         default_factory=datetime.utcnow,
         description="Record last update timestamp"
     )
-    
+
     def update_timestamp(self) -> None:
         """Update the updated_at timestamp."""
         self.updated_at = datetime.utcnow()
@@ -83,20 +83,20 @@ class TimestampedModel(BaseModel):
 class TenantModel(TimestampedModel):
     """
     Base model with tenant isolation support.
-    
+
     Preserves multi-tenant architecture with database-level UUID support,
     automatic tenant validation, and proper indexing for performance.
-    
+
     Note: Table models must define their own sa_column for the id field
     to avoid SQLAlchemy column conflicts in inheritance.
     """
-    
+
     id: UUID = Field(
         default_factory=uuid4,
         primary_key=True,
         description="Unique identifier"
     )
-    
+
     def validate_tenant_id(cls, v):
         """Ensure tenant_id is a valid UUID."""
         if isinstance(v, str):
@@ -120,36 +120,36 @@ def create_tenant_id_column():
 class SoftDeleteModel(TenantModel):
     """
     Model with soft delete functionality.
-    
+
     Preserves all original soft delete patterns with database-level support
     and proper indexing for performance.
-    
+
     Note: Table models must define their own sa_column for these fields
     to avoid SQLAlchemy column conflicts in inheritance.
     """
-    
+
     is_deleted: bool = Field(
         default=False,
         description="Soft delete flag"
     )
-    
+
     deleted_at: Optional[datetime] = Field(
         default=None,
         description="Soft delete timestamp"
     )
-    
+
     deleted_by: Optional[UUID] = Field(
         default=None,
         description="User who performed the deletion"
     )
-    
+
     def soft_delete(self, deleted_by: Optional[UUID] = None) -> None:
         """Mark record as soft deleted."""
         self.is_deleted = True
         self.deleted_at = datetime.utcnow()
         self.deleted_by = deleted_by
         self.update_timestamp()
-    
+
     def restore(self) -> None:
         """Restore soft deleted record."""
         self.is_deleted = False
@@ -161,29 +161,29 @@ class SoftDeleteModel(TenantModel):
 class AuditableModel(SoftDeleteModel):
     """
     Model with full audit trail support.
-    
+
     Preserves the original audit functionality with database-level
     version management and user tracking for complete audit trails.
-    
+
     Note: Table models must define their own sa_column for these fields
     to avoid SQLAlchemy column conflicts in inheritance.
     """
-    
+
     created_by: Optional[UUID] = Field(
         default=None,
         description="User who created the record"
     )
-    
+
     updated_by: Optional[UUID] = Field(
         default=None,
         description="User who last updated the record"
     )
-    
+
     version: int = Field(
         default=1,
         description="Record version for optimistic locking"
     )
-    
+
     def increment_version(self, updated_by: Optional[UUID] = None) -> None:
         """Increment version and update metadata."""
         self.version += 1
@@ -194,39 +194,39 @@ class AuditableModel(SoftDeleteModel):
 class MetadataModel(BaseModel):
     """
     Model for storing arbitrary metadata with JSONB support.
-    
+
     Preserves the original metadata functionality with optimized
     PostgreSQL JSONB storage and indexing capabilities.
-    
+
     Note: Table models must define their own sa_column for these fields
     to avoid SQLAlchemy column conflicts in inheritance.
     """
-    
+
     extra_metadata: Dict[str, Any] = Field(
         default_factory=dict,
         description="Arbitrary metadata dictionary"
     )
-    
+
     tags: List[str] = Field(
         default_factory=list,
         sa_column=Column(ARRAY(String), nullable=False, default=list),
         description="Tags for categorization and search"
     )
-    
+
     def add_tag(self, tag: str) -> None:
         """Add a tag if not already present."""
         if tag not in self.tags:
             self.tags.append(tag)
-    
+
     def remove_tag(self, tag: str) -> None:
         """Remove a tag if present."""
         if tag in self.tags:
             self.tags.remove(tag)
-    
+
     def set_metadata(self, key: str, value: Any) -> None:
         """Set a metadata value."""
         self.extra_metadata[key] = value
-    
+
     def get_metadata(self, key: str, default: Any = None) -> Any:
         """Get a metadata value with optional default."""
         return self.extra_metadata.get(key, default)
@@ -235,37 +235,37 @@ class MetadataModel(BaseModel):
 class VectorModel(BaseModel):
     """
     Model with pgvector support for AI/ML embeddings.
-    
+
     New addition for vector similarity search capabilities that integrates
     with the existing pgvector infrastructure while providing type safety.
-    
+
     Note: Table models must define their own sa_column for these fields
     to avoid SQLAlchemy column conflicts in inheritance.
     """
-    
+
     entity_id: UUID = Field(
         description="ID of the entity this embedding represents"
     )
-    
+
     entity_type: str = Field(
         description="Type of entity (profile, document, etc.)"
     )
-    
+
     embedding: Optional[List[float]] = Field(
         default=None,
         description="Vector embedding for similarity search"
     )
-    
+
     embedding_model: str = Field(
         default="text-embedding-3-large",
         description="Model used to generate embedding"
     )
-    
-    @hybrid_property  
+
+    @hybrid_property
     def has_embedding(self) -> bool:
         """Check if embedding exists (instance-level)."""
         return self.embedding is not None and len(self.embedding) > 0 if self.embedding else False
-    
+
     @has_embedding.expression
     def has_embedding(cls):
         """SQL expression for has_embedding (class-level)."""
@@ -275,11 +275,11 @@ class VectorModel(BaseModel):
 class PaginationModel(BaseModel):
     """
     Model for pagination parameters.
-    
+
     Preserves the original pagination functionality for consistent
     API responses and database query optimization.
     """
-    
+
     page: int = Field(
         default=1,
         ge=1,
@@ -291,12 +291,12 @@ class PaginationModel(BaseModel):
         le=1000,
         description="Items per page"
     )
-    
+
     @property
     def offset(self) -> int:
         """Calculate offset for database queries."""
         return (self.page - 1) * self.size
-    
+
     @property
     def limit(self) -> int:
         """Get limit value."""
@@ -306,11 +306,11 @@ class PaginationModel(BaseModel):
 class PaginatedResponse(BaseModel):
     """
     Generic paginated response model.
-    
+
     Preserves the original pagination response structure for
     consistent API behavior across all endpoints.
     """
-    
+
     items: List[Any] = Field(
         default_factory=list,
         description="List of items for current page"
@@ -343,7 +343,7 @@ class PaginatedResponse(BaseModel):
         default=False,
         description="Whether there is a previous page"
     )
-    
+
     @classmethod
     def create(
         cls,
@@ -354,7 +354,7 @@ class PaginatedResponse(BaseModel):
     ) -> "PaginatedResponse":
         """Create a paginated response from query results."""
         pages = (total + size - 1) // size  # Ceiling division
-        
+
         return cls(
             items=items,
             total=total,
@@ -369,11 +369,11 @@ class PaginatedResponse(BaseModel):
 class ErrorModel(BaseModel):
     """
     Standard error response model.
-    
+
     Preserves the original error handling structure for
     consistent API error responses.
     """
-    
+
     error: str = Field(..., description="Error type or code")
     message: str = Field(..., description="Human-readable error message")
     details: Optional[Dict[str, Any]] = Field(
@@ -393,11 +393,11 @@ class ErrorModel(BaseModel):
 class HealthCheckModel(BaseModel):
     """
     Health check response model.
-    
+
     Preserves the original health check structure for
     monitoring and operational visibility.
     """
-    
+
     status: str = Field(..., description="Overall health status")
     timestamp: datetime = Field(
         default_factory=datetime.utcnow,

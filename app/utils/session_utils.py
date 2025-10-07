@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from app.models.auth import SessionInfo
+from app.infrastructure.persistence.models.auth_tables import SessionInfo
 
 
 def build_session_cache_key(user_id: str) -> str:

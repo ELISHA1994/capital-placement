@@ -12,7 +12,7 @@ import pytest
 
 from app.application.upload_service import UploadApplicationService, UploadError
 from app.domain.exceptions import FileSizeExceededError, InvalidFileError
-from app.models.auth import CurrentUser
+from app.infrastructure.persistence.models.auth_tables import CurrentUser
 
 
 class MockUploadFile:

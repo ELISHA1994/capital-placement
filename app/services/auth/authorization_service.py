@@ -14,7 +14,7 @@ from enum import Enum
 
 import structlog
 from app.core.config import get_settings
-from app.models.auth import CurrentUser, AuthorizationResult, Permission, UserRole
+from app.infrastructure.persistence.models.auth_tables import CurrentUser, AuthorizationResult, Permission, UserRole
 from app.database.repositories.postgres import UserRepository, TenantRepository
 # Note: RoleRepository and PermissionRepository not yet implemented in PostgreSQL
 from app.domain.interfaces import ICacheService

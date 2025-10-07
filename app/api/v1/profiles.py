@@ -19,10 +19,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTa
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.models.profile import CVProfile, ProcessingStatus
-from app.models.base import PaginatedResponse, PaginationModel
+from app.domain.entities.profile import ProcessingStatus
+# Import CVProfile directly to avoid circular imports through __init__.py
+from app.api.schemas.profile_schemas import CVProfile
+from app.infrastructure.persistence.models.base import PaginatedResponse, PaginationModel
 from app.core.dependencies import CurrentUserDep, TenantContextDep, AuthzService, require_permission
-from app.models.auth import CurrentUser, TenantContext
+from app.infrastructure.persistence.models.auth_tables import CurrentUser, TenantContext
 from app.infrastructure.providers.usage_provider import get_usage_service
 from app.api.dependencies import map_domain_exception_to_http
 from app.domain.exceptions import DomainException, ProfileNotFoundError

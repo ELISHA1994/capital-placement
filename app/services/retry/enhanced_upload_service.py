@@ -371,7 +371,7 @@ class EnhancedUploadService:
         
         # Import here to avoid circular dependencies
         from app.database.sqlmodel_engine import get_sqlmodel_db_manager
-        from app.models.document import Document, DocumentContent, DocumentStatus
+        from app.api.schemas.document_schemas import Document, DocumentContent, DocumentStatus
         
         db_manager = get_sqlmodel_db_manager()
         
@@ -391,7 +391,7 @@ class EnhancedUploadService:
         async with db_manager.get_session() as session:
             # Update document with processed content
             from sqlalchemy import select
-            from app.models.document import Document as DocumentModel
+            from app.api.schemas.document_schemas import Document as DocumentModel
             
             stmt = select(DocumentModel).where(DocumentModel.id == upload_id)
             result = await session.execute(stmt)

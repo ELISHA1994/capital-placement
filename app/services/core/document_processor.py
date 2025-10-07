@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple, BinaryIO
 import structlog
 
-from app.models.profile import (
+
     CVProfile, ContactInfo, Skill, Experience as ExperienceEntry, Education as EducationEntry,
     Certification, Project, Language, ProcessingStatus, ProcessingMetadata
 )

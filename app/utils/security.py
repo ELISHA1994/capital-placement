@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import structlog
 from app.core.config import get_settings
-from app.models.auth import TokenData, CurrentUser
+from app.infrastructure.persistence.models.auth_tables import TokenData, CurrentUser
 
 logger = structlog.get_logger(__name__)
 

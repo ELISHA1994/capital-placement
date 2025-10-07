@@ -132,17 +132,17 @@ class SQLModelDatabaseManager:
         try:
             async with self.engine.begin() as conn:
                 # Import all models to ensure they're registered with SQLModel metadata
-                from app.models.embedding import EmbeddingTable
-                from app.models.auth import UserTable
-                from app.models.profile import ProfileTable
-                from app.models.audit import AuditLogTable
-                from app.models.retry_models import (
+                from app.infrastructure.persistence.models.embedding_table import EmbeddingTable
+                from app.infrastructure.persistence.models.auth_tables import UserTable
+                from app.infrastructure.persistence.models.profile_table import ProfileTable
+                from app.infrastructure.persistence.models.audit_table import AuditLogTable
+                from app.infrastructure.persistence.models.retry_table import (
                     RetryStateModel,
                     RetryAttemptModel,
                     DeadLetterModel,
                     RetryPolicyTemplate
                 )
-                from app.models.webhook import (
+                from app.infrastructure.persistence.models.webhook_table import (
                     WebhookEndpointTable,
                     WebhookDeliveryTable,
                     WebhookDeadLetterTable

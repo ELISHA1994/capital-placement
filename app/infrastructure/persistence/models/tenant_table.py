@@ -23,7 +23,7 @@ from sqlalchemy.sql import func
 from sqlmodel import Field, SQLModel, Relationship
 from pydantic import field_validator, computed_field, ConfigDict
 
-from .base import AuditableModel, BaseModel, TimestampedModel
+from app.infrastructure.persistence.models.base import AuditableModel, BaseModel, TimestampedModel
 
 
 class SubscriptionTier(str, Enum):

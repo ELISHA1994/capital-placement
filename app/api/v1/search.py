@@ -18,7 +18,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from fastapi.responses import JSONResponse
 
-from app.models.search_models import (
+from app.api.schemas.search_schemas import (
     SearchRequest,
     SearchResponse,
     SavedSearch,
@@ -26,9 +26,9 @@ from app.models.search_models import (
     SearchFilter,
     RangeFilter,
 )
-from app.models.base import PaginationModel, PaginatedResponse
+from app.infrastructure.persistence.models.base import PaginationModel, PaginatedResponse
 from app.core.dependencies import get_current_user, CurrentUserDep, TenantContextDep
-from app.models.auth import CurrentUser, TenantContext
+from app.infrastructure.persistence.models.auth_tables import CurrentUser, TenantContext
 from app.api.dependencies import SearchServiceDep, map_domain_exception_to_http
 from app.domain.exceptions import DomainException
 

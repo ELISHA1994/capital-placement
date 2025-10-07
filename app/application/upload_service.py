@@ -15,20 +15,20 @@ from sqlmodel import select
 
 from app.core.config import get_settings
 from app.database.sqlmodel_engine import get_sqlmodel_db_manager
-from app.models.auth import CurrentUser
-from app.models.document_processing import DocumentProcessingTable
-from app.models.profile import ProcessingStatus
-from app.models.upload_models import (
+from app.infrastructure.persistence.models.auth_tables import CurrentUser
+from app.infrastructure.persistence.models.document_processing_table import DocumentProcessingTable
+from app.domain.entities.profile import ProcessingStatus
+from app.api.schemas.upload_schemas import (
     BatchUploadResponse,
     ProcessingStatusResponse,
     UploadResponse,
 )
 from app.application.dependencies import UploadDependencies
-from app.domain.entities.profile import Profile, ProfileStatus, ProcessingStatus as DomainProcessingStatus
+from app.domain.entities.profile import Profile, ProfileStatus
 from app.domain.value_objects import ProfileId, TenantId
 from app.domain.utils import FileSizeValidator
 from app.domain.exceptions import FileSizeExceededError, InvalidFileError
-from app.models.audit import AuditEventType
+from app.infrastructure.persistence.models.audit_table import AuditEventType
 from app.infrastructure.providers.audit_provider import get_audit_service
 from app.infrastructure.task_manager import get_task_manager, TaskType
 
@@ -740,6 +740,7 @@ class UploadApplicationService:
         extract_embeddings: bool = True,
         processing_priority: str = "normal",
         settings: Any | None = None,
+        is_reprocessing: bool = False,
     ) -> None:
         start_time = datetime.now()
         logger.info(
@@ -764,26 +765,27 @@ class UploadApplicationService:
             logger.warning("Failed to mark resource in use", upload_id=upload_id, error=str(mark_error))
 
         try:
-            # Record processing start
-            await self._deps.database_adapter.execute(
-                """
-                INSERT INTO document_processing (id, created_at, updated_at, document_id, tenant_id, processing_type, status, input_metadata, started_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                """,
-                upload_id,
-                start_time,  # created_at
-                start_time,  # updated_at
-                profile_id,
-                tenant_id,
-                "ai_analysis",
-                "processing",
-                json.dumps({
-                    "filename": filename,
-                    "file_size": len(file_content),
-                    "priority": processing_priority,
-                }),
-                start_time,  # started_at
-            )
+            # Record processing start (skip if reprocessing - record was already updated)
+            if not is_reprocessing:
+                await self._deps.database_adapter.execute(
+                    """
+                    INSERT INTO document_processing (id, created_at, updated_at, document_id, tenant_id, processing_type, status, input_metadata, started_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    """,
+                    upload_id,
+                    start_time,  # created_at
+                    start_time,  # updated_at
+                    profile_id,
+                    tenant_id,
+                    "ai_analysis",
+                    "processing",
+                    json.dumps({
+                        "filename": filename,
+                        "file_size": len(file_content),
+                        "priority": processing_priority,
+                    }),
+                    start_time,  # started_at
+                )
 
             # Process document content
             processed_data = await self._deps.document_processor.process_document(
@@ -1514,6 +1516,7 @@ class UploadApplicationService:
                 extract_embeddings,
                 "normal",  # processing_priority
                 settings,
+                True,  # is_reprocessing
             )
 
             # Log audit event for reprocessing
@@ -1959,8 +1962,8 @@ class UploadApplicationService:
         Returns:
             PaginatedResponse with list of UploadHistoryItem records
         """
-        from app.models.base import PaginatedResponse
-        from app.models.upload_models import UploadHistoryItem
+        from app.infrastructure.persistence.models.base import PaginatedResponse
+        from app.api.schemas.upload_schemas import UploadHistoryItem
 
         logger.debug(
             "Upload history requested",

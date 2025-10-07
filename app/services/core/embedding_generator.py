@@ -17,7 +17,8 @@ from typing import Dict, List, Optional, Any, Tuple
 import structlog
 import numpy as np
 
-from app.models.profile import CVProfile
+# Import CVProfile directly to avoid circular imports
+from app.api.schemas.profile_schemas import CVProfile
 from app.domain.interfaces import IAIService
 
 logger = structlog.get_logger(__name__)

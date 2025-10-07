@@ -9,7 +9,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import Settings, get_settings
-from app.models.auth import CurrentUser, TenantContext
+from app.infrastructure.persistence.models.auth_tables import CurrentUser, TenantContext
 from app.domain.interfaces import ICacheService
 from app.infrastructure.providers.auth_provider import (
     get_authentication_service as resolve_authentication_service,

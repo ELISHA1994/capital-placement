@@ -11,7 +11,7 @@ from unittest.mock import Mock, AsyncMock, patch
 from app.services.auth.authorization_service import (
     AuthorizationService, SystemRole, ResourceAction, ResourceType
 )
-from app.models.auth import AuthorizationResult
+from app.infrastructure.persistence.models.auth_tables import AuthorizationResult
 from tests.mocks.mock_repositories import MockUserRepository, MockTenantRepository
 from tests.mocks.mock_services import MockCacheService
 

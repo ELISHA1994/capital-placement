@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from app.models.profile import ProcessingStatus
+from app.domain.entities.profile import ProcessingStatus
 
 
 class UploadResponse(BaseModel):
@@ -100,4 +100,3 @@ __all__ = [
     "ProcessingStatusResponse",
     "UploadHistoryItem",
 ]
-

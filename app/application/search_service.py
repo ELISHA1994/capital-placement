@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from app.core.config import get_settings
-from app.models.search_models import SearchMode, SearchRequest, SearchResponse
+from app.api.schemas.search_schemas import SearchMode, SearchRequest, SearchResponse
 from app.services.search.hybrid_search import (
     FusionMethod,
     HybridSearchConfig,
@@ -24,7 +24,7 @@ from app.services.search.vector_search import SearchFilter as VectorSearchFilter
 
 if TYPE_CHECKING:
     from app.application.dependencies.search_dependencies import SearchDependencies
-    from app.models.auth import CurrentUser
+    from app.infrastructure.persistence.models.auth_tables import CurrentUser
 
 
 class SearchApplicationService:

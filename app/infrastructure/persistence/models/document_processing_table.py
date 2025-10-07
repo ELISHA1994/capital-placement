@@ -14,7 +14,7 @@ from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID, JSONB
 from sqlalchemy.sql import func
 from sqlmodel import Field, SQLModel, Relationship
 
-from .base import TenantModel, create_tenant_id_column
+from app.infrastructure.persistence.models.base import TenantModel, create_tenant_id_column
 
 
 class DocumentProcessingTable(TenantModel, table=True):

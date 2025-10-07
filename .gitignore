@@ -6,8 +6,15 @@ venv/
 .cadence
 .idea
 docs
+examples
 storage
 scripts
 CLAUDE.md
 AGENTS.md
 SQLModel_Migration_Plan.md
+DOCUMENT_PROCESSING_MAPPER_SUMMARY.md
+IMPORT_MIGRATION_COMPLETE_SUMMARY.md
+import_migration_summary.md
+MIGRATION_PLAN.md
+WEBHOOK_SCHEMAS_NEEDED.md
+migrate_imports.py

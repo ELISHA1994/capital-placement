@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from app.services.audit.audit_service import AuditService, AuditServiceError
 from app.infrastructure.providers.audit_provider import get_audit_service, reset_audit_service
-from app.models.audit import AuditEventType, AuditRiskLevel
+from app.infrastructure.persistence.models.audit_table import AuditEventType, AuditRiskLevel
 from app.services.adapters.postgres_adapter import PostgresAdapter
 
 
@@ -343,7 +343,7 @@ class TestAuditIntegration:
         # This would be an integration test that requires actual database
         # For now, just verify the interface exists
         from app.services.auth.authentication_service import AuthenticationService
-        from app.models.audit import AuditEventType
+        from app.infrastructure.persistence.models.audit_table import AuditEventType
         
         # Verify that audit event types exist for authentication
         assert hasattr(AuditEventType, 'LOGIN_SUCCESS')
@@ -354,7 +354,7 @@ class TestAuditIntegration:
     async def test_audit_logging_in_upload_service(self):
         """Test that upload events are properly audited."""
         from app.application.upload_service import UploadApplicationService
-        from app.models.audit import AuditEventType
+        from app.infrastructure.persistence.models.audit_table import AuditEventType
         
         # Verify that audit event types exist for uploads
         assert hasattr(AuditEventType, 'FILE_UPLOAD_STARTED')

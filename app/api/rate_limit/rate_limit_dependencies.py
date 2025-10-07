@@ -17,7 +17,7 @@ import structlog
 from app.domain.interfaces import IRateLimitService, RateLimitType, TimeWindow, RateLimitRule
 from app.domain.exceptions import RateLimitExceededError
 from app.infrastructure.providers.rate_limit_provider import get_rate_limit_service
-from app.models.tenant_models import QuotaLimits, RateLimitConfiguration
+from app.infrastructure.persistence.models.tenant_table import QuotaLimits, RateLimitConfiguration
 from app.core.dependencies import CurrentUserDep, TenantContextDep
 
 

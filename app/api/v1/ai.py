@@ -19,8 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, s
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, validator
 
-from app.models.auth import CurrentUser
-from app.models.base import PaginatedResponse, PaginationModel
+from app.infrastructure.persistence.models.auth_tables import CurrentUser
+from app.infrastructure.persistence.models.base import PaginatedResponse, PaginationModel
 from app.core.dependencies import CurrentUserDep
 from app.api.dependencies import map_domain_exception_to_http
 from app.domain.exceptions import DomainException

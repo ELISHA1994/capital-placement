@@ -14,7 +14,7 @@ from app.database.error_handling import handle_database_errors
 from app.database.sqlmodel_engine import get_sqlmodel_db_manager
 from app.domain.interfaces import IHealthCheck
 from app.domain.retry import ErrorCategory, IDeadLetterService, RetryPolicy
-from app.models.retry_models import DeadLetterModel, DeadLetterStatistics, RetryStateModel
+from app.infrastructure.persistence.models.retry_table import DeadLetterModel, DeadLetterStatistics, RetryStateModel
 
 
 logger = structlog.get_logger(__name__)

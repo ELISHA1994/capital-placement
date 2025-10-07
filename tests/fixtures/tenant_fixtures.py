@@ -10,7 +10,7 @@ from typing import Dict, List, Any, Optional
 from uuid import uuid4
 from datetime import datetime, timezone
 
-from app.models.tenant_models import (
+from app.infrastructure.persistence.models.tenant_table import (
     SubscriptionTier, QuotaLimits, FeatureFlags, 
     UsageMetrics, BillingConfiguration
 )

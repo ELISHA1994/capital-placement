@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import AsyncMock
 
 from app.services.tenant.tenant_service import TenantService
-from app.models.tenant_models import SubscriptionTier
+from app.infrastructure.persistence.models.tenant_table import SubscriptionTier
 from tests.mocks.mock_repositories import MockTenantRepository, MockUserRepository
 from tests.mocks.mock_services import MockCacheService
 from tests.fixtures.tenant_fixtures import TenantTestBuilder

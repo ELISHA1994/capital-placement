@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 import structlog
 
 from app.domain.interfaces import IWebhookCircuitBreakerService, IDatabase
-from app.models.webhook_models import CircuitBreakerState
+from app.api.schemas.webhook_schemas import CircuitBreakerState
 
 logger = structlog.get_logger(__name__)
 

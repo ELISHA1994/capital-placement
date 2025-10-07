@@ -22,7 +22,7 @@ from app.domain.interfaces import (
     RateLimitRule, RateLimitResult, RateLimitViolation
 )
 from app.domain.exceptions import RateLimitExceededError
-from app.models.tenant_models import QuotaLimits
+from app.infrastructure.persistence.models.tenant_table import QuotaLimits
 
 
 logger = structlog.get_logger(__name__)

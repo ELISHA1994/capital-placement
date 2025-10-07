@@ -20,7 +20,7 @@ from uuid import uuid4, UUID
 
 import structlog
 from app.core.config import get_settings
-from app.models.auth import (
+from app.infrastructure.persistence.models.auth_tables import (
     UserTable, UserCreate, UserLogin, CurrentUser, UserUpdate, TokenResponse,
     AuthenticationResult, APIKeyTable, APIKeyCreate, APIKeyResponse,
     APIKeyInfo, RefreshTokenRequest, PasswordChangeRequest,
@@ -29,9 +29,9 @@ from app.models.auth import (
 from app.database.repositories.postgres import UserRepository, TenantRepository, UserSessionRepository
 from app.utils.security import password_manager, token_manager, api_key_manager, security_validator
 from app.domain.interfaces import ICacheService, IAuditService
-from app.models.tenant_models import TenantConfiguration, SubscriptionTier
+from app.infrastructure.persistence.models.tenant_table import TenantConfiguration, SubscriptionTier
 from app.domain.interfaces import INotificationService
-from app.models.audit import AuditEventType
+from app.infrastructure.persistence.models.audit_table import AuditEventType
 from app.infrastructure.providers.audit_provider import get_audit_service
 from app.utils.session_utils import (
     build_session_cache_key,

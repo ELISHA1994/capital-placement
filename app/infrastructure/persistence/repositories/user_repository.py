@@ -10,7 +10,7 @@ from app.domain.entities.user import User, UserRole, UserStatus
 from app.domain.repositories.user_repository import IUserRepository
 from app.domain.value_objects import UserId, TenantId, EmailAddress
 from app.infrastructure.persistence.mappers.user_mapper import UserMapper
-from app.models.auth import UserTable
+from app.infrastructure.persistence.models.auth_tables import UserTable
 from app.infrastructure.providers.postgres_provider import get_postgres_adapter
 
 

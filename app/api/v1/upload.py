@@ -21,11 +21,11 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 
 from app.application.upload_service import UploadError
-from app.models.profile import ProcessingStatus
-from app.models.base import PaginatedResponse, PaginationModel
+from app.domain.entities.profile import ProcessingStatus
+from app.infrastructure.persistence.models.base import PaginatedResponse, PaginationModel
 from app.core.dependencies import CurrentUserDep
-from app.models.auth import CurrentUser
-from app.models.upload_models import (
+from app.infrastructure.persistence.models.auth_tables import CurrentUser
+from app.api.schemas.upload_schemas import (
     UploadResponse,
     BatchUploadResponse,
     ProcessingStatusResponse,

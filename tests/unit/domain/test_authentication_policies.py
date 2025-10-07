@@ -10,8 +10,8 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 from unittest.mock import Mock, AsyncMock, patch
 from app.services.auth.authentication_service import AuthenticationService
-from app.models.auth import UserCreate, UserLogin, PasswordChangeRequest, PasswordResetRequest, PasswordResetConfirm
-from app.models.tenant_models import SubscriptionTier
+from app.infrastructure.persistence.models.auth_tables import UserCreate, UserLogin, PasswordChangeRequest, PasswordResetRequest, PasswordResetConfirm
+from app.infrastructure.persistence.models.tenant_table import SubscriptionTier
 from tests.mocks.mock_repositories import MockUserRepository, MockTenantRepository, MockUserSessionRepository
 from tests.mocks.mock_services import MockCacheService, MockNotificationService
 
@@ -610,7 +610,7 @@ class TestUserProfileUpdateLogic:
     @pytest.mark.asyncio
     async def test_restricted_field_update_prevention(self):
         """Test that restricted fields cannot be updated via profile update."""
-        from app.models.auth import CurrentUser, UserUpdate
+        from app.infrastructure.persistence.models.auth_tables import CurrentUser, UserUpdate
         
         user_id = "user-id"
         tenant_id = "tenant-id"
@@ -651,7 +651,7 @@ class TestUserProfileUpdateLogic:
     @pytest.mark.asyncio
     async def test_tenant_context_validation(self):
         """Test that profile updates are validated against tenant context."""
-        from app.models.auth import CurrentUser, UserUpdate
+        from app.infrastructure.persistence.models.auth_tables import CurrentUser, UserUpdate
         
         user_id = "user-id"
         user_tenant_id = str(uuid4())

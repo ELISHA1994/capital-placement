@@ -19,7 +19,7 @@ from app.domain.retry import (
     BackoffStrategy, ErrorCategory, IRetryService, RetryAttempt, 
     RetryPolicy, RetryResult, RetryState
 )
-from app.models.retry_models import (
+from app.infrastructure.persistence.models.retry_table import (
     RetryAttemptModel, RetryPolicyTemplate, RetryStateModel, RetryStatistics
 )
 from app.services.retry.error_classifier import DefaultErrorClassifier
