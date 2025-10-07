@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timezone
+from io import BytesIO
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -55,12 +56,17 @@ class UploadApplicationService:
 
     def __init__(self, dependencies: UploadDependencies) -> None:
         """Initialize with injected dependencies.
-        
+
         Args:
             dependencies: All required services and repositories
         """
         self._deps = dependencies
         self._logger = structlog.get_logger(__name__)
+
+    @property
+    def deps(self):
+        """Provide access to dependencies for consistency."""
+        return self._deps
 
     async def upload_document(
         self,
@@ -237,7 +243,7 @@ class UploadApplicationService:
         )
         file_content = await file.read()
         profile_id = str(uuid4())
-        
+
         # Track file content for automatic cleanup
         content_resource_id = await self._deps.file_resource_manager.track_file_content(
             content=file_content,
@@ -246,12 +252,38 @@ class UploadApplicationService:
             tenant_id=str(current_user.tenant_id),
             auto_cleanup_after=3600,  # Auto cleanup after 1 hour
         )
-        
+
         if not content_resource_id:
             logger.warning("Failed to track file content for cleanup", upload_id=upload_id)
         else:
-            logger.debug("File content tracked for cleanup", 
+            logger.debug("File content tracked for cleanup",
                         upload_id=upload_id, resource_id=content_resource_id)
+
+        # Save file to storage using IFileStorage
+        storage_path = None
+        try:
+            storage_path = await self._deps.file_storage.save_file(
+                tenant_id=str(current_user.tenant_id),
+                upload_id=str(upload_id),
+                filename=file.filename or "unknown_document",
+                content=file_content
+            )
+            logger.info(
+                "File saved to storage",
+                upload_id=str(upload_id),
+                storage_path=storage_path,
+                file_size_bytes=len(file_content)
+            )
+        except Exception as storage_error:
+            logger.error(
+                "Failed to save file to storage",
+                upload_id=str(upload_id),
+                filename=file.filename,
+                error=str(storage_error),
+                error_type=type(storage_error).__name__
+            )
+            # Continue processing even if storage fails (graceful degradation)
+            # The file content is still in memory and will be processed
 
         response = UploadResponse(
             upload_id=upload_id,
@@ -695,28 +727,6 @@ class UploadApplicationService:
                 "individual_status": [],
             }
 
-    async def reprocess_document(
-        self,
-        *,
-        upload_id: str,
-        schedule_task: Optional[Any] = None,
-    ) -> Dict[str, Any]:
-        logger.info("Document reprocessing requested", upload_id=upload_id)
-        await self._enqueue_background(schedule_task, self._mock_reprocess, upload_id)
-        return {
-            "status": "reprocessing_started",
-            "upload_id": upload_id,
-            "message": "Document reprocessing has been queued",
-        }
-
-    async def cancel_processing(self, *, upload_id: str, user_id: str) -> Dict[str, Any]:
-        logger.info("Processing cancellation requested", upload_id=upload_id, user_id=user_id)
-        # TODO: integrate with actual cancellation mechanics
-        return {
-            "status": "cancelled",
-            "upload_id": upload_id,
-            "message": "Processing job has been cancelled",
-        }
 
     async def process_document_background(
         self,
@@ -1310,16 +1320,251 @@ class UploadApplicationService:
         self,
         *,
         upload_id: str,
+        tenant_id: str,
+        user_id: str,
+        force_reprocess: bool = False,
+        extract_embeddings: bool = True,
         schedule_task: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        """Reprocess a document."""
-        logger.info("Document reprocessing requested", upload_id=upload_id)
-        await self._enqueue_background(schedule_task, self._mock_reprocess, upload_id)
-        return {
-            "status": "reprocessing_started",
-            "upload_id": upload_id,
-            "message": "Document reprocessing has been queued",
-        }
+        """
+        Reprocess a document using SQLModel ORM.
+
+        Args:
+            upload_id: The document processing record ID
+            tenant_id: The tenant identifier for multi-tenant isolation
+            user_id: The user requesting reprocessing
+            force_reprocess: Force reprocessing even if already completed
+            extract_embeddings: Generate new embeddings during reprocessing
+            schedule_task: Optional task scheduler for background processing
+
+        Returns:
+            Dictionary with reprocessing status and details
+        """
+        logger.info(
+            "Document reprocessing requested",
+            upload_id=upload_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            force_reprocess=force_reprocess
+        )
+
+        try:
+            # Get SQLModel database manager
+            db_manager = get_sqlmodel_db_manager()
+
+            if not db_manager.is_initialized:
+                logger.error("SQLModel database manager not initialized")
+                return {
+                    "status": "error",
+                    "upload_id": upload_id,
+                    "message": "Database manager not initialized",
+                    "error_code": "DB_NOT_INITIALIZED"
+                }
+
+            # Query the document_processing record using SQLModel ORM
+            async with db_manager.get_session() as session:
+                statement = select(DocumentProcessingTable).where(
+                    DocumentProcessingTable.id == upload_id,
+                    DocumentProcessingTable.tenant_id == tenant_id
+                )
+                result = await session.execute(statement)
+                processing_record = result.scalar_one_or_none()
+
+                if not processing_record:
+                    logger.warning(
+                        "Document processing record not found",
+                        upload_id=upload_id,
+                        tenant_id=tenant_id
+                    )
+                    return {
+                        "status": "error",
+                        "upload_id": upload_id,
+                        "message": "Document processing record not found",
+                        "error_code": "RECORD_NOT_FOUND"
+                    }
+
+                # Store original status for response
+                original_status = processing_record.status
+
+                # Validate status - check if reprocessing is allowed
+                if processing_record.status == "processing":
+                    logger.warning(
+                        "Cannot reprocess - document is currently being processed",
+                        upload_id=upload_id,
+                        current_status=processing_record.status
+                    )
+                    return {
+                        "status": "error",
+                        "upload_id": upload_id,
+                        "message": "Cannot reprocess - document is currently being processed",
+                        "current_status": processing_record.status,
+                        "error_code": "ALREADY_PROCESSING"
+                    }
+
+                # Check if force_reprocess is required
+                if processing_record.status == "completed" and not force_reprocess:
+                    logger.warning(
+                        "Document already processed - use force_reprocess to override",
+                        upload_id=upload_id,
+                        current_status=processing_record.status
+                    )
+                    return {
+                        "status": "error",
+                        "upload_id": upload_id,
+                        "message": "Document already processed. Use force_reprocess=true to reprocess",
+                        "current_status": processing_record.status,
+                        "error_code": "ALREADY_COMPLETED"
+                    }
+
+                # Extract file metadata from input_metadata
+                input_metadata = processing_record.input_metadata or {}
+                filename = input_metadata.get("filename", "unknown_document")
+                file_size = input_metadata.get("file_size", 0)
+
+                logger.info(
+                    "Document metadata extracted",
+                    upload_id=upload_id,
+                    filename=filename,
+                    file_size=file_size,
+                    original_status=original_status
+                )
+
+                # Retrieve file from storage
+                try:
+                    file_content = await self._deps.file_storage.retrieve_file(
+                        tenant_id=str(tenant_id),
+                        upload_id=upload_id
+                    )
+
+                    logger.info(
+                        "File retrieved from storage for reprocessing",
+                        upload_id=upload_id,
+                        filename=filename,
+                        file_size=len(file_content)
+                    )
+
+                except FileNotFoundError:
+                    logger.error(
+                        "File not found in storage - cannot reprocess",
+                        upload_id=upload_id,
+                        tenant_id=str(tenant_id)
+                    )
+                    return {
+                        "status": "error",
+                        "error_code": "FILE_NOT_FOUND",
+                        "message": "Original file not found in storage. Please re-upload the document.",
+                    }
+                except Exception as storage_error:
+                    logger.error(
+                        "Failed to retrieve file from storage",
+                        upload_id=upload_id,
+                        error=str(storage_error)
+                    )
+                    return {
+                        "status": "error",
+                        "error_code": "STORAGE_ERROR",
+                        "message": "Failed to retrieve file from storage",
+                        "details": str(storage_error),
+                    }
+
+                # Update status to "processing" and reset timestamps
+                current_time = datetime.utcnow()  # Use timezone-naive to match database column type
+                processing_record.status = "processing"
+                processing_record.started_at = current_time
+                processing_record.completed_at = None
+                processing_record.error_details = None
+                processing_record.updated_at = current_time
+                processing_record.processing_duration_ms = None
+                processing_record.quality_score = None
+                processing_record.output_data = None
+
+                # Update input_metadata to indicate this is a reprocessing operation
+                updated_input_metadata = input_metadata.copy()
+                updated_input_metadata["reprocessing"] = True
+                updated_input_metadata["force_reprocess"] = force_reprocess
+                updated_input_metadata["extract_embeddings"] = extract_embeddings
+                updated_input_metadata["reprocessed_at"] = current_time.isoformat()
+                updated_input_metadata["reprocessed_by_user"] = user_id
+                processing_record.input_metadata = updated_input_metadata
+
+                session.add(processing_record)
+                await session.commit()
+                await session.refresh(processing_record)
+
+                logger.info(
+                    "Document status updated for reprocessing",
+                    upload_id=upload_id,
+                    previous_status=original_status,
+                    new_status=processing_record.status,
+                    filename=filename
+                )
+
+            # Schedule background processing with retrieved file
+            settings = get_settings()
+            await self._enqueue_background(
+                schedule_task,
+                self.process_document_background,
+                upload_id,
+                str(processing_record.document_id),
+                file_content,
+                filename,
+                str(tenant_id),
+                user_id,
+                None,  # webhook_url
+                extract_embeddings,
+                "normal",  # processing_priority
+                settings,
+            )
+
+            # Log audit event for reprocessing
+            try:
+                audit_service = await get_audit_service()
+                await audit_service.log_file_upload_event(
+                    event_type=AuditEventType.FILE_UPLOAD_STARTED.value,  # Reusing upload event type
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    filename=filename,
+                    file_size=file_size,
+                    upload_id=upload_id,
+                    ip_address=None,
+                    user_agent=None,
+                )
+            except Exception as audit_error:
+                logger.warning(
+                    "Failed to log reprocessing audit event",
+                    upload_id=upload_id,
+                    error=str(audit_error)
+                )
+
+            # Return success response
+            return {
+                "status": "reprocess_initiated",
+                "upload_id": upload_id,
+                "message": "Document reprocessing initiated successfully. File retrieved from storage and sent for processing.",
+                "document_id": str(processing_record.document_id),
+                "previous_status": original_status,
+                "new_status": "processing",
+                "filename": filename,
+                "file_size_bytes": len(file_content),
+                "extract_embeddings": extract_embeddings,
+                "force_reprocess": force_reprocess,
+            }
+
+        except Exception as exc:
+            logger.error(
+                "Reprocess failed",
+                upload_id=upload_id,
+                tenant_id=tenant_id,
+                error=str(exc),
+                error_type=type(exc).__name__
+            )
+            return {
+                "status": "error",
+                "upload_id": upload_id,
+                "message": f"Reprocessing failed: {str(exc)}",
+                "error_details": str(exc),
+                "error_type": type(exc).__name__
+            }
 
     async def cancel_processing(self, *, upload_id: str, user_id: str, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         """Cancel document processing with actual task cancellation."""

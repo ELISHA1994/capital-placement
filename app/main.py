@@ -42,9 +42,6 @@ from app.infrastructure.providers.cache_provider import (
 from app.infrastructure.providers.database_provider import (
     reset_database_service,
 )
-from app.infrastructure.providers.document_store_provider import (
-    reset_document_store,
-)
 from app.infrastructure.providers.message_queue_provider import (
     reset_message_queue,
 )
@@ -199,7 +196,6 @@ async def lifespan(app: FastAPI):
         await reset_search_services()
         await reset_notification_service()
         await reset_message_queue()
-        await reset_document_store()
         await reset_database_service()
         await reset_analytics_service()
         await reset_postgres_adapter()

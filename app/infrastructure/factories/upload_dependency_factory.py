@@ -19,9 +19,9 @@ from app.infrastructure.providers.document_provider import (
     get_content_extractor,
     get_quality_analyzer
 )
+from app.infrastructure.providers.storage_provider import get_file_storage
 from app.services.core.tenant_manager_provider import get_tenant_manager
 from app.infrastructure.adapters.event_publisher_adapter import EventPublisherAdapter
-from app.infrastructure.adapters.storage_adapter import StorageAdapter
 from app.infrastructure.adapters.notification_adapter import NotificationAdapter
 from app.infrastructure.providers.validation_provider import get_webhook_validator
 from app.infrastructure.providers.validation_provider import get_file_content_validator
@@ -46,16 +46,16 @@ class UploadDependencyFactory(IUploadDependencyFactory):
         
         # AI services
         embedding_service = await get_embedding_service()
-        
+
         # Infrastructure services
-        storage_service = StorageAdapter()
         notification_service = NotificationAdapter()
         tenant_manager = await get_tenant_manager()
         database_adapter = await get_postgres_adapter()
-        
+        file_storage = await get_file_storage()
+
         # Event publisher
         event_publisher = EventPublisherAdapter()
-        
+
         # Validation services
         webhook_validator = await get_webhook_validator()
         file_content_validator = await get_file_content_validator()
@@ -82,11 +82,11 @@ class UploadDependencyFactory(IUploadDependencyFactory):
             embedding_service=embedding_service,
 
             # Infrastructure
-            storage_service=storage_service,
             notification_service=notification_service,
             tenant_manager=tenant_manager,
             database_adapter=database_adapter,
             event_publisher=event_publisher,
+            file_storage=file_storage,
 
             # Validation services
             webhook_validator=webhook_validator,

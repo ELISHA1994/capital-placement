@@ -16,10 +16,6 @@ from .database_provider import (  # noqa: F401
     get_database_service,
     reset_database_service,
 )
-from .document_store_provider import (  # noqa: F401
-    get_document_store,
-    reset_document_store,
-)
 from .message_queue_provider import (  # noqa: F401
     get_message_queue,
     reset_message_queue,
@@ -43,5 +39,9 @@ from .search_provider import (  # noqa: F401
     get_search_analytics_service,
     reset_search_services,
 )
+from .storage_provider import (  # noqa: F401
+    get_file_storage,
+    shutdown_file_storage,
+)
 
-__all__ = [name for name in globals() if name.startswith("get_") or name.startswith("reset_")]
+__all__ = [name for name in globals() if name.startswith("get_") or name.startswith("reset_") or name.startswith("shutdown_")]

@@ -11,7 +11,6 @@ from app.infrastructure.providers.ai_provider import reset_ai_services
 from app.infrastructure.providers.analytics_provider import reset_analytics_service
 from app.infrastructure.providers.cache_provider import reset_cache_service
 from app.infrastructure.providers.database_provider import reset_database_service
-from app.infrastructure.providers.document_store_provider import reset_document_store
 from app.infrastructure.providers.event_provider import reset_event_publisher
 from app.infrastructure.providers.message_queue_provider import reset_message_queue
 from app.infrastructure.providers.notification_provider import reset_notification_service
@@ -29,7 +28,6 @@ async def reset_provider_state() -> AsyncIterator[None]:
     await reset_search_services()
     await reset_cache_service()
     await reset_database_service()
-    await reset_document_store()
     await reset_message_queue()
     await reset_event_publisher()
     await reset_notification_service()
@@ -40,7 +38,6 @@ async def reset_provider_state() -> AsyncIterator[None]:
     await reset_search_services()
     await reset_cache_service()
     await reset_database_service()
-    await reset_document_store()
     await reset_message_queue()
     await reset_event_publisher()
     await reset_notification_service()

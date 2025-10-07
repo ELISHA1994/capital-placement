@@ -51,32 +51,125 @@ class ICacheService(IHealthCheck, ABC):
         pass
 
 
-class IDocumentStore(IHealthCheck, ABC):
-    """Document storage interface."""
+class IFileStorage(IHealthCheck, ABC):
+    """
+    File storage abstraction for multi-tenant document persistence.
+
+    Provides a unified interface for storing and retrieving files with complete
+    tenant isolation. Implementations can use local filesystem, cloud storage
+    (S3, Azure Blob Storage, GCS), or any other storage backend.
+
+    All operations are tenant-aware and use tenant_id for data isolation,
+    ensuring complete separation of file storage between tenants.
+
+    Storage Path Structure:
+        {tenant_id}/{upload_id}/{filename}
+
+    This ensures:
+    - Complete tenant isolation
+    - Easy cleanup when tenants are deleted
+    - Simple file organization and retrieval
+    - Support for multiple files per upload
+
+    Implementations should:
+    - Ensure thread-safe operations
+    - Handle errors gracefully with appropriate exceptions
+    - Implement proper cleanup on delete operations
+    - Support atomic operations where possible
+    - Validate tenant_id and upload_id formats
+    """
 
     @abstractmethod
-    async def store_document(self, container: str, path: str, content: bytes) -> str:
-        """Store document and return URL."""
+    async def save_file(
+        self,
+        tenant_id: str,
+        upload_id: str,
+        filename: str,
+        content: bytes
+    ) -> str:
+        """
+        Save file content to storage and return storage path.
+
+        Args:
+            tenant_id: Tenant identifier for multi-tenant isolation
+            upload_id: Unique upload identifier for grouping related files
+            filename: Original filename with extension
+            content: Raw file content as bytes
+
+        Returns:
+            Storage path where file was saved (e.g., "tenant_id/upload_id/filename")
+
+        Raises:
+            StorageError: If file cannot be saved
+            ValueError: If tenant_id, upload_id, or filename is invalid
+        """
         pass
 
     @abstractmethod
-    async def get_document(self, container: str, path: str) -> bytes:
-        """Get document content."""
+    async def retrieve_file(
+        self,
+        tenant_id: str,
+        upload_id: str
+    ) -> bytes:
+        """
+        Retrieve file content from storage.
+
+        Args:
+            tenant_id: Tenant identifier for multi-tenant isolation
+            upload_id: Upload identifier to retrieve file for
+
+        Returns:
+            Raw file content as bytes
+
+        Raises:
+            FileNotFoundError: If file does not exist
+            StorageError: If file cannot be retrieved
+            ValueError: If tenant_id or upload_id is invalid
+        """
         pass
 
     @abstractmethod
-    async def delete_document(self, container: str, path: str) -> bool:
-        """Delete document."""
+    async def delete_file(
+        self,
+        tenant_id: str,
+        upload_id: str
+    ) -> bool:
+        """
+        Delete file from storage.
+
+        Args:
+            tenant_id: Tenant identifier for multi-tenant isolation
+            upload_id: Upload identifier to delete file for
+
+        Returns:
+            True if file was deleted, False if file did not exist
+
+        Raises:
+            StorageError: If file cannot be deleted
+            ValueError: If tenant_id or upload_id is invalid
+        """
         pass
 
     @abstractmethod
-    async def list_documents(self, container: str, prefix: str = "") -> List[str]:
-        """List documents with optional prefix filter."""
-        pass
+    async def exists(
+        self,
+        tenant_id: str,
+        upload_id: str
+    ) -> bool:
+        """
+        Check if file exists in storage.
 
-    @abstractmethod
-    async def get_document_url(self, container: str, path: str, expires_in: int = 3600) -> str:
-        """Get signed URL for document access."""
+        Args:
+            tenant_id: Tenant identifier for multi-tenant isolation
+            upload_id: Upload identifier to check existence for
+
+        Returns:
+            True if file exists, False otherwise
+
+        Raises:
+            StorageError: If existence check fails
+            ValueError: If tenant_id or upload_id is invalid
+        """
         pass
 
 
@@ -242,61 +335,6 @@ class IMessageQueue(IHealthCheck, ABC):
         reason: str,
     ) -> bool:
         """Send message to dead letter queue."""
-        pass
-
-
-@dataclass
-class BlobMetadata:
-    """Metadata describing a stored blob."""
-
-    name: str
-    size: int
-    content_type: Optional[str] = None
-    last_modified: Optional[datetime] = None
-    etag: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-
-class IBlobStorage(IHealthCheck, ABC):
-    """Blob storage interface."""
-
-    @abstractmethod
-    async def upload_blob(
-        self,
-        container: str,
-        blob_name: str,
-        data: Union[bytes, BinaryIO],
-        content_type: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        """Upload a blob and return its identifier or URL."""
-        pass
-
-    @abstractmethod
-    async def download_blob(self, container: str, blob_name: str) -> bytes:
-        """Download a blob's contents."""
-        pass
-
-    @abstractmethod
-    async def delete_blob(self, container: str, blob_name: str) -> bool:
-        """Delete a blob."""
-        pass
-
-    @abstractmethod
-    async def list_blobs(
-        self, container: str, prefix: Optional[str] = None
-    ) -> List[BlobMetadata]:
-        """List blobs within a container."""
-        pass
-
-    @abstractmethod
-    async def get_blob_url(
-        self,
-        container: str,
-        blob_name: str,
-        expires_in: Optional[timedelta] = None,
-    ) -> str:
-        """Return an access URL for the blob."""
         pass
 
 
@@ -2185,15 +2223,13 @@ class IWebhookStatsService(IHealthCheck, ABC):
 __all__ = [
     "IHealthCheck",
     "ICacheService",
-    "IDocumentStore",
+    "IFileStorage",
     "IDatabase",
     "ISearchService",
     "IAIService",
     "Message",
-    "BlobMetadata",
     "IMessageQueue",
     "IEventPublisher",
-    "IBlobStorage",
     "ISecretManager",
     "INotificationService",
     "IAnalyticsService",

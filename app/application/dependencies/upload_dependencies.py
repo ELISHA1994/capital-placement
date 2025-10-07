@@ -9,7 +9,7 @@ from typing import Protocol, runtime_checkable, Any
 from app.domain.repositories.profile_repository import IProfileRepository
 from app.domain.repositories.user_repository import IUserRepository
 from app.domain.repositories.tenant_repository import ITenantRepository
-from app.domain.interfaces import IWebhookValidator, IFileContentValidator, IFileResourceManager
+from app.domain.interfaces import IWebhookValidator, IFileContentValidator, IFileResourceManager, IFileStorage
 
 
 @runtime_checkable
@@ -70,19 +70,6 @@ class IEmbeddingService(Protocol):
     
     async def generate_embedding(self, text: str, **kwargs) -> list[float]:
         """Generate embedding vector for text."""
-        ...
-
-
-@runtime_checkable
-class IStorageService(Protocol):
-    """Interface for file storage services."""
-    
-    async def store_file(self, file_content: bytes, filename: str, **kwargs) -> str:
-        """Store file and return storage path."""
-        ...
-    
-    async def delete_file(self, file_path: str) -> bool:
-        """Delete file from storage."""
         ...
 
 
@@ -158,16 +145,16 @@ class UploadDependencies:
     embedding_service: IEmbeddingService
     
     # Infrastructure services
-    storage_service: IStorageService
     notification_service: INotificationService
     tenant_manager: ITenantManagerService
     database_adapter: IDatabaseAdapter
     event_publisher: IEventPublisher
-    
+    file_storage: IFileStorage
+
     # Validation services
     webhook_validator: IWebhookValidator
     file_content_validator: IFileContentValidator
-    
+
     # Resource management
     file_resource_manager: IFileResourceManager
 

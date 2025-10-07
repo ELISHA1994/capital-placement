@@ -224,6 +224,14 @@ class Settings(BaseSettings):
     
     
     # File Storage Configuration
+    FILE_STORAGE_TYPE: str = Field(
+        default="local",
+        description="Storage type: local or s3"
+    )
+    FILE_STORAGE_PATH: str = Field(
+        default="./storage/uploads",
+        description="Local storage base path"
+    )
     LOCAL_STORAGE_PATH: str = Field(
         default="./storage",
         description="Local file storage path"

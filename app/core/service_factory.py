@@ -8,7 +8,7 @@ import structlog
 
 from app.core.environment import get_service_strategy, ServiceStrategy, get_current_environment, Environment
 from app.domain.interfaces import (
-    ICacheService, IDocumentStore, IDatabase, ISearchService, 
+    ICacheService, IDatabase, ISearchService,
     IAIService, IMessageQueue, INotificationService, IAnalyticsService
 )
 
@@ -34,17 +34,6 @@ class ServiceFactory:
             service = await self._create_memory_cache()
         
         self._service_cache[ICacheService] = service
-        return service
-    
-    async def create_document_store(self) -> IDocumentStore:
-        """Create document storage service"""
-        if IDocumentStore in self._service_cache:
-            return self._service_cache[IDocumentStore]
-        
-        # Always use local file storage (cloud-agnostic)
-        service = await self._create_local_file_storage()
-        
-        self._service_cache[IDocumentStore] = service
         return service
     
     async def create_database(self) -> IDatabase:
@@ -141,13 +130,6 @@ class ServiceFactory:
         from app.services.adapters.memory_cache_adapter import MemoryCacheService
         return MemoryCacheService()
     
-    async def _create_local_file_storage(self) -> IDocumentStore:
-        """Create local file storage service"""
-        from app.services.adapters.storage_adapters import FileSystemBlobStorage
-        
-        storage_path = os.getenv("LOCAL_STORAGE_PATH", "./data/documents")
-        return FileSystemBlobStorage(storage_path)
-    
     async def _create_local_database(self) -> IDatabase:
         """Create local database service with SQLModel"""
         # Use SQLModel with PostgreSQL for all environments (cloud-agnostic)
@@ -225,7 +207,6 @@ async def create_all_services() -> Dict[Type, Any]:
     
     services = {
         ICacheService: await factory.create_cache_service(),
-        IDocumentStore: await factory.create_document_store(),
         IDatabase: await factory.create_database(),
         ISearchService: await factory.create_search_service(),
         IAIService: await factory.create_ai_service(),

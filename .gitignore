@@ -6,6 +6,7 @@ venv/
 .cadence
 .idea
 docs
+storage
 scripts
 CLAUDE.md
 AGENTS.md

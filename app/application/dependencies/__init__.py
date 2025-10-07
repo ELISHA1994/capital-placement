@@ -15,7 +15,6 @@ from .upload_dependencies import (
     IContentExtractor,
     IQualityAnalyzer,
     IEmbeddingService,
-    IStorageService,
     INotificationService,
     ITenantManagerService as IUploadTenantManagerService,
     IDatabaseAdapter,
@@ -27,9 +26,9 @@ __all__ = [
     "SearchDependencies",
     "ISearchDependencyFactory",
     "IHybridSearchService",
-    "IResultRerankerService", 
+    "IResultRerankerService",
     "ISearchTenantManagerService",
-    
+
     # Upload dependencies
     "UploadDependencies",
     "IUploadDependencyFactory",
@@ -37,7 +36,6 @@ __all__ = [
     "IContentExtractor",
     "IQualityAnalyzer",
     "IEmbeddingService",
-    "IStorageService",
     "INotificationService",
     "IUploadTenantManagerService",
     "IDatabaseAdapter",

@@ -213,7 +213,7 @@ async def reprocess_document(
 ) -> JSONResponse:
     """
     Reprocess a previously uploaded document.
-    
+
     Useful for:
     - Retrying failed processing jobs
     - Applying improved extraction algorithms
@@ -223,10 +223,14 @@ async def reprocess_document(
     try:
         payload = await upload_service.reprocess_document(
             upload_id=upload_id,
+            tenant_id=current_user.tenant_id,
+            user_id=current_user.user_id,
+            force_reprocess=force_reprocess,
+            extract_embeddings=extract_embeddings,
             schedule_task=background_tasks,
         )
         return JSONResponse(content=payload)
-        
+
     except DomainException as domain_exc:
         # Map domain exceptions to appropriate HTTP responses
         raise map_domain_exception_to_http(domain_exc)
