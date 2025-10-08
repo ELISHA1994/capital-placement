@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
+from app.infrastructure.adapters.document_processor_adapter import DocumentProcessorAdapter
 from app.infrastructure.document.content_extractor import ContentExtractor
 from app.infrastructure.document.pdf_processor import PDFProcessor
 from app.infrastructure.document.quality_analyzer import QualityAnalyzer
@@ -17,12 +18,14 @@ _pdf_processor: Optional[PDFProcessor] = None
 _quality_analyzer: Optional[QualityAnalyzer] = None
 _embedding_generator: Optional[EmbeddingGenerator] = None
 _document_processor: Optional[DocumentProcessor] = None
+_document_processor_adapter: Optional[DocumentProcessorAdapter] = None
 
 _content_extractor_lock = asyncio.Lock()
 _pdf_processor_lock = asyncio.Lock()
 _quality_analyzer_lock = asyncio.Lock()
 _embedding_generator_lock = asyncio.Lock()
 _document_processor_lock = asyncio.Lock()
+_document_processor_adapter_lock = asyncio.Lock()
 
 
 async def get_content_extractor() -> ContentExtractor:
@@ -154,6 +157,34 @@ async def reset_document_processor() -> None:
         _document_processor = None
 
 
+async def get_document_processor_adapter() -> DocumentProcessorAdapter:
+    """Return singleton document processor adapter."""
+    global _document_processor_adapter
+
+    if _document_processor_adapter is not None:
+        return _document_processor_adapter
+
+    async with _document_processor_adapter_lock:
+        if _document_processor_adapter is not None:
+            return _document_processor_adapter
+
+        pdf_processor = await get_pdf_processor()
+        content_extractor = await get_content_extractor()
+
+        _document_processor_adapter = DocumentProcessorAdapter(
+            pdf_processor=pdf_processor,
+            content_extractor=content_extractor,
+        )
+        return _document_processor_adapter
+
+
+async def reset_document_processor_adapter() -> None:
+    """Reset document processor adapter singleton."""
+    global _document_processor_adapter
+    async with _document_processor_adapter_lock:
+        _document_processor_adapter = None
+
+
 __all__ = [
     "get_content_extractor",
     "reset_content_extractor",
@@ -165,4 +196,6 @@ __all__ = [
     "reset_embedding_generator",
     "get_document_processor",
     "reset_document_processor",
+    "get_document_processor_adapter",
+    "reset_document_processor_adapter",
 ]

@@ -16,6 +16,20 @@ from .database_provider import (  # noqa: F401
     get_database_service,
     reset_database_service,
 )
+from .document_provider import (  # noqa: F401
+    get_content_extractor,
+    reset_content_extractor,
+    get_pdf_processor,
+    reset_pdf_processor,
+    get_quality_analyzer,
+    reset_quality_analyzer,
+    get_embedding_generator,
+    reset_embedding_generator,
+    get_document_processor,
+    reset_document_processor,
+    get_document_processor_adapter,
+    reset_document_processor_adapter,
+)
 from .message_queue_provider import (  # noqa: F401
     get_message_queue,
     reset_message_queue,
@@ -30,6 +44,8 @@ from .repository_provider import (  # noqa: F401
     get_sqlmodel_repository,
     get_vector_repository,
     get_profile_repository,
+    get_tenant_repository,
+    get_user_repository,
 )
 from .search_provider import (  # noqa: F401
     get_vector_search_service,

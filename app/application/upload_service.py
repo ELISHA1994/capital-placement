@@ -323,6 +323,7 @@ class UploadApplicationService:
                 extract_embeddings,
                 processing_priority,
                 settings,
+                resource_id=content_resource_id or None,
             )
 
             response.message = "Document processing started"
@@ -421,6 +422,7 @@ class UploadApplicationService:
             )
 
         uploads: List[UploadResponse] = []
+        batch_processing_items: List[Dict[str, Any]] = []
         rejected_files: Dict[str, str] = {}
         accepted_files = 0
         total_file_size_bytes = 0
@@ -482,17 +484,26 @@ class UploadApplicationService:
                     # Use validated size for consistency and performance
                     total_file_size_bytes += validated_file_size
 
-                    uploads.append(
-                        UploadResponse(
-                            upload_id=upload_id,
-                            profile_id=profile_id,
-                            filename=upload_file.filename,
-                            status=ProcessingStatus.PENDING,
-                            message="Queued for processing",
-                            webhook_url=webhook_url,
-                        )
+                    upload_response = UploadResponse(
+                        upload_id=upload_id,
+                        profile_id=profile_id,
+                        filename=upload_file.filename,
+                        status=ProcessingStatus.PENDING,
+                        message="Queued for processing",
+                        webhook_url=webhook_url,
                     )
+
+                    uploads.append(upload_response)
                     accepted_files += 1
+
+                    batch_processing_items.append(
+                        {
+                            "upload": upload_response,
+                            "file_content": file_content,
+                            "filename": upload_file.filename or "unknown_document",
+                            "resource_id": content_resource_id or None,
+                        }
+                    )
                 else:
                     # Construct detailed rejection reason
                     if should_reject_security:
@@ -519,8 +530,7 @@ class UploadApplicationService:
                 schedule_task,
                 self.process_batch_background,
                 batch_id,
-                uploads,
-                files,
+                batch_processing_items,
                 str(current_user.tenant_id),
                 current_user.user_id,
                 webhook_url,
@@ -756,6 +766,7 @@ class UploadApplicationService:
         processing_priority: str = "normal",
         settings: Any | None = None,
         is_reprocessing: bool = False,
+        resource_id: Optional[str] = None,
     ) -> None:
         start_time = datetime.now()
         logger.info(
@@ -771,13 +782,19 @@ class UploadApplicationService:
         
         # Mark file content as in use during processing (if resource tracking is available)
         try:
-            # Try to find and mark the resource as in use
-            stats = await self._deps.file_resource_manager.get_resource_stats()
-            if stats.get("total_resources", 0) > 0:
-                # There are resources to potentially mark in use
-                await self._deps.file_resource_manager.mark_resource_in_use(f"file_content_{upload_id}")
+            if resource_id:
+                await self._deps.file_resource_manager.mark_resource_in_use(resource_id)
+            else:
+                stats = await self._deps.file_resource_manager.get_resource_stats()
+                if stats.get("total_resources", 0) > 0:
+                    await self._deps.file_resource_manager.mark_resource_in_use(f"file_content_{upload_id}")
         except Exception as mark_error:
-            logger.warning("Failed to mark resource in use", upload_id=upload_id, error=str(mark_error))
+            logger.warning(
+                "Failed to mark resource in use",
+                upload_id=upload_id,
+                resource_id=resource_id,
+                error=str(mark_error)
+            )
 
         try:
             # Record processing start (skip if reprocessing - record was already updated)
@@ -986,8 +1003,7 @@ class UploadApplicationService:
     async def process_batch_background(
         self,
         batch_id: str,
-        uploads: List[UploadResponse],
-        files: List[UploadFile],
+        batch_items: List[Dict[str, Any]],
         tenant_id: str,
         user_id: str,
         webhook_url: Optional[str] = None,
@@ -998,38 +1014,44 @@ class UploadApplicationService:
         logger.info(
             "Starting batch document processing",
             batch_id=batch_id,
-            file_count=len(uploads),
+            file_count=len(batch_items),
             max_concurrent=max_concurrent,
         )
 
+        uploads = [item["upload"] for item in batch_items]
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def process_single(upload: UploadResponse, file: UploadFile):
+        async def process_single(item: Dict[str, Any]):
             async with semaphore:
                 try:
-                    file_content = await file.read()
+                    upload = item["upload"]
+                    file_content = item["file_content"]
+                    filename = item["filename"]
+                    resource_id = item.get("resource_id")
+
                     await self.process_document_background(
                         upload.upload_id,
                         upload.profile_id,
                         file_content,
-                        file.filename or "unknown_document",
+                        filename,
                         tenant_id,
                         user_id,
                         webhook_url=webhook_url,
                         extract_embeddings=extract_embeddings,
                         processing_priority="normal",
                         settings=settings,
+                        resource_id=resource_id,
                     )
                 except Exception as e:
                     logger.error(
                         "Error processing single file in batch",
-                        upload_id=upload.upload_id,
-                        filename=file.filename,
+                        upload_id=item["upload"].upload_id,
+                        filename=item.get("filename"),
                         error=str(e)
                     )
                     raise
 
-        tasks = [process_single(upload, file) for upload, file in zip(uploads, files)]
+        tasks = [process_single(item) for item in batch_items]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         successful = sum(1 for result in results if not isinstance(result, Exception))
@@ -1041,7 +1063,7 @@ class UploadApplicationService:
                 {
                     "batch_id": batch_id,
                     "status": "completed",
-                    "total_files": len(uploads),
+                    "total_files": len(batch_items),
                     "successful": successful,
                     "failed": failed,
                 },
@@ -1532,6 +1554,7 @@ class UploadApplicationService:
                 "normal",  # processing_priority
                 settings,
                 True,  # is_reprocessing
+                resource_id=None,
             )
 
             # Log audit event for reprocessing
@@ -2103,22 +2126,24 @@ class UploadApplicationService:
                 size=pagination.size
             )
 
-    async def _enqueue_background(self, scheduler: Optional[Any], func, *args) -> Optional[str]:
+    async def _enqueue_background(self, scheduler: Optional[Any], func, *args, **kwargs) -> Optional[str]:
         """Enqueue a background task with task manager tracking."""
 
         # Extract task information from args for task manager
-        upload_id = None
-        tenant_id = None
-        user_id = None
+        upload_id = kwargs.get("upload_id")
+        tenant_id = kwargs.get("tenant_id")
+        user_id = kwargs.get("user_id")
         task_type = TaskType.DOCUMENT_PROCESSING  # Default
 
         # Try to extract common parameters from args
-        if len(args) >= 3:
+        if upload_id is None and len(args) >= 1:
             if isinstance(args[0], str):  # upload_id typically first
                 upload_id = args[0]
-            if len(args) >= 5 and isinstance(args[4], str):  # tenant_id typically 5th
+
+        if tenant_id is None and len(args) >= 5 and isinstance(args[4], str):
                 tenant_id = args[4]
-            if len(args) >= 6 and isinstance(args[5], str):  # user_id typically 6th
+
+        if user_id is None and len(args) >= 6 and isinstance(args[5], str):
                 user_id = args[5]
 
         # Determine task type based on function name
@@ -2133,7 +2158,7 @@ class UploadApplicationService:
             task_manager = self._deps.task_manager
             task_id = f"{upload_id}_{task_type.value}_{int(datetime.now().timestamp())}"
 
-            result = func(*args)
+            result = func(*args, **kwargs)
             if asyncio.iscoroutine(result):
                 task = task_manager.create_task(
                     result,
@@ -2147,18 +2172,18 @@ class UploadApplicationService:
         
         # Fallback to original behavior for compatibility
         if scheduler is None:
-            result = func(*args)
+            result = func(*args, **kwargs)
             if asyncio.iscoroutine(result):
                 asyncio.create_task(result)
             return None
 
         add_task = getattr(scheduler, "add_task", None)
         if callable(add_task):
-            add_task(func, *args)
+            add_task(func, *args, **kwargs)
             return None
 
         if callable(scheduler):
-            scheduler(func, *args)
+            scheduler(func, *args, **kwargs)
             return None
 
         raise AttributeError("Provided scheduler does not support task scheduling")
