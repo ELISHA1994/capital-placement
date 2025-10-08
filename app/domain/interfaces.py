@@ -13,7 +13,7 @@ from typing import Any, BinaryIO, Dict, List, Optional, Union
 from enum import Enum
 
 
-class IHealthCheck:
+class IHealthCheck(ABC):
     """Health check interface mixin."""
 
     @abstractmethod
