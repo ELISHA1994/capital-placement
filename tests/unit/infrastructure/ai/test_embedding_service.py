@@ -1,6 +1,8 @@
 """Tests for Embedding Service infrastructure implementation."""
 
 import pytest
+
+pytest.importorskip("numpy")
 from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 

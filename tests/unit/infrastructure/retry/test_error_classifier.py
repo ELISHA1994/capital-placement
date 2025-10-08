@@ -6,6 +6,8 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
+
+pytest.importorskip("aiohttp")
 from sqlalchemy.exc import (
     DatabaseError,
     DisconnectionError,
