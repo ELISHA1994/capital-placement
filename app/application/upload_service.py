@@ -643,116 +643,6 @@ class UploadApplicationService:
                 },
             )
 
-    async def get_batch_processing_status(
-        self,
-        *,
-        batch_id: str,
-        tenant_id: str,
-        user_id: str,
-    ) -> Dict[str, Any]:
-        logger.debug("Batch status requested", batch_id=batch_id)
-
-        try:
-            postgres_adapter = await get_postgres_adapter()
-            batch_records = await postgres_adapter.fetch_all(
-                """
-                SELECT id, document_id, status, processing_duration_ms, quality_score,
-                       output_data->>'filename' as filename, error_details
-                FROM document_processing
-                WHERE (output_data->>'batch_id') = $1 AND tenant_id = $2
-                """,
-                batch_id,
-                tenant_id,
-            )
-
-            if not batch_records:
-                return {
-                    "batch_id": batch_id,
-                    "status": "not_found",
-                    "total_files": 0,
-                    "completed": 0,
-                    "processing": 0,
-                    "failed": 0,
-                    "success_rate": 0.0,
-                    "individual_status": [],
-                }
-
-            status_counts = {"completed": 0, "processing": 0, "failed": 0, "pending": 0}
-            individual_status: List[Dict[str, Any]] = []
-            total_duration = 0
-            completed_count = 0
-
-            for record in batch_records:
-                status = record["status"]
-                status_counts[status] = status_counts.get(status, 0) + 1
-
-                duration_seconds = (
-                    record["processing_duration_ms"] / 1000.0
-                    if record.get("processing_duration_ms")
-                    else None
-                )
-
-                individual_status.append(
-                    {
-                        "upload_id": str(record["id"]),
-                        "profile_id": str(record["document_id"]),
-                        "filename": record.get("filename", "Unknown"),
-                        "status": status,
-                        "quality_score": record.get("quality_score"),
-                        "duration_seconds": duration_seconds,
-                    }
-                )
-
-                if status == "completed" and record.get("processing_duration_ms"):
-                    total_duration += record["processing_duration_ms"]
-                    completed_count += 1
-
-            total_files = len(batch_records)
-            success_rate = (
-                status_counts["completed"] / total_files if total_files > 0 else 0.0
-            )
-            avg_duration = (
-                (total_duration / completed_count / 1000.0)
-                if completed_count > 0
-                else 0.0
-            )
-
-            if status_counts["processing"] > 0:
-                overall_status = "processing"
-            elif status_counts["failed"] > 0 and status_counts["completed"] == 0:
-                overall_status = "failed"
-            elif status_counts["completed"] == total_files:
-                overall_status = "completed"
-            else:
-                overall_status = "partial"
-
-            return {
-                "batch_id": batch_id,
-                "status": overall_status,
-                "total_files": total_files,
-                "completed": status_counts["completed"],
-                "processing": status_counts["processing"],
-                "failed": status_counts["failed"],
-                "pending": status_counts["pending"],
-                "success_rate": success_rate,
-                "average_processing_time_seconds": avg_duration,
-                "individual_status": individual_status,
-            }
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("Failed to query batch status", error=str(exc))
-            return {
-                "batch_id": batch_id,
-                "status": "error",
-                "error": str(exc),
-                "total_files": 0,
-                "completed": 0,
-                "processing": 0,
-                "failed": 0,
-                "success_rate": 0.0,
-                "individual_status": [],
-            }
-
-
     async def process_document_background(
         self,
         upload_id: str,
@@ -767,6 +657,7 @@ class UploadApplicationService:
         settings: Any | None = None,
         is_reprocessing: bool = False,
         resource_id: Optional[str] = None,
+        batch_id: Optional[str] = None,
     ) -> None:
         start_time = datetime.now()
         logger.info(
@@ -775,6 +666,7 @@ class UploadApplicationService:
             profile_id=profile_id,
             filename=filename,
             tenant_id=tenant_id,
+            batch_id=batch_id,
         )
 
         if settings is None:
@@ -799,6 +691,14 @@ class UploadApplicationService:
         try:
             # Record processing start (skip if reprocessing - record was already updated)
             if not is_reprocessing:
+                input_metadata = {
+                    "filename": filename,
+                    "file_size": len(file_content),
+                    "priority": processing_priority,
+                }
+                if batch_id:
+                    input_metadata["batch_id"] = batch_id
+
                 await self._deps.database_adapter.execute(
                     """
                     INSERT INTO document_processing (id, created_at, updated_at, document_id, tenant_id, processing_type, status, input_metadata, started_at)
@@ -811,11 +711,7 @@ class UploadApplicationService:
                     tenant_id,
                     "ai_analysis",
                     "processing",
-                    json.dumps({
-                        "filename": filename,
-                        "file_size": len(file_content),
-                        "priority": processing_priority,
-                    }),
+                    json.dumps(input_metadata),
                     start_time,  # started_at
                 )
 
@@ -903,6 +799,9 @@ class UploadApplicationService:
                 "updated_at": datetime.now().isoformat(),
             }
 
+            if batch_id:
+                profile_data["batch_id"] = batch_id
+
             await self._deps.database_adapter.execute(
                 """
                 UPDATE document_processing
@@ -919,16 +818,20 @@ class UploadApplicationService:
             )
 
             if webhook_url:
+                webhook_payload = {
+                    "upload_id": upload_id,
+                    "profile_id": profile_id,
+                    "status": ProcessingStatus.COMPLETED.value,
+                    "quality_score": quality_assessment.get("overall_score"),
+                    "processing_duration_ms": processing_duration_ms,
+                    "has_embeddings": embedding_vector is not None,
+                }
+                if batch_id:
+                    webhook_payload["batch_id"] = batch_id
+
                 await self._deps.notification_service.send_webhook(
                     webhook_url,
-                    {
-                        "upload_id": upload_id,
-                        "profile_id": profile_id,
-                        "status": ProcessingStatus.COMPLETED.value,
-                        "quality_score": quality_assessment.get("overall_score"),
-                        "processing_duration_ms": processing_duration_ms,
-                        "has_embeddings": embedding_vector is not None,
-                    },
+                    webhook_payload,
                 )
 
             logger.info(
@@ -938,6 +841,7 @@ class UploadApplicationService:
                 quality_score=quality_assessment.get("overall_score"),
                 processing_duration_ms=processing_duration_ms,
                 has_embeddings=embedding_vector is not None,
+                batch_id=batch_id,
             )
 
         except Exception as exc:
@@ -948,6 +852,7 @@ class UploadApplicationService:
                 profile_id=profile_id,
                 error=str(exc),
                 processing_duration_ms=processing_duration_ms,
+                batch_id=batch_id,
             )
 
             try:
@@ -972,15 +877,19 @@ class UploadApplicationService:
                 )
 
             if webhook_url:
+                webhook_payload = {
+                    "upload_id": upload_id,
+                    "profile_id": profile_id,
+                    "status": ProcessingStatus.FAILED.value,
+                    "error_message": str(exc),
+                    "processing_duration_ms": processing_duration_ms,
+                }
+                if batch_id:
+                    webhook_payload["batch_id"] = batch_id
+
                 await self._deps.notification_service.send_webhook(
                     webhook_url,
-                    {
-                        "upload_id": upload_id,
-                        "profile_id": profile_id,
-                        "status": ProcessingStatus.FAILED.value,
-                        "error_message": str(exc),
-                        "processing_duration_ms": processing_duration_ms,
-                    },
+                    webhook_payload,
                 )
         
         finally:
@@ -1041,6 +950,7 @@ class UploadApplicationService:
                         processing_priority="normal",
                         settings=settings,
                         resource_id=resource_id,
+                        batch_id=batch_id,
                     )
                 except Exception as e:
                     logger.error(
@@ -1555,6 +1465,7 @@ class UploadApplicationService:
                 settings,
                 True,  # is_reprocessing
                 resource_id=None,
+                batch_id=updated_input_metadata.get("batch_id"),
             )
 
             # Log audit event for reprocessing
