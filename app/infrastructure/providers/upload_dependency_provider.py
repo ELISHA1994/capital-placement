@@ -24,6 +24,8 @@ from app.infrastructure.providers.document_provider import (
     get_embedding_generator
 )
 from app.infrastructure.providers.ai_provider import get_embedding_service
+from app.infrastructure.providers.audit_provider import get_audit_service
+from app.infrastructure.task_manager import get_task_manager
 
 # Mock implementations for missing services
 class MockContentExtractor:
@@ -137,9 +139,15 @@ class UploadDependencyFactory(IUploadDependencyFactory):
         webhook_validator = get_webhook_validator_sync()
         file_content_validator = get_file_content_validator_sync()
 
+        # Get audit service
+        audit_service = await get_audit_service()
+
+        # Get task manager
+        task_manager = get_task_manager()
+
         # Create document processor
         document_processor = DocumentProcessor()
-        
+
         # Create dependencies
         self._dependencies_cache = UploadDependencies(
             # Repositories
@@ -159,6 +167,8 @@ class UploadDependencyFactory(IUploadDependencyFactory):
             tenant_manager=tenant_manager,
             database_adapter=database_adapter,
             event_publisher=event_publisher,
+            audit_service=audit_service,
+            task_manager=task_manager,
 
             # Validation services
             webhook_validator=webhook_validator,

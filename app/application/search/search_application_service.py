@@ -12,9 +12,11 @@ Advanced multi-stage search engine with:
 Migrated from app/services/core/search_engine.py to application layer.
 """
 
+from __future__ import annotations
+
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, TYPE_CHECKING
 from collections import defaultdict
 import structlog
 import json
@@ -26,7 +28,10 @@ from app.api.schemas.search_schemas import (
 # Import CVProfile directly to avoid circular imports
 from app.api.schemas.profile_schemas import CVProfile
 from app.domain.interfaces import ISearchService, IAIService
-from app.infrastructure.document.embedding_generator import EmbeddingGenerator
+
+# Import infrastructure types only for type checking
+if TYPE_CHECKING:
+    from app.infrastructure.document.embedding_generator import EmbeddingGenerator
 
 logger = structlog.get_logger(__name__)
 
@@ -54,7 +59,7 @@ class SearchApplicationService:
     ):
         self.search_service = search_service
         self.ai_service = ai_service
-        self.embedding_generator = embedding_generator or EmbeddingGenerator(self.ai_service, cache_service)
+        self.embedding_generator = embedding_generator  # Must be provided via dependency injection
         self.cache_service = cache_service
 
         # Performance and analytics tracking

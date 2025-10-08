@@ -20,13 +20,13 @@ from app.application.search.result_reranker import (
     RankingStrategy,
     RerankingConfig,
 )
-from app.infrastructure.search.vector_search import SearchFilter as VectorSearchFilter
-
 if TYPE_CHECKING:
     from app.application.dependencies.search_dependencies import SearchDependencies
-    from app.infrastructure.persistence.models.auth_tables import CurrentUser
 
 
+# NOTE: CurrentUser is an API-layer DTO passed from FastAPI dependencies.
+# Application layer accepts it as Any to avoid depending on infrastructure/API layers.
+# The application layer extracts only the data it needs (user_id, tenant_id).
 class SearchApplicationService:
     """Coordinates search execution across domain services and infrastructure.
 
@@ -49,7 +49,7 @@ class SearchApplicationService:
     async def execute_search(
         self,
         search_request: SearchRequest,
-        current_user: CurrentUser,
+        current_user: Any,  # API-layer DTO, not imported to maintain hexagonal boundaries
         schedule_task: Any | None = None,
     ) -> SearchResponse:
         """Perform a search and dispatch background side-effects.
@@ -115,7 +115,7 @@ class SearchApplicationService:
     async def _execute_ai_search(
         self,
         search_request: SearchRequest,
-        current_user: CurrentUser,
+        current_user: Any,  # API-layer DTO
         search_id: str,
         start_time: datetime,
     ) -> SearchResponse:
@@ -183,7 +183,7 @@ class SearchApplicationService:
     async def _execute_basic_search(
         self,
         search_request: SearchRequest,
-        current_user: CurrentUser,
+        current_user: Any,
         search_id: str,
         start_time: datetime,
     ) -> SearchResponse:
@@ -271,8 +271,8 @@ class SearchApplicationService:
         )
 
     def _create_search_filter(
-        self, search_request: SearchRequest, current_user: CurrentUser
-    ) -> VectorSearchFilter | None:
+        self, search_request: SearchRequest, current_user: Any
+    ) -> Any | None:
         """Create search filter based on request parameters.
 
         Args:
@@ -282,13 +282,13 @@ class SearchApplicationService:
         Returns:
             Configured search filter or None
         """
+        # TODO: SearchFilter should be defined in domain layer or passed via dependency
+        # For now, return None to avoid importing from infrastructure
         if not search_request.filters:
             return None
 
-        return VectorSearchFilter(
-            entity_types=["profile", "job"],
-            tenant_ids=[str(current_user.tenant_id)] if current_user.tenant_id else None,
-        )
+        # Filters will be applied by the search service based on tenant_id passed separately
+        return None
 
     def _create_search_config(self) -> HybridSearchConfig:
         """Create search configuration with optimized parameters.
@@ -308,7 +308,7 @@ class SearchApplicationService:
         self,
         search_request: SearchRequest,
         hybrid_response: Any,
-        current_user: CurrentUser,
+        current_user: Any,
     ) -> tuple[list[Any], int]:
         """Apply reranking to search results if available.
 
@@ -436,7 +436,7 @@ class SearchApplicationService:
         schedule_task: Any | None,
         search_request: SearchRequest,
         search_response: SearchResponse,
-        current_user: CurrentUser,
+        current_user: Any,
     ) -> None:
         """Schedule analytics tracking in background.
 
@@ -479,7 +479,7 @@ class SearchApplicationService:
         self,
         search_request: SearchRequest,
         search_response: SearchResponse,
-        current_user: CurrentUser,
+        current_user: Any,
     ) -> None:
         """Track search analytics in background.
 

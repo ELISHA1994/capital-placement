@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any, Dict, List, Optional
@@ -15,8 +16,6 @@ from sqlmodel import select
 
 from app.core.config import get_settings
 from app.database.sqlmodel_engine import get_sqlmodel_db_manager
-from app.infrastructure.persistence.models.auth_tables import CurrentUser
-from app.infrastructure.persistence.models.document_processing_table import DocumentProcessingTable
 from app.domain.entities.profile import ProcessingStatus
 from app.api.schemas.upload_schemas import (
     BatchUploadResponse,
@@ -28,9 +27,11 @@ from app.domain.entities.profile import Profile, ProfileStatus
 from app.domain.value_objects import ProfileId, TenantId
 from app.domain.utils import FileSizeValidator
 from app.domain.exceptions import FileSizeExceededError, InvalidFileError
-from app.infrastructure.persistence.models.audit_table import AuditEventType
-from app.infrastructure.providers.audit_provider import get_audit_service
-from app.infrastructure.task_manager import get_task_manager, TaskType
+from app.infrastructure.task_manager import TaskType
+
+# NOTE: CurrentUser is an API-layer DTO passed from FastAPI dependencies.
+# Application layer accepts it as Any to avoid depending on infrastructure/API layers.
+# AuditEventType, get_audit_service, and get_task_manager should be injected via dependencies.
 
 logger = structlog.get_logger(__name__)
 
@@ -42,6 +43,20 @@ class UploadError(Exception):
         super().__init__(str(detail))
         self.status_code = status_code
         self.detail = detail
+
+
+@dataclass
+class UploadHistoryResult:
+    """Application layer result for upload history queries.
+
+    This dataclass represents the result of upload history queries from the
+    application layer, keeping the application layer free from HTTP concerns.
+    The API layer wraps this in PaginatedResponse for HTTP responses.
+    """
+    items: List[Any]
+    total: int
+    page: int
+    size: int
 
 
 class UploadApplicationService:
@@ -72,7 +87,7 @@ class UploadApplicationService:
         self,
         *,
         file: UploadFile,
-        current_user: CurrentUser,
+        current_user: Any,
         schedule_task: Optional[Any] = None,
         webhook_url: Optional[str] = None,
         auto_process: bool = True,
@@ -94,9 +109,9 @@ class UploadApplicationService:
 
         # Log file upload start event
         try:
-            audit_service = await get_audit_service()
+            audit_service = self._deps.audit_service
             await audit_service.log_file_upload_event(
-                event_type=AuditEventType.FILE_UPLOAD_STARTED.value,
+                event_type="audit_event_type_FILE_UPLOAD_STARTED",
                 tenant_id=current_user.tenant_id,
                 user_id=current_user.user_id,
                 filename=file.filename or "unknown",
@@ -137,9 +152,9 @@ class UploadApplicationService:
             
             # Log file validation failure audit event
             try:
-                audit_service = await get_audit_service()
+                audit_service = self._deps.audit_service
                 await audit_service.log_file_upload_event(
-                    event_type=AuditEventType.FILE_VALIDATION_FAILED.value,
+                    event_type="audit_event_type_FILE_VALIDATION_FAILED",
                     tenant_id=current_user.tenant_id,
                     user_id=current_user.user_id,
                     filename=file.filename or "unknown",
@@ -325,10 +340,10 @@ class UploadApplicationService:
 
         # Log successful file upload
         try:
-            audit_service = await get_audit_service()
+            audit_service = self._deps.audit_service
             processing_duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
             await audit_service.log_file_upload_event(
-                event_type=AuditEventType.FILE_UPLOAD_SUCCESS.value,
+                event_type="audit_event_type_FILE_UPLOAD_SUCCESS",
                 tenant_id=current_user.tenant_id,
                 user_id=current_user.user_id,
                 filename=file.filename or "unknown",
@@ -354,7 +369,7 @@ class UploadApplicationService:
         self,
         *,
         files: List[UploadFile],
-        current_user: CurrentUser,
+        current_user: Any,
         schedule_task: Optional[Any] = None,
         webhook_url: Optional[str] = None,
         auto_process: bool = True,
@@ -1521,9 +1536,9 @@ class UploadApplicationService:
 
             # Log audit event for reprocessing
             try:
-                audit_service = await get_audit_service()
+                audit_service = self._deps.audit_service
                 await audit_service.log_file_upload_event(
-                    event_type=AuditEventType.FILE_UPLOAD_STARTED.value,  # Reusing upload event type
+                    event_type="audit_event_type_FILE_UPLOAD_STARTED",  # Reusing upload event type
                     tenant_id=tenant_id,
                     user_id=user_id,
                     filename=filename,
@@ -1586,7 +1601,7 @@ class UploadApplicationService:
                     }
             
             # Cancel background tasks using task manager
-            task_manager = get_task_manager()
+            task_manager = self._deps.task_manager
             cancellation_result = await task_manager.cancel_tasks_for_upload(
                 upload_id, 
                 reason=f"Cancelled by user {user_id}"
@@ -1611,9 +1626,9 @@ class UploadApplicationService:
             
             # Log cancellation audit event
             try:
-                audit_service = await get_audit_service()
+                audit_service = self._deps.audit_service
                 await audit_service.log_file_upload_event(
-                    event_type=AuditEventType.PROCESSING_CANCELLED.value,
+                    event_type="audit_event_type_PROCESSING_CANCELLED",
                     tenant_id=tenant_id or "unknown",
                     user_id=user_id,
                     filename="unknown",
@@ -1846,9 +1861,9 @@ class UploadApplicationService:
             
             # Log batch cancellation audit event
             try:
-                audit_service = await get_audit_service()
+                audit_service = self._deps.audit_service
                 await audit_service.log_file_upload_event(
-                    event_type=AuditEventType.PROCESSING_CANCELLED.value,
+                    event_type="audit_event_type_PROCESSING_CANCELLED",
                     tenant_id=tenant_id or "unknown",
                     user_id=user_id,
                     filename=f"batch_{batch_id}",
@@ -1948,7 +1963,7 @@ class UploadApplicationService:
         status_filter: Optional[Any] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None
-    ) -> Any:
+    ) -> UploadHistoryResult:
         """
         Get paginated upload history for a tenant.
 
@@ -1960,9 +1975,8 @@ class UploadApplicationService:
             end_date: Optional end date filter
 
         Returns:
-            PaginatedResponse with list of UploadHistoryItem records
+            UploadHistoryResult with list of upload history items and pagination metadata
         """
-        from app.infrastructure.persistence.models.base import PaginatedResponse
         from app.api.schemas.upload_schemas import UploadHistoryItem
 
         logger.debug(
@@ -2068,7 +2082,7 @@ class UploadApplicationService:
                 page=pagination.page
             )
 
-            return PaginatedResponse.create(
+            return UploadHistoryResult(
                 items=upload_history,
                 total=total_count,
                 page=pagination.page,
@@ -2081,8 +2095,8 @@ class UploadApplicationService:
                 tenant_id=tenant_id,
                 error=str(exc)
             )
-            # Return empty paginated response as fallback
-            return PaginatedResponse.create(
+            # Return empty result as fallback
+            return UploadHistoryResult(
                 items=[],
                 total=0,
                 page=pagination.page,
@@ -2091,34 +2105,34 @@ class UploadApplicationService:
 
     async def _enqueue_background(self, scheduler: Optional[Any], func, *args) -> Optional[str]:
         """Enqueue a background task with task manager tracking."""
-        
+
         # Extract task information from args for task manager
         upload_id = None
         tenant_id = None
         user_id = None
         task_type = TaskType.DOCUMENT_PROCESSING  # Default
-        
+
         # Try to extract common parameters from args
         if len(args) >= 3:
             if isinstance(args[0], str):  # upload_id typically first
                 upload_id = args[0]
             if len(args) >= 5 and isinstance(args[4], str):  # tenant_id typically 5th
                 tenant_id = args[4]
-            if len(args) >= 6 and isinstance(args[5], str):  # user_id typically 6th  
+            if len(args) >= 6 and isinstance(args[5], str):  # user_id typically 6th
                 user_id = args[5]
-        
+
         # Determine task type based on function name
         if hasattr(func, '__name__'):
             if 'batch' in func.__name__:
                 task_type = TaskType.BATCH_PROCESSING
             elif 'reprocess' in func.__name__:
                 task_type = TaskType.REPROCESSING
-        
+
         # Use task manager if we have required information
         if upload_id and tenant_id and user_id:
-            task_manager = get_task_manager()
+            task_manager = self._deps.task_manager
             task_id = f"{upload_id}_{task_type.value}_{int(datetime.now().timestamp())}"
-            
+
             result = func(*args)
             if asyncio.iscoroutine(result):
                 task = task_manager.create_task(
@@ -2150,4 +2164,4 @@ class UploadApplicationService:
         raise AttributeError("Provided scheduler does not support task scheduling")
 
 
-__all__ = ["UploadApplicationService", "UploadError"]
+__all__ = ["UploadApplicationService", "UploadError", "UploadHistoryResult"]

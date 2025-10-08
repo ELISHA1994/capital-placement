@@ -8,17 +8,33 @@ import pytest
 
 
 class ImportVisitor(ast.NodeVisitor):
-    """AST visitor to collect import statements."""
-    
+    """AST visitor to collect import statements, excluding TYPE_CHECKING blocks."""
+
     def __init__(self):
         self.imports: Set[str] = set()
-    
+        self.in_type_checking = False
+
+    def visit_If(self, node):
+        """Handle if statements, specifically TYPE_CHECKING blocks."""
+        # Check if this is a TYPE_CHECKING block
+        is_type_checking = False
+        if isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING":
+            is_type_checking = True
+
+        if is_type_checking:
+            # Skip visiting children of TYPE_CHECKING blocks
+            return
+        else:
+            # Continue visiting non-TYPE_CHECKING if blocks
+            self.generic_visit(node)
+
     def visit_Import(self, node):
-        for alias in node.names:
-            self.imports.add(alias.name)
-    
+        if not self.in_type_checking:
+            for alias in node.names:
+                self.imports.add(alias.name)
+
     def visit_ImportFrom(self, node):
-        if node.module:
+        if not self.in_type_checking and node.module:
             self.imports.add(node.module)
 
 

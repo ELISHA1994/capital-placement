@@ -2220,6 +2220,117 @@ class IWebhookStatsService(IHealthCheck, ABC):
         pass
 
 
+class ITaskManager(IHealthCheck, ABC):
+    """Task manager interface for background task tracking and cancellation.
+
+    This is a domain interface because task management is part of the domain's
+    workflow coordination (document processing, batch operations, etc.).
+    The infrastructure layer provides concrete implementations.
+    """
+
+    @abstractmethod
+    def create_task(
+        self,
+        coro: Any,
+        *,
+        task_id: str,
+        upload_id: str,
+        tenant_id: str,
+        user_id: str,
+        task_type: Any,  # TaskType from domain.task_types
+        additional_data: Optional[Dict[str, Any]] = None
+    ) -> Any:
+        """
+        Create and track a background task.
+
+        Args:
+            coro: Coroutine to execute as background task
+            task_id: Unique task identifier
+            upload_id: Associated upload identifier
+            tenant_id: Tenant identifier for multi-tenant isolation
+            user_id: User who initiated the task
+            task_type: Type of task (from TaskType enum)
+            additional_data: Additional metadata for the task
+
+        Returns:
+            asyncio.Task object
+        """
+        pass
+
+    @abstractmethod
+    async def cancel_tasks_for_upload(
+        self,
+        upload_id: str,
+        reason: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Cancel all tasks associated with an upload.
+
+        Args:
+            upload_id: Upload identifier
+            reason: Cancellation reason
+
+        Returns:
+            Dictionary with cancellation results
+        """
+        pass
+
+    @abstractmethod
+    def get_task_info(self, task_id: str) -> Optional[Any]:
+        """
+        Get information about a task.
+
+        Args:
+            task_id: Task identifier
+
+        Returns:
+            TaskInfo object or None if not found
+        """
+        pass
+
+    @abstractmethod
+    def get_tasks_for_upload(self, upload_id: str) -> List[Any]:
+        """
+        Get all tasks for an upload.
+
+        Args:
+            upload_id: Upload identifier
+
+        Returns:
+            List of TaskInfo objects
+        """
+        pass
+
+    @abstractmethod
+    def get_active_task_count(self) -> int:
+        """
+        Get count of active (running/pending) tasks.
+
+        Returns:
+            Number of active tasks
+        """
+        pass
+
+    @abstractmethod
+    def get_task_stats(self) -> Dict[str, Any]:
+        """
+        Get overall task statistics.
+
+        Returns:
+            Dictionary with task statistics
+        """
+        pass
+
+    @abstractmethod
+    async def shutdown(self) -> None:
+        """
+        Shutdown the task manager gracefully.
+
+        Cancels all active tasks and performs cleanup.
+        """
+        pass
+
+
 __all__ = [
     "IHealthCheck",
     "ICacheService",
@@ -2262,4 +2373,5 @@ __all__ = [
     "IWebhookSignatureService",
     "IWebhookDeadLetterService",
     "IWebhookStatsService",
+    "ITaskManager",
 ]

@@ -11,9 +11,11 @@ Advanced result reranking using AI models for enhanced search relevance:
 - Real-time learning and adaptation
 """
 
+from __future__ import annotations
+
 import json
 import asyncio
-from typing import Dict, List, Optional, Any, Tuple, Union
+from typing import Dict, List, Optional, Any, Tuple, Union, TYPE_CHECKING
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 from enum import Enum
@@ -23,11 +25,14 @@ import numpy as np
 
 from app.core.config import get_settings
 from app.domain.interfaces import IHealthCheck
-from app.infrastructure.ai.openai_service import OpenAIService
-from app.infrastructure.ai.prompt_manager import PromptManager, PromptType
-from app.infrastructure.ai.cache_manager import CacheManager
 from app.application.search.hybrid_search import HybridSearchResult
-from app.infrastructure.adapters.postgres_adapter import PostgresAdapter
+
+# Import infrastructure types only for type checking
+if TYPE_CHECKING:
+    from app.infrastructure.ai.openai_service import OpenAIService
+    from app.infrastructure.ai.prompt_manager import PromptManager, PromptType
+    from app.infrastructure.ai.cache_manager import CacheManager
+    from app.infrastructure.adapters.postgres_adapter import PostgresAdapter
 
 logger = structlog.get_logger(__name__)
 

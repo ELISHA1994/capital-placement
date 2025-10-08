@@ -20,7 +20,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, validator
 
 from app.infrastructure.persistence.models.auth_tables import CurrentUser
-from app.infrastructure.persistence.models.base import PaginatedResponse, PaginationModel
+from app.api.schemas.base import PaginatedResponse
+from app.infrastructure.persistence.models.base import PaginationModel
 from app.core.dependencies import CurrentUserDep
 from app.api.dependencies import map_domain_exception_to_http
 from app.domain.exceptions import DomainException

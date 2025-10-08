@@ -3,7 +3,7 @@ Hybrid Search Service with Intelligent Result Fusion
 
 Advanced search combining multiple search modalities:
 - Traditional text search using PostgreSQL full-text search
-- Semantic vector search using pgvector embeddings  
+- Semantic vector search using pgvector embeddings
 - Intelligent result fusion with configurable weights
 - Query expansion and enhancement
 - Multi-stage search optimization
@@ -11,10 +11,12 @@ Advanced search combining multiple search modalities:
 - Advanced filtering and ranking
 """
 
+from __future__ import annotations
+
 import json
 import hashlib
 import asyncio
-from typing import Dict, List, Optional, Any, Tuple, Set
+from typing import Dict, List, Optional, Any, Tuple, Set, TYPE_CHECKING
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 from enum import Enum
@@ -23,10 +25,13 @@ from uuid import uuid4
 
 from app.core.config import get_settings
 from app.domain.interfaces import IHealthCheck
-from app.infrastructure.search.vector_search import VectorSearchService, VectorSearchResult, SearchFilter
-from app.infrastructure.search.query_processor import QueryProcessor, ProcessedQuery
-from app.infrastructure.ai.cache_manager import CacheManager
-from app.infrastructure.adapters.postgres_adapter import PostgresAdapter
+
+# Import infrastructure types only for type checking
+if TYPE_CHECKING:
+    from app.infrastructure.search.vector_search import VectorSearchService, VectorSearchResult, SearchFilter
+    from app.infrastructure.search.query_processor import QueryProcessor, ProcessedQuery
+    from app.infrastructure.ai.cache_manager import CacheManager
+    from app.infrastructure.adapters.postgres_adapter import PostgresAdapter
 
 logger = structlog.get_logger(__name__)
 

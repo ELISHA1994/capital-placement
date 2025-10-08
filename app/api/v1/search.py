@@ -26,7 +26,8 @@ from app.api.schemas.search_schemas import (
     SearchFilter,
     RangeFilter,
 )
-from app.infrastructure.persistence.models.base import PaginationModel, PaginatedResponse
+from app.api.schemas.base import PaginatedResponse
+from app.infrastructure.persistence.models.base import PaginationModel
 from app.core.dependencies import get_current_user, CurrentUserDep, TenantContextDep
 from app.infrastructure.persistence.models.auth_tables import CurrentUser, TenantContext
 from app.api.dependencies import SearchServiceDep, map_domain_exception_to_http

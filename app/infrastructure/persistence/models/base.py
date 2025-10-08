@@ -303,69 +303,6 @@ class PaginationModel(BaseModel):
         return self.size
 
 
-class PaginatedResponse(BaseModel):
-    """
-    Generic paginated response model.
-
-    Preserves the original pagination response structure for
-    consistent API behavior across all endpoints.
-    """
-
-    items: List[Any] = Field(
-        default_factory=list,
-        description="List of items for current page"
-    )
-    total: int = Field(
-        default=0,
-        ge=0,
-        description="Total number of items across all pages"
-    )
-    page: int = Field(
-        default=1,
-        ge=1,
-        description="Current page number"
-    )
-    size: int = Field(
-        default=20,
-        ge=1,
-        description="Items per page"
-    )
-    pages: int = Field(
-        default=0,
-        ge=0,
-        description="Total number of pages"
-    )
-    has_next: bool = Field(
-        default=False,
-        description="Whether there is a next page"
-    )
-    has_prev: bool = Field(
-        default=False,
-        description="Whether there is a previous page"
-    )
-
-    @classmethod
-    def create(
-        cls,
-        items: List[Any],
-        total: int,
-        page: int,
-        size: int
-    ) -> "PaginatedResponse":
-        """Create a paginated response from query results."""
-        pages = (total + size - 1) // size  # Ceiling division
-
-        return cls(
-            items=items,
-            total=total,
-            page=page,
-            size=size,
-            pages=pages,
-            has_next=page < pages,
-            has_prev=page > 1
-        )
-
-
 class ErrorModel(BaseModel):
     """
     Standard error response model.

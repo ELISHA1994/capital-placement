@@ -26,6 +26,8 @@ from app.infrastructure.adapters.notification_adapter import NotificationAdapter
 from app.infrastructure.providers.validation_provider import get_webhook_validator
 from app.infrastructure.providers.validation_provider import get_file_content_validator
 from app.infrastructure.providers.resource_provider import get_file_resource_service
+from app.infrastructure.providers.audit_provider import get_audit_service
+from app.infrastructure.task_manager import get_task_manager
 
 
 class UploadDependencyFactory(IUploadDependencyFactory):
@@ -63,6 +65,12 @@ class UploadDependencyFactory(IUploadDependencyFactory):
         # Resource management
         file_resource_manager = await get_file_resource_service()
 
+        # Audit service
+        audit_service = await get_audit_service()
+
+        # Task manager
+        task_manager = get_task_manager()
+
         # Wrap document processor to use PDFProcessor
         document_processor = DocumentProcessorAdapter(
             pdf_processor=pdf_processor,
@@ -87,6 +95,8 @@ class UploadDependencyFactory(IUploadDependencyFactory):
             database_adapter=database_adapter,
             event_publisher=event_publisher,
             file_storage=file_storage,
+            audit_service=audit_service,
+            task_manager=task_manager,
 
             # Validation services
             webhook_validator=webhook_validator,

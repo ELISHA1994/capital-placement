@@ -22,7 +22,8 @@ from fastapi.responses import JSONResponse
 
 from app.application.upload_service import UploadError
 from app.domain.entities.profile import ProcessingStatus
-from app.infrastructure.persistence.models.base import PaginatedResponse, PaginationModel
+from app.api.schemas.base import PaginatedResponse
+from app.infrastructure.persistence.models.base import PaginationModel
 from app.core.dependencies import CurrentUserDep
 from app.infrastructure.persistence.models.auth_tables import CurrentUser
 from app.api.schemas.upload_schemas import (
@@ -321,12 +322,21 @@ async def get_upload_history(
     Returns paginated list of uploaded documents with their processing status.
     """
     try:
-        return await upload_service.get_upload_history(
+        # Application layer returns domain data (UploadHistoryResult)
+        result = await upload_service.get_upload_history(
             tenant_id=str(current_user.tenant_id),
             pagination=pagination,
             status_filter=status_filter,
             start_date=start_date,
             end_date=end_date
+        )
+
+        # API layer wraps in PaginatedResponse for HTTP response
+        return PaginatedResponse.create(
+            items=result.items,
+            total=result.total,
+            page=result.page,
+            size=result.size
         )
     except DomainException as domain_exc:
         # Map domain exceptions to appropriate HTTP responses
