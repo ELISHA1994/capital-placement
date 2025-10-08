@@ -20,7 +20,7 @@ from app.database.error_handling import DatabaseError, QueryError, IntegrityViol
 from app.database.sqlmodel_engine import get_sqlmodel_db_manager, SQLModelDatabaseManager
 from app.domain.entities.profile import Profile
 from app.domain.value_objects import ProfileId
-from app.infrastructure.mappers.profile_mapper import ProfileMapper
+from app.infrastructure.persistence.mappers.profile_mapper import ProfileMapper
 from app.infrastructure.persistence.models.auth_tables import UserTable, UserSessionTable
 from app.infrastructure.persistence.models.profile_table import ProfileTable
 from app.infrastructure.persistence.models.tenant_table import TenantTable, TenantConfigurationTable

@@ -2,31 +2,33 @@
 
 from __future__ import annotations
 
-from app.application.dependencies import UploadDependencies, IUploadDependencyFactory
+from app.application.dependencies import IUploadDependencyFactory, UploadDependencies
+from app.infrastructure.adapters.notification_adapter import NotificationAdapter
 from app.infrastructure.persistence.repositories import (
     PostgresProfileRepository,
+    PostgresTenantRepository,
     PostgresUserRepository,
-    PostgresTenantRepository
 )
 from app.infrastructure.providers.ai_provider import (
     get_embedding_service,
-    get_openai_service,
-    get_prompt_manager
 )
-from app.infrastructure.providers.postgres_provider import get_postgres_adapter
-from app.infrastructure.providers.document_provider import (
-    get_pdf_processor,
-    get_content_extractor,
-    get_quality_analyzer
-)
-from app.infrastructure.providers.storage_provider import get_file_storage
-from app.infrastructure.providers.tenant_provider import get_tenant_service as get_tenant_manager
-from app.infrastructure.adapters.event_publisher_adapter import EventPublisherAdapter
-from app.infrastructure.adapters.notification_adapter import NotificationAdapter
-from app.infrastructure.providers.validation_provider import get_webhook_validator
-from app.infrastructure.providers.validation_provider import get_file_content_validator
-from app.infrastructure.providers.resource_provider import get_file_resource_service
 from app.infrastructure.providers.audit_provider import get_audit_service
+from app.infrastructure.providers.document_provider import (
+    get_content_extractor,
+    get_pdf_processor,
+    get_quality_analyzer,
+)
+from app.infrastructure.providers.event_provider import get_event_publisher
+from app.infrastructure.providers.postgres_provider import get_postgres_adapter
+from app.infrastructure.providers.resource_provider import get_file_resource_service
+from app.infrastructure.providers.storage_provider import get_file_storage
+from app.infrastructure.providers.tenant_provider import (
+    get_tenant_service as get_tenant_manager,
+)
+from app.infrastructure.providers.validation_provider import (
+    get_file_content_validator,
+    get_webhook_validator,
+)
 from app.infrastructure.task_manager import get_task_manager
 
 
@@ -35,17 +37,17 @@ class UploadDependencyFactory(IUploadDependencyFactory):
 
     async def create_dependencies(self) -> UploadDependencies:
         """Create and return upload dependencies."""
-        
+
         # Repository implementations
         profile_repository = PostgresProfileRepository()
         user_repository = PostgresUserRepository()
         tenant_repository = PostgresTenantRepository()
-        
+
         # Document processing services (via providers)
         pdf_processor = await get_pdf_processor()
         content_extractor = await get_content_extractor()
         quality_analyzer = await get_quality_analyzer()
-        
+
         # AI services
         embedding_service = await get_embedding_service()
 
@@ -56,7 +58,7 @@ class UploadDependencyFactory(IUploadDependencyFactory):
         file_storage = await get_file_storage()
 
         # Event publisher
-        event_publisher = EventPublisherAdapter()
+        event_publisher = await get_event_publisher()
 
         # Validation services
         webhook_validator = await get_webhook_validator()
@@ -109,11 +111,11 @@ class UploadDependencyFactory(IUploadDependencyFactory):
 
 class DocumentProcessorAdapter:
     """Adapter to make PDFProcessor compatible with IDocumentProcessor interface."""
-    
+
     def __init__(self, pdf_processor, content_extractor):
         self.pdf_processor = pdf_processor
         self.content_extractor = content_extractor
-    
+
     async def process_document(self, file_content: bytes, filename: str, **kwargs) -> dict:
         """Process document and extract content."""
         file_extension = filename.lower().split(".")[-1] if "." in filename else "unknown"

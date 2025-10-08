@@ -2,24 +2,28 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import structlog
-from typing import Any, List, Dict
 
 from app.domain.interfaces import IEventPublisher
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = structlog.get_logger(__name__)
 
 
 class EventPublisherAdapter(IEventPublisher):
     """Adapter implementation of IEventPublisher interface.
-    
+
     This is a simple in-memory event publisher that can be extended
     to integrate with message queues, event stores, or other event systems.
     """
 
     def __init__(self):
-        self._handlers: Dict[str, List[callable]] = {}
-        self._published_events: List[Any] = []
+        self._handlers: dict[str, list[Callable[[Any], Any] | Any]] = {}
+        self._published_events: list[Any] = []
 
     async def publish(self, event: Any) -> None:
         """Publish domain event."""
@@ -63,7 +67,7 @@ class EventPublisherAdapter(IEventPublisher):
             )
             # Don't re-raise to avoid breaking business operations
 
-    async def publish_event(self, topic: str, event_data: Dict[str, Any]) -> bool:
+    async def publish_event(self, topic: str, event_data: dict[str, Any]) -> bool:
         """Publish a single event to a topic."""
         try:
             logger.debug(
@@ -104,7 +108,7 @@ class EventPublisherAdapter(IEventPublisher):
             )
             return False
 
-    async def publish_events(self, topic: str, events: List[Dict[str, Any]]) -> bool:
+    async def publish_events(self, topic: str, events: list[dict[str, Any]]) -> bool:
         """Publish multiple events to a topic."""
         try:
             logger.debug(
@@ -135,7 +139,7 @@ class EventPublisherAdapter(IEventPublisher):
             )
             return False
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def check_health(self) -> dict[str, Any]:
         """Health check for event publisher."""
         return {
             "status": "healthy",
@@ -143,19 +147,23 @@ class EventPublisherAdapter(IEventPublisher):
             "events_published": len(self._published_events)
         }
 
-    def register_handler(self, event_type: str, handler: callable) -> None:
+    async def health_check(self) -> dict[str, Any]:
+        """Backward-compatible alias for legacy callers."""
+        return await self.check_health()
+
+    def register_handler(self, event_type: str, handler: Callable[[Any], Any] | Any) -> None:
         """Register event handler for specific event type."""
         if event_type not in self._handlers:
             self._handlers[event_type] = []
         self._handlers[event_type].append(handler)
-        
+
         logger.debug(
             "Event handler registered",
             event_type=event_type,
             handler=handler.__name__ if hasattr(handler, '__name__') else str(handler)
         )
 
-    def unregister_handler(self, event_type: str, handler: callable) -> None:
+    def unregister_handler(self, event_type: str, handler: Callable[[Any], Any] | Any) -> None:
         """Unregister event handler."""
         if event_type in self._handlers:
             try:
@@ -172,7 +180,7 @@ class EventPublisherAdapter(IEventPublisher):
                     handler=handler.__name__ if hasattr(handler, '__name__') else str(handler)
                 )
 
-    def get_published_events(self) -> List[Any]:
+    def get_published_events(self) -> list[Any]:
         """Get list of published events (for testing/debugging)."""
         return self._published_events.copy()
 
@@ -180,7 +188,7 @@ class EventPublisherAdapter(IEventPublisher):
         """Clear published events list (for testing)."""
         self._published_events.clear()
 
-    def get_handlers(self, event_type: str) -> List[callable]:
+    def get_handlers(self, event_type: str) -> list[Callable[[Any], Any] | Any]:
         """Get registered handlers for event type."""
         return self._handlers.get(event_type, []).copy()
 

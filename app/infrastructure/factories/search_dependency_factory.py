@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
-from app.application.dependencies import SearchDependencies, ISearchDependencyFactory
+from app.application.dependencies import ISearchDependencyFactory, SearchDependencies
 from app.infrastructure.persistence.repositories import (
     PostgresProfileRepository,
+    PostgresTenantRepository,
     PostgresUserRepository,
-    PostgresTenantRepository
 )
+from app.infrastructure.providers.cache_provider import get_cache_service
+from app.infrastructure.providers.event_provider import get_event_publisher
 from app.infrastructure.providers.search_provider import (
     get_hybrid_search_service,
     get_result_reranker_service,
     get_search_analytics_service,
 )
-from app.infrastructure.providers.cache_provider import get_cache_service
-from app.infrastructure.providers.tenant_provider import get_tenant_service as get_tenant_manager
-from app.infrastructure.adapters.event_publisher_adapter import EventPublisherAdapter
+from app.infrastructure.providers.tenant_provider import (
+    get_tenant_service as get_tenant_manager,
+)
 
 
 class SearchDependencyFactory(ISearchDependencyFactory):
@@ -23,28 +25,28 @@ class SearchDependencyFactory(ISearchDependencyFactory):
 
     async def create_dependencies(self) -> SearchDependencies:
         """Create and return search dependencies."""
-        
+
         # Repository implementations
         profile_repository = PostgresProfileRepository()
         user_repository = PostgresUserRepository()
         tenant_repository = PostgresTenantRepository()
-        
+
         # Service implementations (using existing providers)
         search_service = await get_hybrid_search_service()
         reranker_service = await get_result_reranker_service()
         analytics_service = await get_search_analytics_service()
         tenant_manager = await get_tenant_manager()
         cache_service = await get_cache_service()
-        
+
         # Event publisher
-        event_publisher = EventPublisherAdapter()
-        
+        event_publisher = await get_event_publisher()
+
         return SearchDependencies(
             # Repositories
             profile_repository=profile_repository,
             user_repository=user_repository,
             tenant_repository=tenant_repository,
-            
+
             # Services
             search_service=search_service,
             reranker_service=reranker_service,

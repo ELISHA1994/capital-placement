@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+from typing import TYPE_CHECKING
 
-from app.domain.interfaces import IEventPublisher
-from app.infrastructure.adapters.messaging_adapters import LocalEventPublisher
+from app.infrastructure.adapters.event_publisher_adapter import EventPublisherAdapter
 
-_event_publisher: Optional[IEventPublisher] = None
+if TYPE_CHECKING:
+    from app.domain.interfaces import IEventPublisher
+
+_event_publisher: IEventPublisher | None = None
 _lock = asyncio.Lock()
 
 
@@ -23,7 +25,7 @@ async def get_event_publisher() -> IEventPublisher:
         if _event_publisher is not None:
             return _event_publisher
 
-        _event_publisher = LocalEventPublisher()
+        _event_publisher = EventPublisherAdapter()
         return _event_publisher
 
 
