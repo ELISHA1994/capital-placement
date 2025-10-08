@@ -25,48 +25,6 @@ class EventPublisherAdapter(IEventPublisher):
         self._handlers: dict[str, list[Callable[[Any], Any] | Any]] = {}
         self._published_events: list[Any] = []
 
-    async def publish(self, event: Any) -> None:
-        """Publish domain event."""
-        try:
-            event_type = type(event).__name__
-
-            logger.debug(
-                "Publishing domain event",
-                event_type=event_type,
-                event_id=getattr(event, 'id', 'unknown')
-            )
-
-            # Store event for debugging/auditing
-            self._published_events.append(event)
-
-            # Notify registered handlers
-            handlers = self._handlers.get(event_type, [])
-            for handler in handlers:
-                try:
-                    if callable(handler):
-                        await handler(event) if hasattr(handler, '__await__') else handler(event)
-                except Exception as e:
-                    logger.error(
-                        "Event handler failed",
-                        event_type=event_type,
-                        handler=handler.__name__ if hasattr(handler, '__name__') else str(handler),
-                        error=str(e)
-                    )
-
-            logger.debug(
-                "Domain event published successfully",
-                event_type=event_type,
-                handlers_notified=len(handlers)
-            )
-
-        except Exception as e:
-            logger.error(
-                "Failed to publish domain event",
-                event=str(event),
-                error=str(e)
-            )
-            # Don't re-raise to avoid breaking business operations
-
     async def publish_event(self, topic: str, event_data: dict[str, Any]) -> bool:
         """Publish a single event to a topic."""
         try:
