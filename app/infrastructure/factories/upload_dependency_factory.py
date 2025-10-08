@@ -25,11 +25,11 @@ from app.infrastructure.providers.storage_provider import get_file_storage
 from app.infrastructure.providers.tenant_provider import (
     get_tenant_service as get_tenant_manager,
 )
+from app.infrastructure.providers.task_manager_provider import get_task_manager
 from app.infrastructure.providers.validation_provider import (
     get_file_content_validator,
     get_webhook_validator,
 )
-from app.infrastructure.task_manager import get_task_manager
 
 
 class UploadDependencyFactory(IUploadDependencyFactory):
@@ -71,7 +71,7 @@ class UploadDependencyFactory(IUploadDependencyFactory):
         audit_service = await get_audit_service()
 
         # Task manager
-        task_manager = get_task_manager()
+        task_manager = await get_task_manager()
 
         # Wrap document processor to use PDFProcessor
         document_processor = DocumentProcessorAdapter(

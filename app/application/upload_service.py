@@ -27,7 +27,7 @@ from app.domain.entities.profile import Profile, ProfileStatus
 from app.domain.value_objects import ProfileId, TenantId
 from app.domain.utils import FileSizeValidator
 from app.domain.exceptions import FileSizeExceededError, InvalidFileError
-from app.infrastructure.task_manager import TaskType
+from app.domain.task_types import TaskType
 
 # NOTE: CurrentUser is an API-layer DTO passed from FastAPI dependencies.
 # Application layer accepts it as Any to avoid depending on infrastructure/API layers.

@@ -8,7 +8,8 @@ from typing import Dict, Any, Optional
 import structlog
 
 from app.domain.interfaces import IFileResourceManager
-from app.infrastructure.task_manager import get_task_manager, TaskType
+from app.domain.task_types import TaskType
+from app.infrastructure.providers.task_manager_provider import get_task_manager
 
 logger = structlog.get_logger(__name__)
 
@@ -67,7 +68,7 @@ class PeriodicResourceCleanup:
     
     async def _perform_cleanup(self) -> None:
         """Perform cleanup using task manager for tracking."""
-        task_manager = get_task_manager()
+        task_manager = await get_task_manager()
         cleanup_id = f"resource_cleanup_{int(datetime.utcnow().timestamp())}"
         
         try:
@@ -155,7 +156,7 @@ class PeriodicResourceCleanup:
         threshold = orphaned_threshold_minutes or self._orphaned_threshold
         max_count = max_cleanup_count or 100
         
-        task_manager = get_task_manager()
+        task_manager = await get_task_manager()
         cleanup_id = f"immediate_cleanup_{int(datetime.utcnow().timestamp())}"
         
         try:

@@ -61,7 +61,10 @@ from app.infrastructure.providers.rate_limit_provider import (
     get_rate_limit_service,
     reset_rate_limit_service,
 )
-from app.infrastructure.task_manager import get_task_manager, shutdown_task_manager
+from app.infrastructure.providers.task_manager_provider import (
+    get_task_manager,
+    reset_task_manager,
+)
 from app.middleware import DefaultUsageTrackingMiddleware
 
 # Configure structured logging
@@ -139,7 +142,7 @@ async def lifespan(app: FastAPI):
         await setup_async_middleware(app, get_settings())
         
         # Initialize task manager
-        task_manager = get_task_manager()
+        task_manager = await get_task_manager()
         
         # Check health
         cache_health = await cache_service.check_health()
@@ -169,7 +172,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down CV Matching Backend API")
     try:
         # Shutdown task manager first (cancel all active tasks)
-        await shutdown_task_manager()
+        await reset_task_manager()
         logger.info("Task manager shutdown completed")
         
         # Shutdown resource management services

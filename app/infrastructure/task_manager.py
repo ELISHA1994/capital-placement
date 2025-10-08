@@ -5,74 +5,18 @@ from __future__ import annotations
 import asyncio
 import weakref
 from datetime import datetime
-from enum import Enum
 from typing import Any, Dict, List, Optional, Set
-from dataclasses import dataclass, field
+
 import structlog
+
+from app.domain.interfaces import ITaskManager
+from app.domain.task_types import TaskInfo, TaskStatus, TaskType
+
 
 logger = structlog.get_logger(__name__)
 
 
-class TaskType(str, Enum):
-    """Types of background tasks."""
-    
-    DOCUMENT_PROCESSING = "document_processing"
-    BATCH_PROCESSING = "batch_processing"
-    REPROCESSING = "reprocessing"
-    CLEANUP = "cleanup"
-    RESOURCE_CLEANUP = "resource_cleanup"
-
-
-class TaskStatus(str, Enum):
-    """Status of background tasks."""
-    
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-@dataclass
-class TaskInfo:
-    """Information about a background task."""
-    
-    task_id: str
-    upload_id: str
-    tenant_id: str
-    user_id: str
-    task_type: TaskType
-    status: TaskStatus = TaskStatus.PENDING
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    error_message: Optional[str] = None
-    additional_data: Dict[str, Any] = field(default_factory=dict)
-    
-    def mark_started(self) -> None:
-        """Mark task as started."""
-        self.status = TaskStatus.RUNNING
-        self.started_at = datetime.utcnow()
-    
-    def mark_completed(self) -> None:
-        """Mark task as completed."""
-        self.status = TaskStatus.COMPLETED
-        self.completed_at = datetime.utcnow()
-    
-    def mark_failed(self, error_message: str) -> None:
-        """Mark task as failed."""
-        self.status = TaskStatus.FAILED
-        self.completed_at = datetime.utcnow()
-        self.error_message = error_message
-    
-    def mark_cancelled(self, reason: Optional[str] = None) -> None:
-        """Mark task as cancelled."""
-        self.status = TaskStatus.CANCELLED
-        self.completed_at = datetime.utcnow()
-        self.error_message = reason or "Cancelled by user"
-
-
-class TaskManager:
+class TaskManager(ITaskManager):
     """Manages background tasks with cancellation support."""
     
     def __init__(self):
@@ -335,17 +279,25 @@ class TaskManager:
             "by_status": {},
             "by_type": {}
         }
-        
+
         for info in self._task_info.values():
             # Count by status
             status_key = info.status.value
             stats["by_status"][status_key] = stats["by_status"].get(status_key, 0) + 1
-            
+
             # Count by type
             type_key = info.task_type.value
             stats["by_type"][type_key] = stats["by_type"].get(type_key, 0) + 1
-        
+
         return stats
+
+    async def check_health(self) -> Dict[str, Any]:
+        """Return health details in line with the domain interface."""
+        return {
+            "status": "healthy" if not self._shutdown else "shutting_down",
+            "active_tasks": self.get_active_task_count(),
+            "total_tasks": len(self._task_info),
+        }
     
     async def shutdown(self) -> None:
         """Shutdown the task manager."""
@@ -369,33 +321,9 @@ class TaskManager:
             await asyncio.gather(*active_tasks, return_exceptions=True)
         
         logger.info("Task manager shutdown completed", cancelled_tasks=len(active_tasks))
-
-
-# Global task manager instance
-_task_manager: Optional[TaskManager] = None
-
-
-def get_task_manager() -> TaskManager:
-    """Get the global task manager instance."""
-    global _task_manager
-    if _task_manager is None:
-        _task_manager = TaskManager()
-    return _task_manager
-
-
-async def shutdown_task_manager() -> None:
-    """Shutdown the global task manager."""
-    global _task_manager
-    if _task_manager is not None:
-        await _task_manager.shutdown()
-        _task_manager = None
-
-
 __all__ = [
     "TaskManager",
-    "TaskInfo", 
+    "TaskInfo",
     "TaskType",
     "TaskStatus",
-    "get_task_manager",
-    "shutdown_task_manager"
 ]

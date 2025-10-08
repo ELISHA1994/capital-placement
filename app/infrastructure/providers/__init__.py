@@ -43,5 +43,6 @@ from .storage_provider import (  # noqa: F401
     get_file_storage,
     shutdown_file_storage,
 )
+from .task_manager_provider import get_task_manager, reset_task_manager  # noqa: F401
 
 __all__ = [name for name in globals() if name.startswith("get_") or name.startswith("reset_") or name.startswith("shutdown_")]

@@ -9,8 +9,14 @@ from typing import Protocol, runtime_checkable, Any
 from app.domain.repositories.profile_repository import IProfileRepository
 from app.domain.repositories.user_repository import IUserRepository
 from app.domain.repositories.tenant_repository import ITenantRepository
-from app.domain.interfaces import IWebhookValidator, IFileContentValidator, IFileResourceManager, IFileStorage, IAuditService
-from app.infrastructure.task_manager import TaskManager
+from app.domain.interfaces import (
+    IAuditService,
+    IFileContentValidator,
+    IFileResourceManager,
+    IFileStorage,
+    ITaskManager,
+    IWebhookValidator,
+)
 
 
 @runtime_checkable
@@ -152,7 +158,7 @@ class UploadDependencies:
     event_publisher: IEventPublisher
     file_storage: IFileStorage
     audit_service: IAuditService
-    task_manager: TaskManager
+    task_manager: ITaskManager
 
     # Validation services
     webhook_validator: IWebhookValidator
