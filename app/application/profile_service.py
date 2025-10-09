@@ -831,9 +831,10 @@ class ProfileApplicationService:
             await self._deps.audit_service.log_event(
                 event_type="profile_updated",
                 tenant_id=tenant_id,
+                action="update",  # Required positional parameter
+                resource_type="profile",
                 user_id=user_id,
                 resource_id=profile_id,
-                resource_type="profile",
                 details={
                     "fields_updated": fields_updated,
                     "completeness_score": completeness_score,
