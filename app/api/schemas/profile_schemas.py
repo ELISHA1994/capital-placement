@@ -138,6 +138,7 @@ class ProfileUpdate(BaseModel):
     education_entries: Optional[List[Dict[str, Any]]] = Field(None, description="Education entries")
     certifications: Optional[List[Dict[str, Any]]] = Field(None, description="Certifications")
     contact_info: Optional[Dict[str, Any]] = Field(None, description="Contact information")
+    location: Optional[Dict[str, Any]] = Field(None, description="Location information")
     job_preferences: Optional[Dict[str, Any]] = Field(None, description="Job preferences")
     tags: Optional[List[str]] = Field(None, description="Profile tags")
 

@@ -190,86 +190,58 @@ async def update_profile(
     profile_id: str,
     profile_update: ProfileUpdate,
     current_user: CurrentUserDep,
+    profile_service: ProfileServiceDep,
     regenerate_embeddings: bool = Query(False, description="Regenerate embeddings after update"),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ) -> ProfileSchema:
     """
     Update CV profile with new information.
-    
+
     Supports partial updates to:
     - Professional information (title, summary)
     - Skills and competencies
     - Experience and education
     - Contact information
     - Job preferences and availability
-    
+
     Options:
     - Automatic embedding regeneration
     - Search index updates
     - Quality score recalculation
     """
     try:
-        logger.info(
-            "Profile update requested",
-            profile_id=profile_id,
-            user_id=current_user.user_id,
-            fields_updated=list(profile_update.model_dump(exclude_unset=True).keys())
-        )
-        
-        # Get existing profile
-        # TODO: Implement with actual database
-        # profile = await get_profile(profile_id, current_user=current_user)
-        
-        # Apply updates
+        # Get update data (only fields that were set)
         update_data = profile_update.model_dump(exclude_unset=True)
-        
-        # TODO: Implement profile update logic
-        # for field, value in update_data.items():
-        #     setattr(profile, field, value)
-        
-        # Update computed fields
-        # profile.update_computed_fields()
-        # profile.increment_version(updated_by=UUID(current_user.user_id))
-        
-        # Store updated profile
-        # # TODO: Replace with PostgreSQL repository
-        # await cosmos_service.update_item(
-        #     container="cv-profiles",
-        #     item_id=profile_id,
-        #     item=profile.dict()
-        # )
-        
-        # Update search index in background
-        background_tasks.add_task(
-            _update_search_index,
-            profile_id=profile_id,
-            # profile_data=profile.dict()
+
+        # Call application service - it handles ALL business logic
+        updated_profile = await profile_service.update_profile(
+            tenant_id=TenantId(current_user.tenant_id),
+            profile_id=ProfileId(profile_id),
+            update_data=update_data,
+            user_id=current_user.user_id,
+            regenerate_embeddings=regenerate_embeddings,
+            schedule_task=background_tasks,
         )
-        
-        # Regenerate embeddings if requested
-        if regenerate_embeddings:
-            background_tasks.add_task(
-                _regenerate_profile_embeddings,
-                profile_id=profile_id,
-                # profile=profile
-            )
-        
-        # Track profile update in background using centralized tracker
-        background_tasks.add_task(
-            _track_profile_usage,
-            tenant_id=current_user.tenant_id,
-            operation="update",
-            profile_count=1,
-            fields_updated=len(update_data)
-        )
-        
-        # Mock response
-        raise HTTPException(status_code=404, detail="Profile not found - database integration pending")
-        
+
+        if updated_profile is None:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        # Convert domain entity to API schema and return
+        profile_table = ProfileMapper.to_table(updated_profile)
+        return ProfileSchema.from_table(profile_table)
+
     except HTTPException:
         raise
+    except ValueError as e:
+        logger.warning(f"Profile update validation failed: {e}", profile_id=profile_id)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid update data: {str(e)}"
+        )
+    except DomainException as domain_exc:
+        raise map_domain_exception_to_http(domain_exc)
     except Exception as e:
-        logger.error(f"Failed to update profile: {e}")
+        logger.error(f"Failed to update profile: {e}", profile_id=profile_id)
         raise HTTPException(
             status_code=500,
             detail="Failed to update profile"

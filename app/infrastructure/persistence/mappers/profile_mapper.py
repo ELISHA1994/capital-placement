@@ -438,11 +438,17 @@ class ProfileMapper:
         # Map location
         location_dict = None
         if profile_data.location:
+            # Convert coordinates tuple to dict with lat/lng keys for persistence layer
+            coordinates_dict = None
+            if profile_data.location.coordinates:
+                lat, lng = profile_data.location.coordinates
+                coordinates_dict = {'lat': lat, 'lng': lng}
+
             location_dict = {
                 'city': profile_data.location.city,
                 'state': profile_data.location.state,
                 'country': profile_data.location.country,
-                'coordinates': list(profile_data.location.coordinates) if profile_data.location.coordinates else None
+                'coordinates': coordinates_dict
             }
 
         # Map experience entries
