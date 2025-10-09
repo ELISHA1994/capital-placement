@@ -25,8 +25,6 @@ from app.api.schemas.search_schemas import (
     SearchRequest, SearchResponse, SearchResult, MatchScore,
     SearchFacet, FacetValue, SearchAnalytics, SearchMode, SortOrder
 )
-# Import CVProfile directly to avoid circular imports
-from app.api.schemas.profile_schemas import CVProfile
 from app.domain.interfaces import ISearchService, IAIService
 
 # Import infrastructure types only for type checking

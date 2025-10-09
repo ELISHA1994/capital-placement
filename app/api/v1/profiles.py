@@ -21,19 +21,19 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.domain.entities.profile import ProcessingStatus
 from app.api.schemas.profile_schemas import (
     BulkOperationRequest,
-    CVProfile,
+    Profile as ProfileSchema,
     ProfileAnalyticsSummary,
     ProfileSummary,
     ProfileUpdate,
 )
+from app.infrastructure.persistence.mappers.profile_mapper import ProfileMapper
+from app.domain.value_objects import ProfileId, TenantId
 from app.api.schemas.base import PaginatedResponse
 from app.infrastructure.persistence.models.base import PaginationModel
 from app.core.dependencies import CurrentUserDep, TenantContextDep, AuthzService, require_permission
-from app.infrastructure.persistence.models.auth_tables import CurrentUser, TenantContext
 from app.infrastructure.providers.usage_provider import get_usage_service
 from app.api.dependencies import ProfileServiceDep, map_domain_exception_to_http
 from app.domain.exceptions import DomainException, ProfileNotFoundError
-from app.infrastructure.providers.ai_provider import get_embedding_service
 from app.infrastructure.providers.tenant_provider import get_tenant_service as get_tenant_manager
 
 
@@ -132,13 +132,14 @@ async def list_profiles(
         )
 
 
-@router.get("/{profile_id}", response_model=CVProfile)
+@router.get("/{profile_id}", response_model=ProfileSchema)
 async def get_profile(
     current_user: CurrentUserDep,
+    profile_service: ProfileServiceDep,
     profile_id: str = Path(..., description="Profile identifier"),
     include_analytics: bool = Query(False, description="Include profile analytics"),
     background_tasks: BackgroundTasks = BackgroundTasks()
-) -> CVProfile:
+) -> ProfileSchema:
     """
     Get detailed CV profile by ID.
     
@@ -150,33 +151,29 @@ async def get_profile(
     """
     try:
         logger.debug("Profile retrieval requested", profile_id=profile_id)
-        
-        # TODO: Implement database retrieval with tenant isolation
-        # TODO: Replace with PostgreSQL repository
-        
-        # profile_data = await cosmos_service.get_item(
-        #     container="cv-profiles",
-        #     item_id=profile_id,
-        #     partition_key=current_user.tenant_id
-        # )
-        
-        # if not profile_data:
-        #     raise HTTPException(status_code=404, detail="Profile not found")
-        
-        # profile = CVProfile(**profile_data)
-        
-        # Mock profile for now
-        raise HTTPException(status_code=404, detail="Profile not found - database integration pending")
-        
-        # Track profile view in background using centralized tracker
+
+        domain_profile = await profile_service.get_profile(
+            tenant_id=TenantId(current_user.tenant_id),
+            profile_id=ProfileId(profile_id),
+        )
+
+        if domain_profile is None:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        profile_table = ProfileMapper.to_table(domain_profile)
+        profile_schema = ProfileSchema.from_table(profile_table)
+
         background_tasks.add_task(
             _track_profile_usage,
             tenant_id=current_user.tenant_id,
             operation="view",
-            profile_count=1
+            profile_count=1,
         )
-        
-        return profile
+
+        if not include_analytics:
+            profile_schema.analytics = None
+
+        return profile_schema
         
     except HTTPException:
         raise
@@ -188,14 +185,14 @@ async def get_profile(
         )
 
 
-@router.put("/{profile_id}", response_model=CVProfile)
+@router.put("/{profile_id}", response_model=ProfileSchema)
 async def update_profile(
     profile_id: str,
     profile_update: ProfileUpdate,
     current_user: CurrentUserDep,
     regenerate_embeddings: bool = Query(False, description="Regenerate embeddings after update"),
     background_tasks: BackgroundTasks = BackgroundTasks()
-) -> CVProfile:
+) -> ProfileSchema:
     """
     Update CV profile with new information.
     
@@ -657,7 +654,7 @@ async def _update_search_index(profile_id: str, profile_data: Optional[Dict] = N
         logger.warning(f"Failed to update search index: {e}")
 
 
-async def _regenerate_profile_embeddings(profile_id: str, profile: Optional[CVProfile] = None) -> None:
+async def _regenerate_profile_embeddings(profile_id: str, profile: Optional[ProfileSchema] = None) -> None:
     """Regenerate embeddings for profile"""
     try:
         if profile:

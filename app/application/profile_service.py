@@ -12,7 +12,7 @@ import structlog
 from app.application.dependencies.profile_dependencies import ProfileDependencies
 from app.domain.entities.profile import Profile
 from app.domain.entities.profile import ProcessingStatus as DomainProcessingStatus
-from app.domain.value_objects import TenantId
+from app.domain.value_objects import ProfileId, TenantId
 
 logger = structlog.get_logger(__name__)
 
@@ -109,6 +109,17 @@ class ProfileApplicationService:
         page_items = filtered_summaries[start_index:end_index]
 
         return ProfileListResult(items=page_items, total=total_count)
+
+    async def get_profile(
+        self,
+        *,
+        tenant_id: TenantId,
+        profile_id: ProfileId,
+    ) -> Optional[Profile]:
+        """Load a profile aggregate for a tenant."""
+
+        repository = self._deps.profile_repository
+        return await repository.get_by_id(profile_id, tenant_id)
 
     def _build_summaries(
         self,

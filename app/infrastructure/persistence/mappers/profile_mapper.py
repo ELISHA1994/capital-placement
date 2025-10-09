@@ -284,36 +284,63 @@ class ProfileMapper:
         """
         # Map location
         location = None
-        location_data = data.get('location')
-        if location_data:
-            # Handle both tuple and dict formats for coordinates
-            coords = location_data.get('coordinates')
-            if coords:
-                if isinstance(coords, dict):
-                    coords = (coords.get('lat'), coords.get('lng'))
-                elif isinstance(coords, list):
-                    coords = tuple(coords)
+        location_data = data.get('location') or {}
+        if isinstance(location_data, dict):
+            coords_raw = location_data.get('coordinates')
+            coordinates = None
+            if isinstance(coords_raw, dict):
+                lat = coords_raw.get('lat')
+                lng = coords_raw.get('lng')
+                if lat is not None and lng is not None:
+                    try:
+                        coordinates = (float(lat), float(lng))
+                    except (TypeError, ValueError):
+                        coordinates = None
+            elif isinstance(coords_raw, (list, tuple)) and len(coords_raw) == 2:
+                try:
+                    coordinates = (float(coords_raw[0]), float(coords_raw[1]))
+                except (TypeError, ValueError):
+                    coordinates = None
 
-            location = Location(
-                city=location_data.get('city'),
-                state=location_data.get('state'),
-                country=location_data.get('country'),
-                coordinates=coords
-            )
+            country_value = location_data.get('country')
+            if country_value is not None:
+                country_value = str(country_value) or None
+
+            city_value = location_data.get('city')
+            state_value = location_data.get('state')
+
+            # Only create Location object if at least one field has a value
+            if city_value or state_value or country_value or coordinates:
+                location = Location(
+                    city=city_value,
+                    state=state_value,
+                    country=country_value,
+                    coordinates=coordinates
+                )
 
         # Map experience entries
         experience = []
         for exp_data in data.get('experience', []):
-            # Convert skill strings to SkillName value objects
-            skills = [SkillName(skill) for skill in exp_data.get('skills', [])]
+            if not isinstance(exp_data, dict):
+                continue
+
+            skills: List[SkillName] = []
+            for skill in exp_data.get('skills', []) or []:
+                try:
+                    skills.append(SkillName(skill))
+                except (TypeError, ValueError):
+                    continue
+
+            start_date = ProfileMapper._normalize_date(exp_data.get('start_date'))
+            end_date = ProfileMapper._normalize_date(exp_data.get('end_date'))
 
             experience.append(Experience(
-                title=exp_data['title'],
-                company=exp_data['company'],
-                start_date=exp_data['start_date'],
-                description=exp_data.get('description', ''),
-                end_date=exp_data.get('end_date'),
-                current=exp_data.get('current', False),
+                title=str(exp_data.get('title') or "Unknown Role"),
+                company=str(exp_data.get('company') or "Unknown Company"),
+                start_date=start_date or datetime.utcnow().strftime("%Y-%m-01"),
+                description=str(exp_data.get('description') or ""),
+                end_date=end_date,
+                current=bool(exp_data.get('current', False)),
                 location=exp_data.get('location'),
                 achievements=exp_data.get('achievements', []),
                 skills=skills
@@ -322,12 +349,14 @@ class ProfileMapper:
         # Map education entries
         education = []
         for edu_data in data.get('education', []):
+            if not isinstance(edu_data, dict):
+                continue
             education.append(Education(
-                institution=edu_data['institution'],
-                degree=edu_data['degree'],
-                field=edu_data['field'],
-                start_date=edu_data.get('start_date'),
-                end_date=edu_data.get('end_date'),
+                institution=str(edu_data.get('institution') or "Unknown Institution"),
+                degree=str(edu_data.get('degree') or "Unknown Degree"),
+                field=str(edu_data.get('field') or "Unknown Field"),
+                start_date=ProfileMapper._normalize_date(edu_data.get('start_date')),
+                end_date=ProfileMapper._normalize_date(edu_data.get('end_date')),
                 gpa=edu_data.get('gpa'),
                 achievements=edu_data.get('achievements', [])
             ))
@@ -335,14 +364,24 @@ class ProfileMapper:
         # Map skills with SkillName value objects
         skills = []
         for skill_data in data.get('skills', []):
-            skills.append(Skill(
-                name=SkillName(skill_data['name']),
-                category=skill_data.get('category', 'technical'),
-                proficiency=skill_data.get('proficiency'),
-                years_of_experience=skill_data.get('years_of_experience'),
-                endorsed=skill_data.get('endorsed', False),
-                last_used=skill_data.get('last_used')
-            ))
+            if isinstance(skill_data, dict):
+                try:
+                    skill_name = SkillName(skill_data['name'])
+                except (KeyError, ValueError, TypeError):
+                    continue
+                skills.append(Skill(
+                    name=skill_name,
+                    category=skill_data.get('category', 'technical'),
+                    proficiency=skill_data.get('proficiency'),
+                    years_of_experience=skill_data.get('years_of_experience'),
+                    endorsed=skill_data.get('endorsed', False),
+                    last_used=skill_data.get('last_used')
+                ))
+            elif isinstance(skill_data, str):
+                try:
+                    skills.append(Skill(name=SkillName(skill_data)))
+                except ValueError:
+                    continue
 
         # Construct ProfileData with value objects
         return ProfileData(
@@ -357,6 +396,33 @@ class ProfileMapper:
             skills=skills,
             languages=data.get('languages', [])
         )
+
+    @staticmethod
+    def _normalize_date(value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.lower() in {"present", "current"}:
+            return None
+        try:
+            datetime.fromisoformat(text.replace("Z", "+00:00"))
+            return text
+        except ValueError:
+            pass
+        # Accept MM/YYYY
+        if len(text) == 7 and text[2] == "/":
+            month_part, year_part = text.split("/", 1)
+            if month_part.isdigit() and year_part.isdigit():
+                month = int(month_part)
+                year = int(year_part)
+                if 1 <= month <= 12:
+                    return f"{year:04d}-{month:02d}-01"
+        # Accept YYYY
+        if len(text) == 4 and text.isdigit():
+            return f"{int(text):04d}-01-01"
+        return None
 
     @staticmethod
     def _map_profile_data_to_persistence(profile_data: ProfileData) -> Dict[str, Any]:

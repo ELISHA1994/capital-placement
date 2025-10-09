@@ -249,16 +249,20 @@ class PostgresProfileRepository(IProfileRepository):
         adapter = await self._get_adapter()
 
         try:
-            record = await adapter.fetch_one(
-                "SELECT * FROM profiles WHERE id = $1 AND tenant_id = $2",
-                profile_id.value, tenant_id.value
-            )
+            db_manager = adapter.db_manager
+            async with db_manager.get_session() as session:
+                stmt = select(ProfileTable).where(
+                    ProfileTable.id == profile_id.value,
+                    ProfileTable.tenant_id == tenant_id.value,
+                )
 
-            if not record:
-                return None
+                result = await session.execute(stmt)
+                table_obj = result.scalars().first()
 
-            profile_table = ProfileTable(**dict(record))
-            return ProfileMapper.to_domain(profile_table)
+                if not table_obj:
+                    return None
+
+                return ProfileMapper.to_domain(table_obj)
 
         except Exception as e:
             raise Exception(f"Failed to get profile by ID: {str(e)}")

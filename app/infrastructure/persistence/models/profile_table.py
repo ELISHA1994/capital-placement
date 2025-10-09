@@ -59,7 +59,7 @@ class Location(BaseModel):
     """Geographic location information"""
     city: Optional[str] = None
     state: Optional[str] = None
-    country: str
+    country: Optional[str] = None
     coordinates: Optional[Dict[str, float]] = None  # {"lat": 0.0, "lng": 0.0}
 
 

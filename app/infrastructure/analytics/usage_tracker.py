@@ -18,12 +18,13 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 import structlog
 
+from app.domain.interfaces import IUsageService
 from app.infrastructure.providers.tenant_provider import get_tenant_service as get_tenant_manager
 
 logger = structlog.get_logger(__name__)
 
 
-class UsageTracker:
+class UsageTracker(IUsageService):
     """
     Centralized usage tracking service following Hexagonal Architecture patterns.
     
@@ -38,7 +39,136 @@ class UsageTracker:
         if self._tenant_manager is None:
             self._tenant_manager = await get_tenant_manager()
         return self._tenant_manager
-    
+
+    # IUsageService interface implementation
+    async def track_usage(
+        self,
+        tenant_id: str,
+        resource_type: str,
+        amount: int,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        Track resource usage (implements IUsageService interface).
+
+        Args:
+            tenant_id: Tenant identifier
+            resource_type: Type of resource (profile, search, upload, etc.)
+            amount: Amount of resource used
+            metadata: Additional metadata
+
+        Returns:
+            True if tracking succeeded, False otherwise
+        """
+        try:
+            # Route to appropriate specialized tracking method based on resource_type
+            if resource_type == "profile":
+                operation = metadata.get("operation", "view") if metadata else "view"
+                await self.track_profile_usage(
+                    tenant_id=tenant_id,
+                    operation=operation,
+                    profile_count=amount,
+                    fields_updated=metadata.get("fields_updated") if metadata else None
+                )
+            elif resource_type == "search":
+                await self.track_search_usage(
+                    tenant_id=tenant_id,
+                    search_count=amount,
+                    search_mode=metadata.get("search_mode") if metadata else None,
+                    results_count=metadata.get("results_count") if metadata else None
+                )
+            elif resource_type == "upload":
+                await self.track_upload_usage(
+                    tenant_id=tenant_id,
+                    document_count=amount,
+                    file_size_bytes=metadata.get("file_size_bytes", 0) if metadata else 0,
+                    processing_type=metadata.get("processing_type") if metadata else None
+                )
+            else:
+                # Generic tracking for unknown resource types
+                metrics = {f"{resource_type}_count": amount}
+                await self.track_operation_usage(
+                    tenant_id=tenant_id,
+                    operation_type=resource_type,
+                    metrics=metrics,
+                    metadata=metadata
+                )
+
+            return True
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to track usage for {resource_type}",
+                tenant_id=tenant_id,
+                resource_type=resource_type,
+                amount=amount,
+                error=str(e)
+            )
+            return False
+
+    async def get_usage_stats(
+        self,
+        tenant_id: str,
+        resource_type: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> Dict[str, Any]:
+        """Get usage statistics (implements IUsageService interface)."""
+        try:
+            tenant_manager = await self._get_tenant_manager()
+            # This would need to be implemented in the tenant manager
+            # For now, return placeholder
+            return {
+                "tenant_id": tenant_id,
+                "resource_type": resource_type,
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
+                "stats": {}
+            }
+        except Exception as e:
+            logger.error(f"Failed to get usage stats: {e}")
+            return {}
+
+    async def check_quota(
+        self,
+        tenant_id: str,
+        resource_type: str,
+        requested_amount: int,
+    ) -> Dict[str, Any]:
+        """Check quota limits (implements IUsageService interface)."""
+        try:
+            # This would need actual quota checking logic
+            # For now, return unlimited
+            return {
+                "allowed": True,
+                "remaining": 999999,
+                "limit": 999999,
+                "resource_type": resource_type
+            }
+        except Exception as e:
+            logger.error(f"Failed to check quota: {e}")
+            return {"allowed": True}
+
+    async def check_health(self) -> Dict[str, Any]:
+        """Check service health (implements IHealthCheck interface)."""
+        try:
+            tenant_manager = await self._get_tenant_manager()
+            tenant_health = await tenant_manager.check_health()
+
+            return {
+                "service": "UsageTracker",
+                "status": "healthy",
+                "tenant_manager_status": tenant_health.get("status", "unknown"),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        except Exception as e:
+            return {
+                "service": "UsageTracker",
+                "status": "unhealthy",
+                "error": str(e),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
     async def track_operation_usage(
         self,
         tenant_id: str,

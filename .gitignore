@@ -15,3 +15,4 @@ migrate_imports.py
 analyze_services.py
 service_catalog_raw.json
 test_baseline_output.txt
+HEXAGONAL_STATE.md

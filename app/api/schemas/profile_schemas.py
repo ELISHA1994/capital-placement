@@ -55,7 +55,7 @@ class Profile(BaseModel):
     privacy: PrivacySettings = Field(default_factory=PrivacySettings)
 
     # Analytics
-    analytics: ProfileAnalytics = Field(default_factory=ProfileAnalytics)
+    analytics: Optional[ProfileAnalytics] = Field(None, description="Profile analytics data")
 
     @classmethod
     def from_table(cls, profile_table: ProfileTable) -> "Profile":
@@ -216,9 +216,6 @@ class ProfileSearchFilters(BaseModel):
     certifications: Optional[List[str]] = None
     availability: Optional[str] = None  # "available", "employed", "any"
 
-
-# Backward compatibility aliases
-CVProfile = Profile
 
 class ProfileSummary(BaseModel):
     """Lightweight profile summary for list views."""
