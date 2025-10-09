@@ -11,20 +11,20 @@ from uuid import UUID, uuid4
 from app.domain.value_objects import TenantId
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DomainEvent:
     """Base class for all domain events."""
-    
+
+    tenant_id: TenantId
     event_id: UUID = field(default_factory=uuid4)
     event_type: str = field(init=False)
-    tenant_id: TenantId
     occurred_at: datetime = field(default_factory=datetime.utcnow)
     version: int = 1
     metadata: Dict[str, Any] = field(default_factory=dict)
     correlation_id: Optional[UUID] = None
     causation_id: Optional[UUID] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Set event type from class name if not already set."""
         if not hasattr(self, 'event_type') or not self.event_type:
             self.event_type = self.__class__.__name__

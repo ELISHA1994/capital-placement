@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import BytesIO
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -16,15 +18,36 @@ from sqlmodel import select
 
 from app.core.config import get_settings
 from app.database.sqlmodel_engine import get_sqlmodel_db_manager
-from app.domain.entities.profile import ProcessingStatus
+from app.domain.entities.profile import (
+    ProcessingMetadata,
+    ProcessingStatus,
+    Profile,
+    ProfileAnalytics,
+    ProfileData,
+    ProfileEmbeddings,
+    ProfileStatus,
+    PrivacySettings,
+    Experience,
+    Education,
+    Skill,
+    Location,
+)
 from app.api.schemas.upload_schemas import (
     BatchUploadResponse,
     ProcessingStatusResponse,
     UploadResponse,
 )
 from app.application.dependencies import UploadDependencies
-from app.domain.entities.profile import Profile, ProfileStatus
-from app.domain.value_objects import ProfileId, TenantId
+from app.domain.events.profile_events import ProfileCreatedEvent
+from app.domain.value_objects import (
+    EmailAddress,
+    EmbeddingVector,
+    PhoneNumber,
+    ProfileId,
+    SkillName,
+    TenantId,
+    UserId,
+)
 from app.domain.utils import FileSizeValidator
 from app.domain.exceptions import FileSizeExceededError, InvalidFileError
 from app.domain.task_types import TaskType
@@ -782,6 +805,49 @@ class UploadApplicationService:
 
             processing_duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
 
+            profile_saved = False
+            profile_save_error: Optional[str] = None
+            profile_preview: Dict[str, Any] = {}
+
+            try:
+                profile_entity = await self._build_profile_entity(
+                    profile_id=profile_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    filename=filename,
+                    analysis_result=analysis_result,
+                    quality_assessment=quality_assessment,
+                    text_content=text_content,
+                    metadata=metadata,
+                    embedding_vector=embedding_vector,
+                    processing_duration_ms=processing_duration_ms,
+                    start_time=start_time,
+                )
+
+                if profile_entity:
+                    await self._deps.profile_repository.save(profile_entity)
+                    profile_saved = True
+                    profile_preview = self._build_profile_preview(profile_entity)
+                    await self._publish_profile_created_event(
+                        profile_entity=profile_entity,
+                        user_id=user_id,
+                        filename=filename,
+                    )
+                else:
+                    logger.info(
+                        "Skipping profile persistence due to insufficient data",
+                        upload_id=upload_id,
+                        profile_id=profile_id,
+                    )
+            except Exception as profile_exc:
+                profile_save_error = str(profile_exc)
+                logger.error(
+                    "Failed to persist profile",
+                    upload_id=upload_id,
+                    profile_id=profile_id,
+                    error=str(profile_exc),
+                )
+
             profile_data = {
                 "id": profile_id,
                 "upload_id": upload_id,
@@ -797,10 +863,15 @@ class UploadApplicationService:
                 "has_embeddings": embedding_vector is not None,
                 "created_at": start_time.isoformat(),
                 "updated_at": datetime.now().isoformat(),
+                "profile_saved": profile_saved,
             }
 
             if batch_id:
                 profile_data["batch_id"] = batch_id
+            if profile_preview:
+                profile_data["profile_preview"] = profile_preview
+            if profile_save_error:
+                profile_data["profile_save_error"] = profile_save_error
 
             await self._deps.database_adapter.execute(
                 """
@@ -2036,6 +2107,593 @@ class UploadApplicationService:
                 page=pagination.page,
                 size=pagination.size
             )
+
+    async def _build_profile_entity(
+        self,
+        *,
+        profile_id: str,
+        tenant_id: str,
+        user_id: str,
+        filename: str,
+        analysis_result: Dict[str, Any],
+        quality_assessment: Dict[str, Any],
+        text_content: str,
+        metadata: Dict[str, Any],
+        embedding_vector: Optional[List[float]],
+        processing_duration_ms: int,
+        start_time: datetime,
+    ) -> Optional[Profile]:
+        """Convert analysis output into a domain profile aggregate."""
+
+        analysis = analysis_result if isinstance(analysis_result, dict) else {}
+        personal_info = analysis.get("personal_info") if isinstance(analysis.get("personal_info"), dict) else {}
+
+        name = self._extract_candidate_name(personal_info, analysis, text_content, filename)
+        email = self._extract_candidate_email(personal_info, analysis, text_content)
+
+        if not email:
+            logger.info(
+                "Profile persistence skipped due to missing email",
+                filename=filename,
+                analysis_keys=list(analysis.keys()),
+            )
+            return None
+
+        try:
+            email_address = EmailAddress(email)
+        except ValueError:
+            logger.info("Invalid email extracted; skipping profile persistence", email=email)
+            return None
+
+        phone_value = self._extract_candidate_phone(personal_info, analysis, text_content)
+        phone_number = None
+        if phone_value:
+            try:
+                phone_number = PhoneNumber(phone_value)
+            except ValueError:
+                logger.debug("Skipping invalid phone number", phone=phone_value)
+
+        location = self._parse_location(personal_info.get("location") if isinstance(personal_info, dict) else None)
+
+        summary = analysis.get("summary") or analysis.get("professional_summary")
+        headline = analysis.get("headline") or personal_info.get("headline") if isinstance(personal_info, dict) else None
+
+        experience_entries = self._parse_experience(analysis.get("experience"))
+        education_entries = self._parse_education(analysis.get("education"))
+        skills = self._parse_skills(analysis.get("skills"))
+        languages = self._parse_languages(analysis.get("languages"))
+
+        profile_data = ProfileData(
+            name=name,
+            email=email_address,
+            phone=phone_number,
+            location=location,
+            summary=summary,
+            headline=headline,
+            experience=experience_entries,
+            education=education_entries,
+            skills=skills,
+            languages=languages,
+        )
+
+        embeddings = await self._generate_profile_embeddings(
+            base_vector=embedding_vector,
+            profile_data=profile_data,
+            text_content=text_content,
+        )
+
+        processing_metadata = ProcessingMetadata(
+            status=ProcessingStatus.COMPLETED,
+            time_ms=processing_duration_ms,
+            quality_score=self._extract_quality_score(quality_assessment),
+            confidence_score=self._extract_quality_confidence(quality_assessment),
+            extraction_method=metadata.get("extraction_method"),
+            pages_processed=metadata.get("num_pages") or metadata.get("pages"),
+            additional={
+                "source": "upload",
+                "filename": filename,
+            },
+        )
+        processing_metadata.last_processed = datetime.utcnow()
+
+        privacy_settings = PrivacySettings(
+            consent_given=True,
+            consent_date=datetime.utcnow(),
+        )
+
+        metadata_payload: Dict[str, Any] = {
+            "source": "upload",
+            "filename": filename,
+            "keywords": analysis.get("keywords"),
+            "industries": analysis.get("industries"),
+            "seniority_level": analysis.get("seniority_level"),
+        }
+
+        try:
+            profile = Profile(
+                id=ProfileId(profile_id),
+                tenant_id=TenantId(tenant_id),
+                status=ProfileStatus.ACTIVE,
+                profile_data=profile_data,
+                embeddings=embeddings,
+                metadata=metadata_payload,
+                processing=processing_metadata,
+                privacy=privacy_settings,
+                analytics=ProfileAnalytics(),
+                created_at=start_time,
+                updated_at=datetime.utcnow(),
+                last_activity_at=datetime.utcnow(),
+            )
+        except Exception as exc:
+            logger.error("Failed to construct profile aggregate", error=str(exc))
+            return None
+
+        return profile
+
+    def _extract_candidate_name(
+        self,
+        personal_info: Dict[str, Any],
+        analysis: Dict[str, Any],
+        text_content: str,
+        filename: str,
+    ) -> str:
+        """Best-effort extraction of candidate name."""
+        candidate = None
+        for key in ("name", "full_name"):
+            value = personal_info.get(key) if personal_info else None
+            if value and isinstance(value, str) and value.strip():
+                candidate = value.strip()
+                break
+
+        if not candidate and isinstance(analysis.get("candidate_name"), str):
+            candidate = analysis["candidate_name"].strip()
+
+        if not candidate:
+            candidate = self._guess_name_from_text(text_content)
+
+        if not candidate:
+            candidate = Path(filename).stem.replace("_", " ").replace("-", " ").strip()
+
+        return candidate.title() if candidate else "Unknown Candidate"
+
+    def _extract_candidate_email(
+        self,
+        personal_info: Dict[str, Any],
+        analysis: Dict[str, Any],
+        text_content: str,
+    ) -> Optional[str]:
+        """Extract email address from structured data or raw text."""
+        possible_emails: List[str] = []
+
+        if personal_info:
+            value = personal_info.get("email") or personal_info.get("email_address")
+            if isinstance(value, str):
+                possible_emails.append(value)
+            elif isinstance(value, list):
+                possible_emails.extend(str(item) for item in value if isinstance(item, (str, bytes)))
+
+        contact_info = analysis.get("contact") if isinstance(analysis.get("contact"), dict) else {}
+        contact_email = contact_info.get("email") if isinstance(contact_info, dict) else None
+        if isinstance(contact_email, str):
+            possible_emails.append(contact_email)
+
+        if not possible_emails:
+            email_from_text = self._find_first_email(text_content)
+            if email_from_text:
+                possible_emails.append(email_from_text)
+
+        for email in possible_emails:
+            if email and "@" in email:
+                return email.strip()
+
+        return None
+
+    def _extract_candidate_phone(
+        self,
+        personal_info: Dict[str, Any],
+        analysis: Dict[str, Any],
+        text_content: str,
+    ) -> Optional[str]:
+        """Extract phone number using structured data or regex fallback."""
+        candidates: List[str] = []
+        if personal_info:
+            phone = personal_info.get("phone") or personal_info.get("phone_number")
+            if isinstance(phone, str):
+                candidates.append(phone)
+        contact_info = analysis.get("contact") if isinstance(analysis.get("contact"), dict) else {}
+        if isinstance(contact_info, dict):
+            phone = contact_info.get("phone")
+            if isinstance(phone, str):
+                candidates.append(phone)
+
+        if not candidates:
+            match = re.search(r"(\+?\d[\d\-\s]{8,})", text_content or "")
+            if match:
+                candidates.append(match.group(0))
+
+        for entry in candidates:
+            normalized = self._normalize_phone(entry)
+            if normalized:
+                return normalized
+        return None
+
+    def _normalize_phone(self, phone: str) -> Optional[str]:
+        """Normalize phone strings to digit format."""
+        if not phone:
+            return None
+        digits = re.sub(r"[^\d]", "", phone)
+        if phone.strip().startswith("+") and digits:
+            normalized = f"+{digits}"
+        else:
+            normalized = digits
+        return normalized if normalized and len(normalized.replace("+", "")) >= 10 else None
+
+    def _parse_location(self, location_data: Any) -> Optional[Location]:
+        """Parse location information into a domain Location object."""
+        if not location_data:
+            return None
+
+        if isinstance(location_data, dict):
+            return Location(
+                city=location_data.get("city"),
+                state=location_data.get("state") or location_data.get("region"),
+                country=location_data.get("country"),
+            )
+
+        if isinstance(location_data, str):
+            parts = [part.strip() for part in location_data.split(",") if part.strip()]
+            if not parts:
+                return None
+            city = parts[0] if len(parts) >= 2 else None
+            state = parts[1] if len(parts) >= 3 else None
+            country = parts[-1] if parts else None
+            return Location(city=city, state=state, country=country)
+
+        return None
+
+    def _parse_skills(self, skills_data: Any) -> List[Skill]:
+        """Convert structured skills into domain Skill objects."""
+        if not skills_data:
+            return []
+
+        skills: List[Skill] = []
+
+        if isinstance(skills_data, dict):
+            flattened: List[Any] = []
+            for value in skills_data.values():
+                if isinstance(value, list):
+                    flattened.extend(value)
+            skills_data = flattened
+
+        if isinstance(skills_data, list):
+            for entry in skills_data:
+                try:
+                    if isinstance(entry, str):
+                        skills.append(Skill(name=SkillName(entry)))
+                    elif isinstance(entry, dict):
+                        name_value = entry.get("name") or entry.get("skill") or entry.get("value")
+                        if not name_value:
+                            continue
+                        skill_kwargs = {
+                            "name": SkillName(name_value),
+                            "category": str(entry.get("category", "technical")),
+                        }
+                        if entry.get("proficiency") is not None:
+                            try:
+                                skill_kwargs["proficiency"] = int(entry["proficiency"])
+                            except (ValueError, TypeError):
+                                pass
+                        if entry.get("years_of_experience") is not None:
+                            try:
+                                skill_kwargs["years_of_experience"] = int(entry["years_of_experience"])
+                            except (ValueError, TypeError):
+                                pass
+                        if entry.get("endorsed") is not None:
+                            skill_kwargs["endorsed"] = bool(entry["endorsed"])
+                        if entry.get("last_used"):
+                            skill_kwargs["last_used"] = str(entry["last_used"])
+                        skills.append(Skill(**skill_kwargs))
+                except (ValueError, TypeError) as err:
+                    logger.debug("Skipping malformed skill entry", error=str(err), entry=entry)
+
+        return skills
+
+    def _parse_experience(self, experience_data: Any) -> List[Experience]:
+        """Convert structured experience entries to domain Experience objects."""
+        if not isinstance(experience_data, list):
+            return []
+
+        experiences: List[Experience] = []
+        for entry in experience_data[:50]:
+            if not isinstance(entry, dict):
+                continue
+            title = entry.get("title") or entry.get("position") or "Unknown Role"
+            company = entry.get("company") or entry.get("employer") or "Unknown Company"
+            start_date = entry.get("start_date") or entry.get("start") or datetime.utcnow().strftime("%Y-%m-01")
+            end_date = entry.get("end_date") or entry.get("end")
+            description = entry.get("description") or entry.get("summary") or ""
+            current = entry.get("current")
+            if current is None:
+                current = not bool(end_date)
+            location = entry.get("location")
+            achievements = entry.get("achievements")
+            if not isinstance(achievements, list):
+                achievements = []
+            skill_entries = entry.get("skills")
+            skill_names: List[SkillName] = []
+            if isinstance(skill_entries, list):
+                for skill in skill_entries:
+                    try:
+                        if isinstance(skill, dict) and skill.get("name"):
+                            skill_names.append(SkillName(skill["name"]))
+                        elif isinstance(skill, str):
+                            skill_names.append(SkillName(skill))
+                    except (ValueError, TypeError):
+                        continue
+            try:
+                experiences.append(
+                    Experience(
+                        title=title,
+                        company=company,
+                        start_date=str(start_date),
+                        end_date=str(end_date) if end_date else None,
+                        description=str(description),
+                        current=bool(current),
+                        location=location,
+                        achievements=[str(a) for a in achievements],
+                        skills=skill_names,
+                    )
+                )
+            except Exception as err:
+                logger.debug("Skipping experience entry", error=str(err), entry=entry)
+
+        return experiences
+
+    def _parse_education(self, education_data: Any) -> List[Education]:
+        """Convert structured education entries to domain Education objects."""
+        if not isinstance(education_data, list):
+            return []
+
+        education_entries: List[Education] = []
+        for entry in education_data[:25]:
+            if not isinstance(entry, dict):
+                continue
+            institution = entry.get("institution") or entry.get("school")
+            degree = entry.get("degree")
+            field = entry.get("field") or entry.get("area")
+            if not (institution and degree and field):
+                continue
+            try:
+                education_entries.append(
+                    Education(
+                        institution=str(institution),
+                        degree=str(degree),
+                        field=str(field),
+                        start_date=entry.get("start_date"),
+                        end_date=entry.get("end_date"),
+                        gpa=entry.get("gpa"),
+                        achievements=[
+                            str(ach) for ach in entry.get("achievements", []) if isinstance(ach, (str, bytes))
+                        ],
+                    )
+                )
+            except Exception as err:
+                logger.debug("Skipping education entry", error=str(err), entry=entry)
+
+        return education_entries
+
+    def _parse_languages(self, languages_data: Any) -> List[str]:
+        """Normalize language information."""
+        if not languages_data:
+            return []
+
+        languages: List[str] = []
+        if isinstance(languages_data, list):
+            for item in languages_data:
+                if isinstance(item, str):
+                    languages.append(item)
+                elif isinstance(item, dict):
+                    name = item.get("name") or item.get("language")
+                    if isinstance(name, str):
+                        languages.append(name)
+        elif isinstance(languages_data, dict):
+            for value in languages_data.values():
+                if isinstance(value, str):
+                    languages.append(value)
+                elif isinstance(value, list):
+                    languages.extend(str(item) for item in value)
+        return languages
+
+    def _format_embedding_vector(self, vector: Optional[List[float]]) -> Optional[EmbeddingVector]:
+        """Normalize raw vector data into EmbeddingVector."""
+        if not vector:
+            return None
+
+        try:
+            expected_dimension = get_settings().EMBEDDING_DIMENSION
+            values = [float(value) for value in vector]
+
+            if len(values) != expected_dimension:
+                if len(values) > expected_dimension:
+                    logger.debug(
+                        "Truncating embedding vector to expected dimension",
+                        original_dimension=len(values),
+                        expected_dimension=expected_dimension,
+                    )
+                    values = values[:expected_dimension]
+                else:
+                    logger.debug(
+                        "Padding embedding vector to expected dimension",
+                        original_dimension=len(values),
+                        expected_dimension=expected_dimension,
+                    )
+                    values.extend([0.0] * (expected_dimension - len(values)))
+
+            return EmbeddingVector(dimensions=expected_dimension, values=values)
+        except Exception as err:
+            logger.debug("Failed to format embedding vector", error=str(err))
+            return None
+
+    async def _generate_profile_embeddings(
+        self,
+        *,
+        base_vector: Optional[List[float]],
+        profile_data: ProfileData,
+        text_content: str,
+    ) -> ProfileEmbeddings:
+        """Generate embeddings for different facets of the profile."""
+
+        embeddings = ProfileEmbeddings()
+
+        embeddings.overall = self._format_embedding_vector(base_vector)
+
+        embedding_inputs: list[tuple[str, str]] = []
+
+        # Compose skills text
+        skill_terms = [skill.name.value for skill in profile_data.skills]
+        if skill_terms:
+            embedding_inputs.append(("skills", " ".join(skill_terms)))
+
+        # Compose summary text
+        if profile_data.summary:
+            embedding_inputs.append(("summary", profile_data.summary))
+        elif text_content:
+            embedding_inputs.append(("summary", text_content[:2000]))
+
+        # Compose experience text
+        experience_chunks: list[str] = []
+        for exp in profile_data.experience:
+            experience_chunks.append(" ".join(filter(None, [exp.title, exp.company, exp.description])))
+        if experience_chunks:
+            embedding_inputs.append(("experience", " \n ".join(experience_chunks)))
+
+        # Compose education text
+        education_chunks: list[str] = []
+        for edu in profile_data.education:
+            education_chunks.append(" ".join(filter(None, [edu.institution, edu.degree, edu.field])))
+        if education_chunks:
+            embedding_inputs.append(("education", " \n ".join(education_chunks)))
+
+        if not embedding_inputs:
+            return embeddings
+
+        tasks = [
+            self._deps.embedding_service.generate_embedding(text)
+            for _, text in embedding_inputs
+            if text.strip()
+        ]
+
+        if not tasks:
+            return embeddings
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        idx = 0
+        for label, text in embedding_inputs:
+            if not text.strip():
+                continue
+            result = results[idx]
+            idx += 1
+            if isinstance(result, Exception):
+                logger.debug(
+                    "Failed to generate section embedding",
+                    section=label,
+                    error=str(result),
+                )
+                continue
+
+            formatted = self._format_embedding_vector(result)
+            if formatted is None:
+                continue
+
+            if label == "skills":
+                embeddings.skills = formatted
+            elif label == "summary":
+                embeddings.summary = formatted
+            elif label == "experience":
+                embeddings.experience = formatted
+            elif label == "education":
+                embeddings.education = formatted
+
+        return embeddings
+
+    def _extract_quality_score(self, quality_assessment: Dict[str, Any]) -> Optional[float]:
+        """Extract overall quality score in a resilient manner."""
+        if not isinstance(quality_assessment, dict):
+            return None
+        score = quality_assessment.get("overall_score") or quality_assessment.get("score")
+        if isinstance(score, (int, float)):
+            return float(score)
+        return None
+
+    def _extract_quality_confidence(self, quality_assessment: Dict[str, Any]) -> Optional[float]:
+        """Extract confidence score from quality assessment."""
+        if not isinstance(quality_assessment, dict):
+            return None
+        confidence = quality_assessment.get("confidence") or quality_assessment.get("analysis_confidence")
+        if isinstance(confidence, (int, float)):
+            return float(confidence)
+        return None
+
+    def _build_profile_preview(self, profile: Profile) -> Dict[str, Any]:
+        """Create a lightweight snapshot of persisted profile details."""
+        top_skills = [skill.name.value for skill in profile.profile_data.skills[:5]]
+        return {
+            "name": profile.profile_data.name,
+            "email": str(profile.profile_data.email),
+            "headline": profile.profile_data.headline,
+            "summary": profile.profile_data.summary,
+            "experience_level": profile.experience_level.value if profile.experience_level else None,
+            "top_skills": top_skills,
+        }
+
+    async def _publish_profile_created_event(self, profile_entity: Profile, user_id: str, filename: str) -> None:
+        """Publish domain event for newly created profiles."""
+        event_publisher = getattr(self._deps, "event_publisher", None)
+        if not event_publisher:
+            return
+
+        try:
+            user_identifier = UserId(user_id)
+        except (TypeError, ValueError):
+            logger.debug("Invalid user id for profile created event", user_id=user_id)
+            return
+
+        try:
+            event = ProfileCreatedEvent(
+                tenant_id=profile_entity.tenant_id,
+                profile_id=profile_entity.id,
+                created_by_user_id=user_identifier,
+                source="upload",
+                original_filename=filename,
+            )
+            await event_publisher.publish(event)
+        except Exception as exc:
+            logger.warning("Failed to publish profile created event", error=str(exc))
+
+    def _guess_name_from_text(self, text_content: str) -> Optional[str]:
+        """Guess candidate name from raw document text."""
+        if not text_content:
+            return None
+
+        for line in text_content.splitlines():
+            cleaned = line.strip()
+            if not cleaned or len(cleaned) > 80:
+                continue
+            if "@" in cleaned or cleaned.lower().startswith(("phone", "email", "linkedin", "github")):
+                continue
+            if any(char.isdigit() for char in cleaned):
+                continue
+            if any(char.isalpha() for char in cleaned):
+                return cleaned
+        return None
+
+    def _find_first_email(self, text: str) -> Optional[str]:
+        """Find the first email address in text."""
+        if not text:
+            return None
+        matches = re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text)
+        return matches[0] if matches else None
 
     async def _enqueue_background(self, scheduler: Optional[Any], func, *args, **kwargs) -> Optional[str]:
         """Enqueue a background task with task manager tracking."""

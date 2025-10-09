@@ -1,7 +1,7 @@
 """Infrastructure layer document processing services."""
 
-from app.infrastructure.document.content_extractor import (
-    ContentExtractor,
+from app.infrastructure.document.content_extractor import ContentExtractor
+from app.infrastructure.document.schemas import (
     StructuredContent,
     ExtractedSection,
 )

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from app.domain.events.base import DomainEvent, IDomainEventPublisher
 from app.domain.interfaces import IEventPublisher
 
 if TYPE_CHECKING:
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
-class EventPublisherAdapter(IEventPublisher):
+class EventPublisherAdapter(IEventPublisher, IDomainEventPublisher):
     """Adapter implementation of IEventPublisher interface.
 
     This is a simple in-memory event publisher that can be extended
@@ -24,6 +25,36 @@ class EventPublisherAdapter(IEventPublisher):
     def __init__(self):
         self._handlers: dict[str, list[Callable[[Any], Any] | Any]] = {}
         self._published_events: list[Any] = []
+
+    async def publish(self, event: DomainEvent) -> bool:
+        """Publish DomainEvent using event type as topic."""
+        try:
+            topic = event.event_type
+            event_payload = event.to_dict()
+            event_payload["occurred_at"] = event.occurred_at.isoformat()
+            return await self.publish_event(topic, event_payload)
+        except Exception as exc:
+            logger.error(
+                "Failed to publish domain event",
+                event_type=getattr(event, "event_type", type(event).__name__),
+                error=str(exc),
+            )
+            return False
+
+    async def publish_batch(self, events: list[DomainEvent]) -> bool:
+        """Publish a batch of DomainEvents."""
+        if not events:
+            return True
+
+        results: list[bool] = []
+        for event in events:
+            results.append(await self.publish(event))
+        return all(results)
+
+    async def publish_and_wait(self, event: DomainEvent, timeout_seconds: int = 30) -> bool:
+        """Publish event and assume immediate completion."""
+        # For the in-memory adapter we publish synchronously; timeout hint ignored.
+        return await self.publish(event)
 
     async def publish_event(self, topic: str, event_data: dict[str, Any]) -> bool:
         """Publish a single event to a topic."""

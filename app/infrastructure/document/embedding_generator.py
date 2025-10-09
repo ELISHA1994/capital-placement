@@ -11,7 +11,6 @@ Specialized embedding generation for document processing:
 
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
-from dataclasses import dataclass
 import structlog
 import hashlib
 import asyncio
@@ -19,42 +18,15 @@ import asyncio
 from app.core.config import get_settings
 from app.infrastructure.ai.embedding_service import EmbeddingService
 from app.infrastructure.document.pdf_processor import PDFDocument
-from app.infrastructure.document.content_extractor import StructuredContent, ExtractedSection
+from app.infrastructure.document.schemas import (
+    StructuredContent,
+    ExtractedSection,
+    DocumentEmbedding,
+    SectionEmbedding,
+    EmbeddingResult,
+)
 
 logger = structlog.get_logger(__name__)
-
-
-@dataclass
-class DocumentEmbedding:
-    """Represents a document-level embedding"""
-    document_id: str
-    document_type: str
-    embedding_vector: List[float]
-    content_hash: str
-    metadata: Dict[str, Any]
-    created_at: datetime
-    
-
-@dataclass
-class SectionEmbedding:
-    """Represents a section-level embedding"""
-    section_id: str
-    document_id: str
-    section_type: str
-    title: str
-    embedding_vector: List[float]
-    content_hash: str
-    metadata: Dict[str, Any]
-    created_at: datetime
-
-
-@dataclass
-class EmbeddingResult:
-    """Complete embedding generation result"""
-    document_embedding: DocumentEmbedding
-    section_embeddings: List[SectionEmbedding]
-    processing_info: Dict[str, Any]
-    semantic_relationships: List[Dict[str, Any]]
 
 
 class EmbeddingGenerator:

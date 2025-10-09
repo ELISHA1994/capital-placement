@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import List, Optional, Dict, Any, Tuple
-from uuid import UUID
 from datetime import datetime, timedelta
 
 from app.domain.entities.profile import Profile, ProfileStatus, ExperienceLevel
@@ -31,82 +30,17 @@ class PostgresProfileRepository(IProfileRepository):
         adapter = await self._get_adapter()
         
         try:
-            # Check if profile exists
-            existing = await self.find_by_id(profile.id)
-            
-            if existing:
-                # Update existing profile
-                profile_table = ProfileMapper.to_table(profile)
-                
-                # Use UPDATE query
-                await adapter.execute(
-                    """
-                    UPDATE profiles 
-                    SET tenant_id = $2, status = $3, experience_level = $4, 
-                        profile_data = $5, searchable_text = $6, keywords = $7,
-                        normalized_skills = $8, name = $9, email = $10, phone = $11,
-                        location_city = $12, location_state = $13, location_country = $14,
-                        overall_embedding = $15, skills_embedding = $16, 
-                        experience_embedding = $17, summary_embedding = $18,
-                        processing_status = $19, processing_metadata = $20, quality_score = $21,
-                        privacy_settings = $22, consent_given = $23, consent_date = $24,
-                        view_count = $25, search_appearances = $26, last_viewed_at = $27,
-                        last_activity_at = $28, updated_at = $29
-                    WHERE id = $1
-                    """,
-                    profile_table.id, profile_table.tenant_id, profile_table.status,
-                    profile_table.experience_level, profile_table.profile_data,
-                    profile_table.searchable_text, profile_table.keywords,
-                    profile_table.normalized_skills, profile_table.name,
-                    profile_table.email, profile_table.phone, profile_table.location_city,
-                    profile_table.location_state, profile_table.location_country,
-                    profile_table.overall_embedding, profile_table.skills_embedding,
-                    profile_table.experience_embedding, profile_table.summary_embedding,
-                    profile_table.processing_status, profile_table.processing_metadata,
-                    profile_table.quality_score, profile_table.privacy_settings,
-                    profile_table.consent_given, profile_table.consent_date,
-                    profile_table.view_count, profile_table.search_appearances,
-                    profile_table.last_viewed_at, profile_table.last_activity_at,
-                    profile_table.updated_at
-                )
-            else:
-                # Insert new profile
-                profile_table = ProfileMapper.to_table(profile)
-                
-                await adapter.execute(
-                    """
-                    INSERT INTO profiles (
-                        id, tenant_id, status, experience_level, profile_data, 
-                        searchable_text, keywords, normalized_skills, name, email, phone,
-                        location_city, location_state, location_country, overall_embedding,
-                        skills_embedding, experience_embedding, summary_embedding,
-                        processing_status, processing_metadata, quality_score,
-                        privacy_settings, consent_given, consent_date, view_count,
-                        search_appearances, last_viewed_at, last_activity_at,
-                        created_at, updated_at
-                    ) VALUES (
-                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-                        $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
-                        $27, $28, $29, $30
-                    )
-                    """,
-                    profile_table.id, profile_table.tenant_id, profile_table.status,
-                    profile_table.experience_level, profile_table.profile_data,
-                    profile_table.searchable_text, profile_table.keywords,
-                    profile_table.normalized_skills, profile_table.name,
-                    profile_table.email, profile_table.phone, profile_table.location_city,
-                    profile_table.location_state, profile_table.location_country,
-                    profile_table.overall_embedding, profile_table.skills_embedding,
-                    profile_table.experience_embedding, profile_table.summary_embedding,
-                    profile_table.processing_status, profile_table.processing_metadata,
-                    profile_table.quality_score, profile_table.privacy_settings,
-                    profile_table.consent_given, profile_table.consent_date,
-                    profile_table.view_count, profile_table.search_appearances,
-                    profile_table.last_viewed_at, profile_table.last_activity_at,
-                    profile_table.created_at, profile_table.updated_at
-                )
-            
-            # Return the saved profile (could refetch from DB to ensure consistency)
+            profile_table = ProfileMapper.to_table(profile)
+            db_manager = adapter.db_manager
+
+            async with db_manager.get_session() as session:
+                existing_row = await session.get(ProfileTable, profile_table.id)
+
+                if existing_row:
+                    ProfileMapper.update_table_from_domain(existing_row, profile)
+                else:
+                    session.add(profile_table)
+
             return profile
             
         except Exception as e:
@@ -117,17 +51,14 @@ class PostgresProfileRepository(IProfileRepository):
         adapter = await self._get_adapter()
         
         try:
-            record = await adapter.fetch_one(
-                "SELECT * FROM profiles WHERE id = $1",
-                profile_id.value
-            )
-            
-            if not record:
-                return None
-            
-            # Convert record to ProfileTable and then to domain entity
-            profile_table = ProfileTable(**dict(record))
-            return ProfileMapper.to_domain(profile_table)
+            db_manager = adapter.db_manager
+            async with db_manager.get_session() as session:
+                table_obj = await session.get(ProfileTable, profile_id.value)
+
+                if not table_obj:
+                    return None
+
+                return ProfileMapper.to_domain(table_obj)
             
         except Exception as e:
             raise Exception(f"Failed to find profile by ID: {str(e)}")
@@ -141,12 +72,12 @@ class PostgresProfileRepository(IProfileRepository):
                 "SELECT * FROM profiles WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
                 tenant_id.value, limit, offset
             )
-            
+
             profiles = []
             for record in records:
                 profile_table = ProfileTable(**dict(record))
                 profiles.append(ProfileMapper.to_domain(profile_table))
-            
+
             return profiles
             
         except Exception as e:

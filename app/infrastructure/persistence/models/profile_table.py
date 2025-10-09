@@ -17,8 +17,11 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlmodel import Field, Relationship
 from pgvector.sqlalchemy import Vector
 
+from app.core.config import get_settings
 from app.domain.entities.profile import ExperienceLevel, ProcessingStatus, ProfileStatus
 from app.infrastructure.persistence.models.base import AuditableModel, BaseModel, create_tenant_id_column
+
+EMBEDDING_DIMENSION = get_settings().EMBEDDING_DIMENSION
 
 
 class ProcessingMetadata(BaseModel):
@@ -342,22 +345,22 @@ class ProfileTable(AuditableModel, table=True):
     # Vector embeddings for different sections
     overall_embedding: Optional[List[float]] = Field(
         default=None,
-        sa_column=Column(Vector(1536), nullable=True),
+        sa_column=Column(Vector(EMBEDDING_DIMENSION), nullable=True),
         description="Overall profile vector embedding"
     )
     skills_embedding: Optional[List[float]] = Field(
         default=None,
-        sa_column=Column(Vector(1536), nullable=True),
+        sa_column=Column(Vector(EMBEDDING_DIMENSION), nullable=True),
         description="Skills-specific vector embedding"
     )
     experience_embedding: Optional[List[float]] = Field(
         default=None,
-        sa_column=Column(Vector(1536), nullable=True),
+        sa_column=Column(Vector(EMBEDDING_DIMENSION), nullable=True),
         description="Experience-specific vector embedding"
     )
     summary_embedding: Optional[List[float]] = Field(
         default=None,
-        sa_column=Column(Vector(1536), nullable=True),
+        sa_column=Column(Vector(EMBEDDING_DIMENSION), nullable=True),
         description="Summary-specific vector embedding"
     )
 

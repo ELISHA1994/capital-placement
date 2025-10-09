@@ -14,8 +14,9 @@ import json
 import hashlib
 from typing import Dict, List, Optional, Any, Tuple, Union
 from datetime import datetime
-from dataclasses import dataclass
 import structlog
+from pydantic import ValidationError
+from langchain.output_parsers import PydanticOutputParser
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
 from langchain_openai import ChatOpenAI
@@ -24,31 +25,13 @@ from app.core.config import get_settings
 from app.infrastructure.ai.openai_service import OpenAIService
 from app.infrastructure.ai.prompt_manager import PromptManager, PromptType
 from app.infrastructure.document.pdf_processor import PDFDocument
+from app.infrastructure.document.schemas import (
+    ExtractedSection,
+    StructuredContent,
+    CVAnalysisModel,
+)
 
 logger = structlog.get_logger(__name__)
-
-
-@dataclass
-class ExtractedSection:
-    """Represents an extracted document section"""
-    section_type: str
-    title: str
-    content: str
-    confidence: float
-    metadata: Dict[str, Any]
-    start_position: int
-    end_position: int
-
-
-@dataclass
-class StructuredContent:
-    """Represents structured content extracted from document"""
-    document_type: str
-    sections: List[ExtractedSection]
-    summary: str
-    key_information: Dict[str, Any]
-    quality_assessment: Dict[str, Any]
-    processing_metadata: Dict[str, Any]
 
 
 class ContentExtractor:
@@ -83,6 +66,8 @@ class ContentExtractor:
             "ai_analysis_calls": 0,
             "extraction_errors": 0
         }
+        self._cv_parser = PydanticOutputParser(pydantic_object=CVAnalysisModel)
+        self._cv_format_instructions = self._cv_parser.get_format_instructions()
 
     def _init_langchain_components(self):
         """Initialize LangChain components"""
@@ -414,33 +399,107 @@ class ContentExtractor:
             return {"extraction_error": str(e)}
 
     async def _extract_cv_information(self, text: str) -> Dict[str, Any]:
-        """Extract CV-specific information"""
+        """Extract CV-specific information with structured output enforcement."""
+        if not text or not text.strip():
+            logger.warning("Empty text content provided for CV extraction")
+            return {}
+
         try:
+            custom_instructions = (
+                "Use the following format instructions to structure your response precisely.\n"
+                f"{self._cv_format_instructions}\n"
+                "Respond ONLY with valid JSON that conforms to this schema."
+            )
+
             prompt = await self.prompt_manager.generate_prompt(
                 PromptType.CV_ANALYSIS,
-                {"cv_content": text[:5000]}  # Limit for prompt size
+                {"cv_content": text[:5000]},  # Limit for prompt size
+                custom_instructions=custom_instructions,
             )
 
             response = await self.openai_service.chat_completion(
                 messages=prompt["messages"],
                 temperature=prompt["temperature"],
-                max_tokens=prompt["max_tokens"]
+                max_tokens=prompt["max_tokens"],
             )
 
             self._stats["ai_analysis_calls"] += 1
 
-            # Parse structured CV information
             analysis_text = response["choices"][0]["message"]["content"]
 
             try:
-                return json.loads(analysis_text)
-            except json.JSONDecodeError:
-                # Fallback to basic extraction
-                return {"raw_analysis": analysis_text}
+                parsed = self._cv_parser.parse(analysis_text)
+                parsed_dict = parsed.dict() if hasattr(parsed, "dict") else parsed
+                return self._ensure_structured_data(parsed_dict)
+            except Exception as parse_err:
+                logger.warning(
+                    "Structured parser failed for CV analysis output",
+                    error=str(parse_err),
+                )
+                self._stats["extraction_errors"] += 1
+                return self._fallback_parse_cv_analysis(analysis_text)
 
-        except Exception as e:
-            logger.error(f"CV information extraction failed: {e}")
-            return {"error": str(e)}
+        except Exception as exc:
+            logger.error("CV information extraction failed", error=str(exc))
+            self._stats["extraction_errors"] += 1
+            return {"error": str(exc)}
+
+    def _fallback_parse_cv_analysis(self, analysis_text: str) -> Dict[str, Any]:
+        """Fallback parser when structured output parsing fails."""
+        try:
+            parsed = json.loads(analysis_text)
+        except json.JSONDecodeError:
+            logger.debug("Failed to decode CV analysis as JSON; returning raw output")
+            return {"raw_analysis": analysis_text}
+
+        try:
+            validated = CVAnalysisModel(**parsed)
+            normalized = validated.dict()
+        except ValidationError as validation_error:
+            logger.debug(
+                "CV analysis did not fully match schema during fallback",
+                error=str(validation_error),
+            )
+            normalized = parsed
+
+        return self._ensure_structured_data(normalized)
+
+    def _ensure_structured_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalise parsed CV analysis data to a consistent structure."""
+        if not isinstance(data, dict):
+            return {"raw_analysis": data}
+
+        normalized: Dict[str, Any] = {}
+        for key, value in data.items():
+            if value is None:
+                continue
+            normalized[key] = value
+
+        list_fields = [
+            "experience",
+            "education",
+            "skills",
+            "achievements",
+            "keywords",
+            "industries",
+            "languages",
+        ]
+        for field in list_fields:
+            value = normalized.get(field)
+            if value is None:
+                normalized[field] = []
+            elif isinstance(value, (str, bytes)):
+                normalized[field] = [value]
+            elif not isinstance(value, list):
+                normalized[field] = [value]
+
+        if "personal_info" in normalized and not isinstance(normalized["personal_info"], dict):
+            normalized["personal_info"] = {"value": normalized["personal_info"]}
+
+        if "structured_data" not in normalized or not isinstance(normalized["structured_data"], dict):
+            normalized["structured_data"] = {}
+
+        return normalized
 
     async def _extract_job_information(self, text: str) -> Dict[str, Any]:
         """Extract job description information"""

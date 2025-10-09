@@ -54,9 +54,6 @@ class ProfileMapper:
     - Denormalized fields for query performance
     """
 
-    # Vector dimension constant (OpenAI text-embedding-3-large)
-    EMBEDDING_DIMENSIONS = 1536
-
     @staticmethod
     def to_domain(table: ProfileTable) -> Profile:
         """
@@ -456,27 +453,18 @@ class ProfileMapper:
         Returns:
             ProfileEmbeddings with EmbeddingVector value objects
         """
+        def _as_embedding_vector(values: Optional[List[float]]) -> Optional[EmbeddingVector]:
+            if not values:
+                return None
+            length = len(values)
+            return EmbeddingVector(dimensions=length, values=list(values))
+
         return ProfileEmbeddings(
-            overall=EmbeddingVector(
-                dimensions=ProfileMapper.EMBEDDING_DIMENSIONS,
-                values=overall
-            ) if overall else None,
-            skills=EmbeddingVector(
-                dimensions=ProfileMapper.EMBEDDING_DIMENSIONS,
-                values=skills
-            ) if skills else None,
-            experience=EmbeddingVector(
-                dimensions=ProfileMapper.EMBEDDING_DIMENSIONS,
-                values=experience
-            ) if experience else None,
-            education=EmbeddingVector(
-                dimensions=ProfileMapper.EMBEDDING_DIMENSIONS,
-                values=education
-            ) if education else None,
-            summary=EmbeddingVector(
-                dimensions=ProfileMapper.EMBEDDING_DIMENSIONS,
-                values=summary
-            ) if summary else None
+            overall=_as_embedding_vector(overall),
+            skills=_as_embedding_vector(skills),
+            experience=_as_embedding_vector(experience),
+            education=_as_embedding_vector(education),
+            summary=_as_embedding_vector(summary),
         )
 
     @staticmethod
