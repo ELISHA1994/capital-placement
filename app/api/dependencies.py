@@ -10,6 +10,7 @@ from typing import Annotated
 import structlog
 from fastapi import Depends, HTTPException
 
+from app.application.profile_service import ProfileApplicationService
 from app.application.search_service import SearchApplicationService
 from app.application.upload_service import UploadApplicationService
 from app.domain.exceptions import (
@@ -32,12 +33,9 @@ from app.domain.exceptions import (
     ValidationError,
     WebhookValidationError,
 )
-from app.infrastructure.factories.search_dependency_factory import (
-    get_search_dependencies,
-)
-from app.infrastructure.factories.upload_dependency_factory import (
-    get_upload_dependencies,
-)
+from app.infrastructure.factories.profile_dependency_factory import get_profile_dependencies
+from app.infrastructure.factories.search_dependency_factory import get_search_dependencies
+from app.infrastructure.factories.upload_dependency_factory import get_upload_dependencies
 
 logger = structlog.get_logger(__name__)
 
@@ -69,9 +67,23 @@ async def get_upload_service() -> UploadApplicationService:
         ) from e
 
 
+async def get_profile_service() -> ProfileApplicationService:
+    """Create ProfileApplicationService with shared infrastructure."""
+    try:
+        dependencies = await get_profile_dependencies()
+        return ProfileApplicationService(dependencies)
+    except Exception as e:
+        logger.error("Failed to create profile service", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Profile service unavailable"
+        ) from e
+
+
 # Type aliases for dependency injection
 SearchServiceDep = Annotated[SearchApplicationService, Depends(get_search_service)]
 UploadServiceDep = Annotated[UploadApplicationService, Depends(get_upload_service)]
+ProfileServiceDep = Annotated[ProfileApplicationService, Depends(get_profile_service)]
 
 
 # Domain Exception Handlers
@@ -121,7 +133,9 @@ def map_domain_exception_to_http(exception: Exception) -> HTTPException:
 __all__ = [
     "get_search_service",
     "get_upload_service",
+    "get_profile_service",
     "SearchServiceDep",
     "UploadServiceDep",
+    "ProfileServiceDep",
     "map_domain_exception_to_http"
 ]

@@ -21,6 +21,8 @@ from .upload_dependencies import (
     IEventPublisher as IUploadEventPublisher
 )
 
+from .profile_dependencies import ProfileDependencies
+
 __all__ = [
     # Search dependencies
     "SearchDependencies",
@@ -39,5 +41,8 @@ __all__ = [
     "INotificationService",
     "IUploadTenantManagerService",
     "IDatabaseAdapter",
-    "IUploadEventPublisher"
+    "IUploadEventPublisher",
+
+    # Profile dependencies
+    "ProfileDependencies",
 ]

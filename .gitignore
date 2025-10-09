@@ -10,8 +10,6 @@ docs
 examples
 storage
 scripts
-CLAUDE.md
-AGENTS.md
 SQLModel_Migration_Plan.md
 migrate_imports.py
 analyze_services.py

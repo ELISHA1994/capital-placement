@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, Dict, Any, Tuple
+from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 
-from app.domain.entities.profile import Profile, ProfileStatus, ExperienceLevel
+from sqlalchemy import desc
+from sqlmodel import select
+
+from app.domain.entities.profile import ExperienceLevel, Profile, ProfileStatus
 from app.domain.repositories.profile_repository import IProfileRepository
-from app.domain.value_objects import ProfileId, TenantId, MatchScore
+from app.domain.value_objects import MatchScore, ProfileId, TenantId
 from app.infrastructure.persistence.mappers.profile_mapper import ProfileMapper
 from app.infrastructure.persistence.models.profile_table import ProfileTable
 from app.infrastructure.providers.postgres_provider import get_postgres_adapter
@@ -66,20 +69,23 @@ class PostgresProfileRepository(IProfileRepository):
     async def find_by_tenant_id(self, tenant_id: TenantId, limit: int = 100, offset: int = 0) -> List[Profile]:
         """Find profiles by tenant ID with pagination."""
         adapter = await self._get_adapter()
-        
+
         try:
-            records = await adapter.fetch_all(
-                "SELECT * FROM profiles WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
-                tenant_id.value, limit, offset
-            )
+            db_manager = adapter.db_manager
+            async with db_manager.get_session() as session:
+                stmt = (
+                    select(ProfileTable)
+                    .where(ProfileTable.tenant_id == tenant_id.value)
+                    .order_by(desc(ProfileTable.created_at))
+                    .offset(offset)
+                    .limit(limit)
+                )
 
-            profiles = []
-            for record in records:
-                profile_table = ProfileTable(**dict(record))
-                profiles.append(ProfileMapper.to_domain(profile_table))
+                result = await session.execute(stmt)
+                rows = result.scalars().all()
 
-            return profiles
-            
+            return [ProfileMapper.to_domain(row) for row in rows]
+
         except Exception as e:
             raise Exception(f"Failed to find profiles by tenant ID: {str(e)}")
 
@@ -272,23 +278,17 @@ class PostgresProfileRepository(IProfileRepository):
         adapter = await self._get_adapter()
 
         try:
-            if status:
-                records = await adapter.fetch_all(
-                    "SELECT * FROM profiles WHERE tenant_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4",
-                    tenant_id.value, status.value, limit, offset
-                )
-            else:
-                records = await adapter.fetch_all(
-                    "SELECT * FROM profiles WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
-                    tenant_id.value, limit, offset
-                )
+            db_manager = adapter.db_manager
+            async with db_manager.get_session() as session:
+                stmt = select(ProfileTable).where(ProfileTable.tenant_id == tenant_id.value)
+                if status:
+                    stmt = stmt.where(ProfileTable.status == status.value)
+                stmt = stmt.order_by(desc(ProfileTable.created_at)).offset(offset).limit(limit)
 
-            profiles = []
-            for record in records:
-                profile_table = ProfileTable(**dict(record))
-                profiles.append(ProfileMapper.to_domain(profile_table))
+                result = await session.execute(stmt)
+                rows = result.scalars().all()
 
-            return profiles
+            return [ProfileMapper.to_domain(row) for row in rows]
 
         except Exception as e:
             raise Exception(f"Failed to list profiles by tenant: {str(e)}")

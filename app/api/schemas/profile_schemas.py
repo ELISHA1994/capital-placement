@@ -6,21 +6,22 @@ Following hexagonal architecture, these are pure DTOs in the API layer.
 """
 
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from pydantic import Field
 
+from app.domain.entities.profile import ProcessingStatus
 from app.infrastructure.persistence.models.base import BaseModel
 from app.infrastructure.persistence.models.profile_table import (
-    ProfileData,
-    ProfileEmbeddings,
-    ProfileQuality,
-    ProfileMetadata,
+    ProcessingMetadata,
     PrivacySettings,
     ProfileAnalytics,
+    ProfileData,
+    ProfileEmbeddings,
+    ProfileMetadata,
+    ProfileQuality,
     ProfileTable,
-    ProcessingMetadata,
 )
 
 
@@ -128,10 +129,17 @@ class ProfileCreate(BaseModel):
 
 
 class ProfileUpdate(BaseModel):
-    """Profile update request"""
-    profile: Optional[ProfileData] = None
-    privacy: Optional[PrivacySettings] = None
-    profile_metadata: Optional[Dict[str, Any]] = None
+    """Partial profile update request."""
+
+    title: Optional[str] = Field(None, description="Professional title")
+    summary: Optional[str] = Field(None, description="Professional summary")
+    skills: Optional[List[Dict[str, Any]]] = Field(None, description="Skills list")
+    experience_entries: Optional[List[Dict[str, Any]]] = Field(None, description="Experience entries")
+    education_entries: Optional[List[Dict[str, Any]]] = Field(None, description="Education entries")
+    certifications: Optional[List[Dict[str, Any]]] = Field(None, description="Certifications")
+    contact_info: Optional[Dict[str, Any]] = Field(None, description="Contact information")
+    job_preferences: Optional[Dict[str, Any]] = Field(None, description="Job preferences")
+    tags: Optional[List[str]] = Field(None, description="Profile tags")
 
 
 class ProfileResponse(BaseModel):
@@ -211,3 +219,38 @@ class ProfileSearchFilters(BaseModel):
 
 # Backward compatibility aliases
 CVProfile = Profile
+
+class ProfileSummary(BaseModel):
+    """Lightweight profile summary for list views."""
+
+    profile_id: str = Field(..., description="Profile identifier")
+    email: str = Field(..., description="Primary email address")
+    full_name: Optional[str] = Field(None, description="Full name")
+    title: Optional[str] = Field(None, description="Professional title")
+    current_company: Optional[str] = Field(None, description="Current employer")
+    total_experience_years: Optional[int] = Field(None, description="Years of experience")
+    top_skills: List[str] = Field(default_factory=list, description="Top 5 skills")
+    last_updated: datetime = Field(..., description="Last update timestamp")
+    processing_status: ProcessingStatus = Field(..., description="Processing status")
+    quality_score: Optional[float] = Field(None, description="Profile quality score")
+
+
+class BulkOperationRequest(BaseModel):
+    """Request model for bulk profile operations."""
+
+    profile_ids: List[str] = Field(..., description="List of profile IDs")
+    operation: str = Field(..., description="Operation to perform (update, delete, export, tag)")
+    parameters: Optional[Dict[str, Any]] = Field(None, description="Operation-specific parameters")
+
+
+class ProfileAnalyticsSummary(BaseModel):
+    """Profile analytics summary returned to API clients."""
+
+    profile_id: str = Field(..., description="Profile identifier")
+    view_count: int = Field(default=0, description="Number of profile views")
+    search_appearances: int = Field(default=0, description="Times appeared in search results")
+    match_score_distribution: Dict[str, int] = Field(default_factory=dict, description="Distribution of match scores")
+    popular_searches: List[str] = Field(default_factory=list, description="Queries that found this profile")
+    skill_demand_score: Optional[float] = Field(None, description="Market demand score for skills")
+    profile_completeness: float = Field(default=0.0, description="Profile completeness percentage")
+    last_viewed: Optional[datetime] = Field(None, description="Last view timestamp")

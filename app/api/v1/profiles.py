@@ -13,84 +13,39 @@ Comprehensive CV profile management with:
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
-import structlog
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTasks
+import structlog
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
 
 from app.domain.entities.profile import ProcessingStatus
-# Import CVProfile directly to avoid circular imports through __init__.py
-from app.api.schemas.profile_schemas import CVProfile
+from app.api.schemas.profile_schemas import (
+    BulkOperationRequest,
+    CVProfile,
+    ProfileAnalyticsSummary,
+    ProfileSummary,
+    ProfileUpdate,
+)
 from app.api.schemas.base import PaginatedResponse
 from app.infrastructure.persistence.models.base import PaginationModel
 from app.core.dependencies import CurrentUserDep, TenantContextDep, AuthzService, require_permission
 from app.infrastructure.persistence.models.auth_tables import CurrentUser, TenantContext
 from app.infrastructure.providers.usage_provider import get_usage_service
-from app.api.dependencies import map_domain_exception_to_http
+from app.api.dependencies import ProfileServiceDep, map_domain_exception_to_http
 from app.domain.exceptions import DomainException, ProfileNotFoundError
 from app.infrastructure.providers.ai_provider import get_embedding_service
 from app.infrastructure.providers.tenant_provider import get_tenant_service as get_tenant_manager
-from app.infrastructure.providers.postgres_provider import get_postgres_adapter
 
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
 
-class ProfileSummary(BaseModel):
-    """Lightweight profile summary for list views"""
-    
-    profile_id: str = Field(..., description="Profile identifier")
-    email: str = Field(..., description="Primary email address")
-    full_name: Optional[str] = Field(None, description="Full name")
-    title: Optional[str] = Field(None, description="Professional title")
-    current_company: Optional[str] = Field(None, description="Current employer")
-    total_experience_years: Optional[int] = Field(None, description="Years of experience")
-    top_skills: List[str] = Field(default_factory=list, description="Top 5 skills")
-    last_updated: datetime = Field(..., description="Last update timestamp")
-    processing_status: ProcessingStatus = Field(..., description="Processing status")
-    quality_score: Optional[float] = Field(None, description="Profile quality score")
-
-
-class ProfileUpdate(BaseModel):
-    """Model for profile updates"""
-    
-    title: Optional[str] = Field(None, description="Professional title")
-    summary: Optional[str] = Field(None, description="Professional summary")
-    skills: Optional[List[Dict[str, Any]]] = Field(None, description="Skills list")
-    experience_entries: Optional[List[Dict[str, Any]]] = Field(None, description="Experience entries")
-    education_entries: Optional[List[Dict[str, Any]]] = Field(None, description="Education entries")
-    certifications: Optional[List[Dict[str, Any]]] = Field(None, description="Certifications")
-    contact_info: Optional[Dict[str, Any]] = Field(None, description="Contact information")
-    job_preferences: Optional[Dict[str, Any]] = Field(None, description="Job preferences")
-    tags: Optional[List[str]] = Field(None, description="Profile tags")
-
-
-class BulkOperationRequest(BaseModel):
-    """Request model for bulk operations on profiles"""
-    
-    profile_ids: List[str] = Field(..., description="List of profile IDs")
-    operation: str = Field(..., description="Operation to perform (update, delete, export, tag)")
-    parameters: Optional[Dict[str, Any]] = Field(None, description="Operation-specific parameters")
-
-
-class ProfileAnalytics(BaseModel):
-    """Profile analytics and insights"""
-    
-    profile_id: str = Field(..., description="Profile identifier")
-    view_count: int = Field(default=0, description="Number of profile views")
-    search_appearances: int = Field(default=0, description="Times appeared in search results")
-    match_score_distribution: Dict[str, int] = Field(default_factory=dict, description="Distribution of match scores")
-    popular_searches: List[str] = Field(default_factory=list, description="Queries that found this profile")
-    skill_demand_score: Optional[float] = Field(None, description="Market demand score for skills")
-    profile_completeness: float = Field(default=0.0, description="Profile completeness percentage")
-    last_viewed: Optional[datetime] = Field(None, description="Last view timestamp")
-
 
 @router.get("/", response_model=PaginatedResponse)
 async def list_profiles(
     current_user: CurrentUserDep,
+    profile_service: ProfileServiceDep,
     pagination: PaginationModel = Depends(),
     status_filter: Optional[ProcessingStatus] = Query(None, description="Filter by processing status"),
     skill_filter: Optional[str] = Query(None, description="Filter by skill (partial match)"),
@@ -129,65 +84,42 @@ async def list_profiles(
             }
         )
         
-        # Build query filters
-        filters = {
-            "tenant_id": current_user.tenant_id
-        }
-        
-        if status_filter:
-            filters["processing.processing_status"] = status_filter.value
-        
-        if not include_incomplete:
-            filters["processing.processing_status"] = ProcessingStatus.COMPLETED.value
-        
-        if quality_min:
-            filters["processing.quality_score"] = {"$gte": quality_min}
-        
-        if experience_min or experience_max:
-            exp_filter = {}
-            if experience_min:
-                exp_filter["$gte"] = experience_min
-            if experience_max:
-                exp_filter["$lte"] = experience_max
-            filters["total_experience_years"] = exp_filter
-        
-        # TODO: Implement database query
-        # TODO: Replace with PostgreSQL repository
-        
-        # For now, return mock data
-        profiles = []
-        total_count = 0
-        
-        # Convert to ProfileSummary objects
-        profile_summaries = []
-        for profile_data in profiles:
-            try:
-                profile = CVProfile(**profile_data)
-                summary = ProfileSummary(
-                    profile_id=profile.profile_id,
-                    email=profile.email,
-                    full_name=profile.full_name,
-                    title=profile.title,
-                    current_company=profile.current_company,
-                    total_experience_years=profile.total_experience_years,
-                    top_skills=profile.skill_names[:5],
-                    last_updated=profile.updated_at,
-                    processing_status=profile.processing.processing_status,
-                    quality_score=profile.processing.quality_score
-                )
-                profile_summaries.append(summary)
-            except Exception as e:
-                logger.warning(f"Failed to convert profile to summary: {e}")
-                continue
-        
-        response = PaginatedResponse.create(
-            items=profile_summaries,
-            total=total_count,
-            page=pagination.page,
-            size=pagination.size
+        result = await profile_service.list_profiles(
+            tenant_id=UUID(str(current_user.tenant_id)),
+            pagination_offset=pagination.offset,
+            pagination_limit=pagination.limit,
+            status_filter=status_filter,
+            include_incomplete=include_incomplete,
+            quality_min=quality_min,
+            experience_min=experience_min,
+            experience_max=experience_max,
+            skill_filter=skill_filter,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
-        
-        return response
+
+        page_items = [
+            ProfileSummary(
+                profile_id=item.profile_id,
+                email=item.email,
+                full_name=item.full_name,
+                title=item.title,
+                current_company=item.current_company,
+                total_experience_years=item.total_experience_years,
+                top_skills=item.top_skills,
+                last_updated=item.last_updated,
+                processing_status=item.processing_status,
+                quality_score=item.quality_score,
+            )
+            for item in result.items
+        ]
+
+        return PaginatedResponse.create(
+            items=page_items,
+            total=result.total,
+            page=pagination.page,
+            size=pagination.size,
+        )
         
     except DomainException as domain_exc:
         # Map domain exceptions to appropriate HTTP responses
@@ -471,12 +403,12 @@ async def restore_profile(
         )
 
 
-@router.get("/{profile_id}/analytics", response_model=ProfileAnalytics)
+@router.get("/{profile_id}/analytics", response_model=ProfileAnalyticsSummary)
 async def get_profile_analytics(
     profile_id: str,
     current_user: CurrentUserDep,
     time_range_days: int = Query(30, ge=1, le=365, description="Analytics time range in days")
-) -> ProfileAnalytics:
+) -> ProfileAnalyticsSummary:
     """
     Get comprehensive analytics for a profile.
     
@@ -491,7 +423,7 @@ async def get_profile_analytics(
         # TODO: Implement analytics retrieval
         # This would involve querying various analytics tables/collections
         
-        analytics = ProfileAnalytics(
+        analytics = ProfileAnalyticsSummary(
             profile_id=profile_id,
             view_count=0,
             search_appearances=0,

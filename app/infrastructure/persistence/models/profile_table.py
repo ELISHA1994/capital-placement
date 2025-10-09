@@ -468,19 +468,37 @@ class ProfileTable(AuditableModel, table=True):
 
     def get_embeddings(self) -> ProfileEmbeddings:
         """Get embeddings as ProfileEmbeddings model."""
+        def _coerce(values: Optional[List[float]]) -> Optional[List[float]]:
+            if values is None:
+                return None
+            coerced: List[float] = []
+            for entry in values:
+                if entry is None:
+                    continue
+                try:
+                    coerced.append(float(entry))
+                except (TypeError, ValueError):
+                    continue
+            return coerced
+
+        overall_values = _coerce(self.overall_embedding) or []
+        skills_values = _coerce(self.skills_embedding)
+        experience_values = _coerce(self.experience_embedding)
+        summary_values = _coerce(self.summary_embedding)
+
         return ProfileEmbeddings(
-            overall=self.overall_embedding or [],
-            skills=self.skills_embedding,
-            experience=self.experience_embedding,
-            summary=self.summary_embedding
+            overall=overall_values,
+            skills=skills_values,
+            experience=experience_values,
+            summary=summary_values
         )
 
     def set_embeddings(self, embeddings: ProfileEmbeddings) -> None:
         """Set embeddings from ProfileEmbeddings model."""
-        self.overall_embedding = embeddings.overall
-        self.skills_embedding = embeddings.skills
-        self.experience_embedding = embeddings.experience
-        self.summary_embedding = embeddings.summary
+        self.overall_embedding = [float(v) for v in embeddings.overall] if embeddings.overall else None
+        self.skills_embedding = [float(v) for v in embeddings.skills] if embeddings.skills else None
+        self.experience_embedding = [float(v) for v in embeddings.experience] if embeddings.experience else None
+        self.summary_embedding = [float(v) for v in embeddings.summary] if embeddings.summary else None
 
     def get_processing_metadata(self) -> ProcessingMetadata:
         """Get processing metadata as ProcessingMetadata model."""

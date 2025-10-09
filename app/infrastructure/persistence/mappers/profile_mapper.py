@@ -454,10 +454,20 @@ class ProfileMapper:
             ProfileEmbeddings with EmbeddingVector value objects
         """
         def _as_embedding_vector(values: Optional[List[float]]) -> Optional[EmbeddingVector]:
-            if not values:
+            if values is None:
                 return None
-            length = len(values)
-            return EmbeddingVector(dimensions=length, values=list(values))
+            coerced: List[float] = []
+            for entry in values:
+                if entry is None:
+                    continue
+                try:
+                    coerced.append(float(entry))
+                except (TypeError, ValueError):
+                    continue
+            if not coerced:
+                return None
+            length = len(coerced)
+            return EmbeddingVector(dimensions=length, values=coerced)
 
         return ProfileEmbeddings(
             overall=_as_embedding_vector(overall),

@@ -87,10 +87,13 @@ from app.api.schemas.notification_schemas import (
 
 # Profile schemas
 from app.api.schemas.profile_schemas import (
+    BulkOperationRequest,
+    ProfileAnalyticsSummary,
     ProfileCreate,
     ProfileListResponse,
     ProfileResponse,
     ProfileSearchFilters,
+    ProfileSummary,
     ProfileUpdate,
 )
 
@@ -207,10 +210,13 @@ __all__ = [
     "WebhookNotification",
     # Profiles
     "ProfileCreate",
+    "BulkOperationRequest",
     "ProfileListResponse",
     "ProfileResponse",
     "ProfileSearchFilters",
+    "ProfileSummary",
     "ProfileUpdate",
+    "ProfileAnalyticsSummary",
     # Search
     "EducationRequirement",
     "ExperienceRequirement",

@@ -109,8 +109,9 @@ class OpenAIService(IAIService):
                     "temperature": self._config["temperature"]
                 }
             }
-    
-    def _get_embedding_dimensions(self, model: str) -> int:
+
+    @staticmethod
+    def _get_embedding_dimensions(model: str) -> int:
         """Get embedding dimensions for OpenAI models"""
         dimension_map = {
             "text-embedding-3-large": 3072,
@@ -446,9 +447,10 @@ class OpenAIService(IAIService):
             logger.warning(f"Text truncated to {max_chars} characters")
         
         return text
-    
-    def _get_cache_key(self, operation: str, text: str, model: str) -> str:
-        """Generate cache key for operations"""
+
+    @staticmethod
+    def _get_cache_key(operation: str, text: str, model: str) -> str:
+        """Generate a cache key for operations"""
         text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
         return f"openai:{operation}:{model}:{text_hash}"
     

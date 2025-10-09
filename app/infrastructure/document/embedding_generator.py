@@ -318,17 +318,21 @@ class EmbeddingGenerator:
             )
             
             # Create document embedding
+            metadata = {
+                "sections_count": len(structured_content.sections),
+                "summary_length": len(structured_content.summary),
+                "quality_score": structured_content.quality_assessment.get("overall_quality", 0),
+                "processing_metadata": structured_content.processing_metadata,
+            }
+            if tenant_id:
+                metadata["tenant_id"] = tenant_id
+
             return DocumentEmbedding(
                 document_id=document_id,
                 document_type=structured_content.document_type,
                 embedding_vector=embedding_vector,
                 content_hash=self._generate_content_hash(document_content),
-                metadata={
-                    "sections_count": len(structured_content.sections),
-                    "summary_length": len(structured_content.summary),
-                    "quality_score": structured_content.quality_assessment.get("overall_quality", 0),
-                    "processing_metadata": structured_content.processing_metadata
-                },
+                metadata=metadata,
                 created_at=datetime.now()
             )
             
@@ -365,6 +369,17 @@ class EmbeddingGenerator:
             
             # Create section embeddings
             for (section_index, section), embedding_vector in zip(sections_to_process, embedding_vectors):
+                metadata = {
+                    "section_index": section_index,
+                    "confidence": section.confidence,
+                    "start_position": section.start_position,
+                    "end_position": section.end_position,
+                    "content_length": len(section.content),
+                    **section.metadata,
+                }
+                if tenant_id:
+                    metadata["tenant_id"] = tenant_id
+
                 section_embedding = SectionEmbedding(
                     section_id=f"{document_id}_section_{section_index}",
                     document_id=document_id,
@@ -372,14 +387,7 @@ class EmbeddingGenerator:
                     title=section.title,
                     embedding_vector=embedding_vector,
                     content_hash=self._generate_content_hash(section.content),
-                    metadata={
-                        "section_index": section_index,
-                        "confidence": section.confidence,
-                        "start_position": section.start_position,
-                        "end_position": section.end_position,
-                        "content_length": len(section.content),
-                        **section.metadata
-                    },
+                    metadata=metadata,
                     created_at=datetime.now()
                 )
                 section_embeddings.append(section_embedding)
@@ -490,8 +498,9 @@ class EmbeddingGenerator:
             
         except Exception as e:
             logger.warning(f"Failed to delete existing embeddings: {e}")
-    
-    def _prepare_document_content(self, pdf_document: PDFDocument) -> str:
+
+    @staticmethod
+    def _prepare_document_content(pdf_document: PDFDocument) -> str:
         """Prepare document content for embedding"""
         content_parts = []
         
@@ -512,8 +521,9 @@ class EmbeddingGenerator:
         content_parts.append(document_text)
         
         return "\n\n".join(content_parts)
-    
-    def _format_key_information(self, key_info: Dict[str, Any]) -> str:
+
+    @staticmethod
+    def _format_key_information(key_info: Dict[str, Any]) -> str:
         """Format key information for embedding"""
         formatted_parts = []
         
@@ -524,8 +534,9 @@ class EmbeddingGenerator:
                 formatted_parts.append(f"{key}: {', '.join(str(v) for v in value)}")
         
         return "\n".join(formatted_parts)
-    
-    def _generate_content_hash(self, content: str) -> str:
+
+    @staticmethod
+    def _generate_content_hash(content: str) -> str:
         """Generate hash for content deduplication"""
         return hashlib.sha256(content.encode()).hexdigest()
     
