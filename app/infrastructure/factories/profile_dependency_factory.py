@@ -26,36 +26,15 @@ async def get_profile_dependencies() -> ProfileDependencies:
     # Required dependency
     profile_repository = await get_profile_repository()
 
-    # Initialize optional services (failures don't block service creation)
-    usage_service = None
-    audit_service = None
-    embedding_service = None
-    search_index_service = None  # TODO: Implement when search index service is available
-
-    try:
-        usage_service = await get_usage_service()
-        logger.debug("Usage service initialized for profile operations")
-    except Exception as e:
-        logger.warning(f"Usage service unavailable: {e}")
-
-    try:
-        audit_service = await get_audit_service()
-        logger.debug("Audit service initialized for profile operations")
-    except Exception as e:
-        logger.warning(f"Audit service unavailable: {e}")
-
-    try:
-        embedding_service = await get_embedding_service()
-        logger.debug("Embedding service initialized for profile operations")
-    except Exception as e:
-        logger.warning(f"Embedding service unavailable: {e}")
+    # Initialize optional services
+    usage_service = await get_usage_service()
+    audit_service = await get_audit_service()
+    embedding_service = await get_embedding_service()
 
     # TODO: Implement search_index_service when available
-    # try:
-    #     search_index_service = await get_search_index_service()
-    #     logger.debug("Search index service initialized for profile operations")
-    # except Exception as e:
-    #     logger.warning(f"Search index service unavailable: {e}")
+    # search_index_service = await get_search_index_service()
+    # logger.debug("Search index service initialized for profile operations")
+    search_index_service = None
 
     return ProfileDependencies(
         profile_repository=profile_repository,
