@@ -390,6 +390,47 @@ class Profile:
 
         return issues
 
+    def validate_can_restore(self) -> list[str]:
+        """Validate if profile can be restored, return list of issues.
+
+        Returns:
+            List of validation issues preventing restoration. Empty list means restoration is allowed.
+        """
+        issues = []
+
+        # Check if profile is deleted
+        if self.status != ProfileStatus.DELETED:
+            issues.append("Profile must be deleted to restore")
+
+        # Additional business rules can be added here as needed
+
+        return issues
+
+    def restore(self) -> None:
+        """Restore a soft-deleted profile to active status.
+
+        Raises:
+            ValueError: If validation fails or profile cannot be restored.
+        """
+        validation_issues = self.validate_can_restore()
+        if validation_issues:
+            raise ValueError(f"Cannot restore profile: {', '.join(validation_issues)}")
+
+        # Restore profile status
+        self.status = ProfileStatus.ACTIVE
+
+        # Clear deletion metadata
+        if "deletion_reason" in self.metadata:
+            del self.metadata["deletion_reason"]
+        if "deleted_at" in self.metadata:
+            del self.metadata["deleted_at"]
+
+        # Reset privacy deletion flag
+        self.privacy.deletion_requested = False
+
+        # Update timestamp
+        self.updated_at = datetime.utcnow()
+
     def activate(self) -> None:
         """Activate the profile."""
         if self.status == ProfileStatus.DELETED:

@@ -1066,6 +1066,120 @@ class ProfileApplicationService:
 
         return deleted_profile
 
+    async def restore_profile(
+        self,
+        *,
+        tenant_id: TenantId,
+        profile_id: ProfileId,
+        user_id: str,
+        schedule_task: Any | None = None,
+    ) -> Profile | None:
+        """Restore a soft-deleted profile.
+
+        Orchestrates profile restoration workflow:
+        - Validate restoration is allowed
+        - Restore profile in domain
+        - Save to repository
+        - Schedule background tasks (regenerate embeddings, update search index)
+        - Track usage and audit logging
+
+        Args:
+            tenant_id: Tenant identifier
+            profile_id: Profile to restore
+            user_id: User performing restoration
+            schedule_task: Task scheduler for background operations
+
+        Returns:
+            Restored Profile entity, or None if not found
+
+        Raises:
+            ValueError: If restoration validation fails
+        """
+        logger.info(
+            "restore_profile_requested",
+            tenant_id=str(tenant_id),
+            profile_id=str(profile_id),
+            user_id=user_id,
+        )
+
+        # Fetch profile
+        repository = self._deps.profile_repository
+        profile = await repository.get_by_id(profile_id, tenant_id)
+
+        if not profile:
+            logger.warning(
+                "restore_profile_not_found",
+                tenant_id=str(tenant_id),
+                profile_id=str(profile_id),
+            )
+            return None
+
+        # Validate restoration is allowed
+        validation_issues = profile.validate_can_restore()
+        if validation_issues:
+            error_msg = f"Cannot restore profile: {', '.join(validation_issues)}"
+            logger.error(
+                "restore_profile_validation_failed",
+                tenant_id=str(tenant_id),
+                profile_id=str(profile_id),
+                issues=validation_issues,
+            )
+            raise ValueError(error_msg)
+
+        # Perform restoration at domain level
+        profile.restore()
+
+        # Save restored profile
+        restored_profile = await repository.save(profile)
+
+        # Schedule background tasks
+        # Regenerate embeddings for restored profile
+        if self._deps.embedding_service:
+            await self._enqueue_background(
+                schedule_task,
+                self._regenerate_profile_embeddings,
+                str(profile_id.value),
+                str(tenant_id.value),
+                user_id,
+            )
+
+        # Update search index to make profile searchable again
+        if self._deps.search_index_service:
+            await self._enqueue_background(
+                schedule_task,
+                self._update_search_index,
+                str(profile_id.value),
+                str(tenant_id.value),
+                restored_profile,
+            )
+
+        # Track usage
+        await self._enqueue_background(
+            schedule_task,
+            self._track_profile_restoration_usage,
+            str(tenant_id.value),
+            user_id,
+        )
+
+        # Log audit event
+        if self._deps.audit_service:
+            await self._enqueue_background(
+                schedule_task,
+                self._log_profile_restore_audit,
+                str(tenant_id.value),
+                user_id,
+                str(profile_id.value),
+            )
+
+        logger.info(
+            "restore_profile_completed",
+            tenant_id=str(tenant_id),
+            profile_id=str(profile_id),
+            user_id=user_id,
+        )
+
+        return restored_profile
+
     async def permanently_delete_profile(
         self,
         *,
@@ -1239,6 +1353,70 @@ class ProfileApplicationService:
         except Exception as exc:
             logger.warning(
                 "Failed to log profile deletion audit",
+                profile_id=profile_id,
+                error=str(exc),
+            )
+
+    async def _track_profile_restoration_usage(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> None:
+        """Track profile restoration usage metrics."""
+        try:
+            if self._deps.usage_service:
+                await self._deps.usage_service.track_usage(
+                    tenant_id=tenant_id,
+                    resource_type="profile",
+                    amount=1,
+                    metadata={
+                        "operation": "restore",
+                        "user_id": user_id,
+                    },
+                )
+                logger.debug(
+                    "Profile restoration usage tracked",
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                )
+        except Exception as exc:
+            logger.warning(
+                "Failed to track profile restoration usage",
+                tenant_id=tenant_id,
+                error=str(exc),
+            )
+
+    async def _log_profile_restore_audit(
+        self,
+        tenant_id: str,
+        user_id: str,
+        profile_id: str,
+    ) -> None:
+        """Log profile restoration audit event."""
+        try:
+            if not self._deps.audit_service:
+                return
+
+            await self._deps.audit_service.log_event(
+                event_type="profile_restored",
+                tenant_id=tenant_id,
+                action="restore",
+                resource_type="profile",
+                user_id=user_id,
+                resource_id=profile_id,
+                details={
+                    "operation": "restore_deleted_profile",
+                },
+            )
+
+            logger.debug(
+                "Profile restoration audit logged",
+                tenant_id=tenant_id,
+                profile_id=profile_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to log profile restoration audit",
                 profile_id=profile_id,
                 error=str(exc),
             )

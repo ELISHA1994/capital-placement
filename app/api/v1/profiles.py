@@ -18,25 +18,32 @@ import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.domain.entities.profile import ProcessingStatus
+from app.api.dependencies import ProfileServiceDep, map_domain_exception_to_http
+from app.api.schemas.base import PaginatedResponse
 from app.api.schemas.profile_schemas import (
     BulkOperationRequest,
     Profile as ProfileSchema,
     ProfileAnalyticsSummary,
     ProfileDeletionResponse,
+    ProfileRestorationResponse,
     ProfileSummary,
     ProfileUpdate,
 )
-from app.infrastructure.persistence.mappers.profile_mapper import ProfileMapper
-from app.domain.value_objects import ProfileId, TenantId
-from app.api.schemas.base import PaginatedResponse
-from app.infrastructure.persistence.models.base import PaginationModel
-from app.core.dependencies import CurrentUserDep, TenantContextDep, AuthzService, require_permission
-from app.infrastructure.providers.usage_provider import get_usage_service
-from app.api.dependencies import ProfileServiceDep, map_domain_exception_to_http
+from app.core.dependencies import (
+    AuthzService,
+    CurrentUserDep,
+    TenantContextDep,
+    require_permission,
+)
+from app.domain.entities.profile import ProcessingStatus
 from app.domain.exceptions import DomainException, ProfileNotFoundError
-from app.infrastructure.providers.tenant_provider import get_tenant_service as get_tenant_manager
-
+from app.domain.value_objects import ProfileId, TenantId
+from app.infrastructure.persistence.mappers.profile_mapper import ProfileMapper
+from app.infrastructure.persistence.models.base import PaginationModel
+from app.infrastructure.providers.tenant_provider import (
+    get_tenant_service as get_tenant_manager,
+)
+from app.infrastructure.providers.usage_provider import get_usage_service
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/profiles", tags=["profiles"])
@@ -375,48 +382,105 @@ async def delete_profile(
         )
 
 
-@router.post("/{profile_id}/restore")
+@router.post("/{profile_id}/restore", response_model=ProfileRestorationResponse)
 async def restore_profile(
     profile_id: str,
     current_user: CurrentUserDep,
+    profile_service: ProfileServiceDep,
     background_tasks: BackgroundTasks = BackgroundTasks()
-) -> JSONResponse:
+) -> ProfileRestorationResponse:
     """
     Restore a soft-deleted profile.
-    
-    Includes:
+
+    Restores a previously soft-deleted profile, including:
     - Profile data restoration
     - Search index re-indexing
     - Analytics data reactivation
+    - Embedding regeneration
+
+    Args:
+        profile_id: Profile identifier to restore
+        current_user: Authenticated user context
+        profile_service: Profile application service (dependency injection)
+        background_tasks: FastAPI background task scheduler
+
+    Returns:
+        ProfileRestorationResponse with restoration status and details
+
+    Raises:
+        404: Profile not found or not deleted
+        400: Validation error (e.g., cannot restore this profile)
+        500: Internal server error
     """
     try:
         logger.info(
-            "Profile restoration requested",
+            "Profile restoration requested via API",
             profile_id=profile_id,
-            user_id=current_user.user_id
+            user_id=current_user.user_id,
+            tenant_id=current_user.tenant_id,
         )
-        
-        # TODO: Implement profile restoration
-        # Check if profile exists and is soft-deleted
-        # Restore profile data
-        # Re-index for search
-        
-        background_tasks.add_task(
-            _reindex_restored_profile,
-            profile_id=profile_id
+
+        # Convert IDs to value objects
+        profile_vo = ProfileId(profile_id)
+        tenant_vo = TenantId(current_user.tenant_id)
+
+        # Call service - it handles ALL business logic
+        restored_profile = await profile_service.restore_profile(
+            tenant_id=tenant_vo,
+            profile_id=profile_vo,
+            user_id=current_user.user_id,
+            schedule_task=background_tasks,
         )
-        
-        return JSONResponse(content={
-            "status": "restored",
-            "profile_id": profile_id,
-            "message": "Profile has been restored"
-        })
-        
+
+        # Map service result to HTTP response
+        if not restored_profile:
+            raise HTTPException(
+                status_code=404,
+                detail="Profile not found or not deleted"
+            )
+
+        logger.info(
+            "Profile restoration completed via API",
+            profile_id=profile_id,
+            user_id=current_user.user_id,
+        )
+
+        # Return ProfileRestorationResponse schema
+        return ProfileRestorationResponse(
+            success=True,
+            profile_id=profile_id,
+            message="Profile restored successfully and re-indexed for search",
+        )
+
+    except ValueError as e:
+        # Validation errors (cannot restore, etc.)
+        logger.warning(
+            "Profile restoration validation failed",
+            profile_id=profile_id,
+            error=str(e),
+            user_id=current_user.user_id,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+
+    except DomainException as domain_exc:
+        # Map domain exceptions to appropriate HTTP responses
+        raise map_domain_exception_to_http(domain_exc)
+
     except Exception as e:
-        logger.error(f"Failed to restore profile: {e}")
+        # Unexpected errors
+        logger.error(
+            "Profile restoration failed",
+            profile_id=profile_id,
+            error=str(e),
+            user_id=current_user.user_id,
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=500,
-            detail="Failed to restore profile"
+            detail="Internal server error during profile restoration"
         )
 
 

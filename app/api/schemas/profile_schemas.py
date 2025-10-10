@@ -14,8 +14,8 @@ from pydantic import Field
 from app.domain.entities.profile import ProcessingStatus
 from app.infrastructure.persistence.models.base import BaseModel
 from app.infrastructure.persistence.models.profile_table import (
-    ProcessingMetadata,
     PrivacySettings,
+    ProcessingMetadata,
     ProfileAnalytics,
     ProfileData,
     ProfileEmbeddings,
@@ -262,3 +262,11 @@ class ProfileDeletionResponse(BaseModel):
     profile_id: str = Field(..., description="ID of deleted profile")
     message: str = Field(..., description="Human-readable deletion message")
     can_restore: bool = Field(default=False, description="Whether profile can be restored")
+
+
+class ProfileRestorationResponse(BaseModel):
+    """Response for profile restoration operation."""
+
+    success: bool = Field(..., description="Whether restoration was successful")
+    profile_id: str = Field(..., description="ID of the restored profile")
+    message: str = Field(..., description="Human-readable message about the restoration")
