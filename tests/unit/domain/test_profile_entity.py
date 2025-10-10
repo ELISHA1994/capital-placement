@@ -1267,7 +1267,107 @@ class TestSkillValueObject:
 
 
 # ============================================================================
-# 16. Property-Based Tests with Hypothesis (3 tests)
+# 16. Profile Restoration Tests (7 tests)
+# ============================================================================
+
+class TestProfileRestoration:
+    """Test profile restoration functionality."""
+
+    @pytest.fixture
+    def deleted_profile(self, minimal_profile_data: ProfileData) -> Profile:
+        """Create a soft-deleted profile for testing restoration."""
+        profile = Profile(
+            id=ProfileId(uuid4()),
+            tenant_id=TenantId(uuid4()),
+            status=ProfileStatus.DELETED,
+            profile_data=minimal_profile_data,
+        )
+        profile.metadata["deletion_reason"] = "User requested deletion"
+        profile.metadata["deleted_at"] = datetime.utcnow().isoformat()
+        profile.privacy.deletion_requested = True
+        return profile
+
+    def test_validate_can_restore_returns_empty_list_for_deleted_profile(self, deleted_profile: Profile):
+        """Should return empty list when deleted profile can be restored."""
+        # Act
+        issues = deleted_profile.validate_can_restore()
+
+        # Assert
+        assert issues == []
+        assert len(issues) == 0
+
+    def test_validate_can_restore_returns_issues_for_active_profile(self, profile_with_minimal_data: Profile):
+        """Should return validation issues when trying to restore non-deleted profile."""
+        # Arrange
+        profile_with_minimal_data.status = ProfileStatus.ACTIVE
+
+        # Act
+        issues = profile_with_minimal_data.validate_can_restore()
+
+        # Assert
+        assert len(issues) > 0
+        assert "Profile must be deleted to restore" in issues
+
+    def test_restore_changes_status_to_active(self, deleted_profile: Profile):
+        """Should change status from DELETED to ACTIVE."""
+        # Arrange
+        assert deleted_profile.status == ProfileStatus.DELETED
+
+        # Act
+        deleted_profile.restore()
+
+        # Assert
+        assert deleted_profile.status == ProfileStatus.ACTIVE
+
+    def test_restore_clears_deletion_metadata(self, deleted_profile: Profile):
+        """Should clear deletion_reason and deleted_at from metadata."""
+        # Arrange
+        assert "deletion_reason" in deleted_profile.metadata
+        assert "deleted_at" in deleted_profile.metadata
+
+        # Act
+        deleted_profile.restore()
+
+        # Assert
+        assert "deletion_reason" not in deleted_profile.metadata
+        assert "deleted_at" not in deleted_profile.metadata
+
+    def test_restore_resets_privacy_deletion_flag(self, deleted_profile: Profile):
+        """Should set privacy.deletion_requested to False."""
+        # Arrange
+        assert deleted_profile.privacy.deletion_requested is True
+
+        # Act
+        deleted_profile.restore()
+
+        # Assert
+        assert deleted_profile.privacy.deletion_requested is False
+
+    def test_restore_updates_timestamp(self, deleted_profile: Profile):
+        """Should update updated_at timestamp."""
+        # Arrange
+        original_updated_at = deleted_profile.updated_at
+
+        # Act
+        import time
+        time.sleep(0.01)
+        deleted_profile.restore()
+
+        # Assert
+        assert deleted_profile.updated_at > original_updated_at
+
+    def test_restore_raises_error_for_active_profile(self, profile_with_minimal_data: Profile):
+        """Should raise ValueError when trying to restore non-deleted profile."""
+        # Arrange
+        profile_with_minimal_data.status = ProfileStatus.ACTIVE
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="Cannot restore profile: Profile must be deleted to restore"):
+            profile_with_minimal_data.restore()
+
+
+# ============================================================================
+# 17. Property-Based Tests with Hypothesis (3 tests)
 # ============================================================================
 
 class TestProfilePropertyBased:
