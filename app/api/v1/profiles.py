@@ -53,19 +53,19 @@ async def list_profiles(
     current_user: CurrentUserDep,
     profile_service: ProfileServiceDep,
     pagination: PaginationModel = Depends(),
-    status_filter: ProcessingStatus | None = Query(
+    status_filter: ProcessingStatus = Query(
         None, description="Filter by processing status"
     ),
-    skill_filter: str | None = Query(
+    skill_filter: str = Query(
         None, description="Filter by skill (partial match)"
     ),
-    experience_min: int | None = Query(
+    experience_min: int = Query(
         None, ge=0, description="Minimum years of experience"
     ),
-    experience_max: int | None = Query(
+    experience_max: int = Query(
         None, ge=0, description="Maximum years of experience"
     ),
-    quality_min: float | None = Query(
+    quality_min: float = Query(
         None, ge=0.0, le=1.0, description="Minimum quality score"
     ),
     sort_by: str = Query(
@@ -259,7 +259,7 @@ async def delete_profile(
     current_user: CurrentUserDep,
     profile_service: ProfileServiceDep,
     permanent: bool = Query(False, description="Permanently delete (vs soft delete)"),
-    reason: str | None = Query(None, description="Reason for deletion"),
+    reason: str = Query(None, description="Reason for deletion"),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> JSONResponse:
     """

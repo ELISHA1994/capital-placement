@@ -12,8 +12,10 @@ Advanced caching system for AI operations with semantic similarity:
 import json
 import time
 import hashlib
+import uuid
 from typing import Dict, List, Optional, Any, Tuple, Union
 from datetime import datetime, timedelta
+from enum import Enum
 import asyncio
 import structlog
 import numpy as np
@@ -22,6 +24,20 @@ from sklearn.metrics.pairwise import cosine_similarity
 from app.core.config import get_settings
 
 logger = structlog.get_logger(__name__)
+
+
+# ✅ FIX P0: Custom JSON encoder to handle UUID, Enum, and datetime serialization
+class UUIDEncoder(json.JSONEncoder):
+    """JSON encoder that handles UUID, Enum, and datetime objects."""
+
+    def default(self, obj):
+        if isinstance(obj, uuid.UUID):
+            return str(obj)
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, Enum):
+            return obj.value
+        return super().default(obj)
 
 
 class CacheEntry:
@@ -249,7 +265,7 @@ class CacheManager:
             if self.redis_client:
                 try:
                     cache_key = f"cache:{key}"
-                    entry_json = json.dumps(entry.to_dict())
+                    entry_json = json.dumps(entry.to_dict(), cls=UUIDEncoder)  # ✅ FIX P2: Use UUID encoder
                     
                     if ttl:
                         await self.redis_client.setex(cache_key, ttl, entry_json)
@@ -268,7 +284,7 @@ class CacheManager:
                         await self.redis_client.setex(
                             embedding_key,
                             ttl or self.settings.SEMANTIC_CACHE_TTL,
-                            json.dumps(embedding_data)
+                            json.dumps(embedding_data, cls=UUIDEncoder)  # ✅ FIX P2: Use UUID encoder
                         )
                         
                 except Exception as e:

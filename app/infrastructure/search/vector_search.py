@@ -437,34 +437,34 @@ class VectorSearchService(IHealthCheck):
             # Add tenant filtering
             if tenant_id:
                 param_count += 1
-                where_conditions.append(f"tenant_id = ${param_count}")
+                where_conditions.append(f"e.tenant_id = ${param_count}")
                 params.append(tenant_id)
             
             # Apply search filters
             if search_filter:
                 if search_filter.entity_types:
                     param_count += 1
-                    where_conditions.append(f"entity_type = ANY(${param_count})")
+                    where_conditions.append(f"e.entity_type = ANY(${param_count})")
                     params.append(search_filter.entity_types)
-                
+
                 if search_filter.embedding_models:
                     param_count += 1
-                    where_conditions.append(f"embedding_model = ANY(${param_count})")
+                    where_conditions.append(f"e.embedding_model = ANY(${param_count})")
                     params.append(search_filter.embedding_models)
                 
                 if search_filter.created_after:
                     param_count += 1
-                    where_conditions.append(f"created_at >= ${param_count}")
+                    where_conditions.append(f"e.created_at >= ${param_count}")
                     params.append(search_filter.created_after)
-                
+
                 if search_filter.created_before:
                     param_count += 1
-                    where_conditions.append(f"created_at <= ${param_count}")
+                    where_conditions.append(f"e.created_at <= ${param_count}")
                     params.append(search_filter.created_before)
                 
                 if search_filter.exclude_entity_ids:
                     param_count += 1
-                    where_conditions.append(f"entity_id != ALL(${param_count})")
+                    where_conditions.append(f"e.entity_id != ALL(${param_count})")
                     params.append(search_filter.exclude_entity_ids)
                 
                 if search_filter.metadata_filters:
@@ -474,21 +474,51 @@ class VectorSearchService(IHealthCheck):
                         params.append(str(value))
             
             where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
-            
-            # Construct the full query
-            query = f"""
-                SELECT
-                    entity_id,
-                    entity_type,
-                    embedding {distance_op} $1 AS distance,
-                    tenant_id,
-                    embedding_model,
-                    created_at
-                FROM embeddings
-                {where_clause}
-                ORDER BY embedding {distance_op} $1
-                LIMIT $2
-            """
+
+            # Construct the full query with JOIN to profiles table for metadata
+            if include_metadata:
+                # Query with LEFT JOIN to fetch profile data
+                query = f"""
+                    SELECT
+                        e.entity_id,
+                        e.entity_type,
+                        e.embedding {distance_op} $1 AS distance,
+                        e.tenant_id,
+                        e.embedding_model,
+                        e.created_at,
+                        -- Profile metadata from profiles table
+                        p.name,
+                        p.email,
+                        p.phone,
+                        p.location_city,
+                        p.location_state,
+                        p.location_country,
+                        p.normalized_skills,
+                        p.searchable_text,
+                        p.status,
+                        p.experience_level,
+                        p.profile_data
+                    FROM embeddings e
+                    LEFT JOIN profiles p ON e.entity_id::uuid = p.id AND e.entity_type = 'profile'
+                    {where_clause}
+                    ORDER BY e.embedding {distance_op} $1
+                    LIMIT $2
+                """
+            else:
+                # Minimal query without metadata
+                query = f"""
+                    SELECT
+                        entity_id,
+                        entity_type,
+                        embedding {distance_op} $1 AS distance,
+                        tenant_id,
+                        embedding_model,
+                        created_at
+                    FROM embeddings
+                    {where_clause}
+                    ORDER BY embedding {distance_op} $1
+                    LIMIT $2
+                """
 
             async with self.db_adapter.get_connection() as conn:
                 rows = await conn.fetch(query, *params)
@@ -505,14 +535,43 @@ class VectorSearchService(IHealthCheck):
 
                     # Apply similarity threshold
                     if similarity_score >= similarity_threshold:
-                        # Metadata would need to be fetched from profiles table via join
-                        # For now, return empty metadata dict
+                        # Build metadata from joined profile data
+                        metadata = {}
+                        content_preview = None
+
+                        if include_metadata and row.get('name'):
+                            # Extract profile data from joined columns
+                            metadata = {
+                                "name": row['name'],
+                                "email": row['email'],
+                                "phone": row.get('phone'),
+                                "location": f"{row['location_city']}, {row['location_country']}" if row.get('location_city') and row.get('location_country') else row.get('location_city') or row.get('location_country'),
+                                "location_city": row.get('location_city'),
+                                "location_state": row.get('location_state'),
+                                "location_country": row.get('location_country'),
+                                "skills": row.get('normalized_skills') or [],
+                                "status": row.get('status'),
+                                "experience_level": row.get('experience_level')
+                            }
+
+                            # Extract title and summary from profile_data JSONB
+                            if row.get('profile_data'):
+                                profile_data = row['profile_data']
+                                if isinstance(profile_data, dict):
+                                    metadata["title"] = profile_data.get("headline") or profile_data.get("title")
+                                    metadata["summary"] = profile_data.get("summary")
+
+                            # Set content preview from searchable_text
+                            if row.get('searchable_text'):
+                                content_preview = row['searchable_text'][:500]
+
                         result = VectorSearchResult(
                             entity_id=row['entity_id'],
                             entity_type=row['entity_type'],
                             similarity_score=float(similarity_score),
                             distance=float(row['distance']),
-                            metadata={},  # Embeddings table has no metadata column
+                            metadata=metadata,
+                            content_preview=content_preview,
                             tenant_id=str(row['tenant_id']) if row['tenant_id'] else None,
                             embedding_model=row.get('embedding_model'),
                             created_at=row.get('created_at')

@@ -395,20 +395,52 @@ class SearchApplicationService:
         """
         total_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
 
+        # Import SearchResult model for proper result construction
+        from app.api.schemas.search_schemas import SearchResult, MatchScore
+        from uuid import UUID
+
+        # Convert hybrid search results to API SearchResult models
         search_results = []
         for result in final_results:
             score = getattr(result, "reranked_score", getattr(result, "final_score", 0))
             metadata = getattr(result, "metadata", {}) or {}
-            search_results.append(
-                {
-                    "id": result.entity_id,
-                    "type": result.entity_type,
-                    "score": score,
-                    "title": metadata.get("title", "Untitled"),
-                    "summary": getattr(result, "content_preview", "No preview available"),
-                    "metadata": metadata,
-                }
+
+            # Build match score from result data
+            match_score = MatchScore(
+                overall_score=float(score),
+                relevance_score=float(getattr(result, "final_score", score)),
+                skill_match_score=0.0,
+                experience_match_score=0.0,
+                education_match_score=0.0,
+                location_match_score=0.0,
+                salary_match_score=0.0,
+                vector_similarity=float(getattr(result, "vector_score", 0)) if hasattr(result, "vector_score") else None,
+                keyword_relevance=float(getattr(result, "text_score", 0)) if hasattr(result, "text_score") else None,
+                reranker_score=float(score) if reranking_time_ms > 0 else None,
             )
+
+            # Convert result to SearchResult model
+            search_result = SearchResult(
+                profile_id=str(result.entity_id),  # ✅ FIX P0-A: Convert UUID to string
+                email=metadata.get("email", ""),
+                tenant_id=UUID(str(search_request.tenant_id)),
+                full_name=metadata.get("title", metadata.get("name", "Unknown")),
+                title=metadata.get("title", ""),
+                summary=getattr(result, "content_preview", metadata.get("summary", "No preview available")),
+                current_company=metadata.get("current_company"),
+                current_location=metadata.get("location"),
+                total_experience_years=metadata.get("total_experience_years"),
+                top_skills=metadata.get("skills", [])[:5] if isinstance(metadata.get("skills"), list) else [],
+                key_achievements=[],
+                highest_degree=metadata.get("education"),
+                match_score=match_score,
+                search_highlights={},
+                last_updated=datetime.utcnow(),
+                profile_completeness=0.8,
+                availability_status=metadata.get("availability_status"),
+            )
+
+            search_results.append(search_result)
 
         analytics = SearchAnalytics(
             total_search_time_ms=total_time_ms,
@@ -425,7 +457,7 @@ class SearchApplicationService:
             search_id=search_id,
             query=search_request.query,
             search_mode=search_request.search_mode,
-            results=[],  # TODO: Convert search_results dicts to SearchResult models
+            results=search_results,  # Now passing actual SearchResult model instances
             total_count=len(search_results),
             page=search_request.pagination.page if hasattr(search_request, 'pagination') else 1,
             page_size=search_request.pagination.page_size if hasattr(search_request, 'pagination') else 20,
@@ -518,7 +550,8 @@ class SearchApplicationService:
         if not search_response.results:
             return
 
-        profile_ids = [result["id"] for result in search_response.results]
+        # Extract profile IDs from SearchResult models
+        profile_ids = [result.profile_id for result in search_response.results]
 
         await self._schedule(
             schedule_task,

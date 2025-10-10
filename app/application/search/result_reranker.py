@@ -26,6 +26,7 @@ import numpy as np
 from app.core.config import get_settings
 from app.domain.interfaces import IHealthCheck
 from app.application.search.hybrid_search import HybridSearchResult
+from app.infrastructure.ai.cache_manager import UUIDEncoder
 
 # Import infrastructure types only for type checking
 if TYPE_CHECKING:
@@ -361,21 +362,28 @@ class ResultRerankerService(IHealthCheck):
         config: RerankingConfig
     ) -> List[RerankingResult]:
         """Process a batch of results for semantic reranking"""
-        
+
         try:
+            # ✅ FIX P1: Filter out None results before processing
+            valid_results = [r for r in results if r is not None]
+
+            if not valid_results:
+                logger.warning("No valid results to rerank in batch")
+                return []
+
             # Prepare context for AI model
             context_data = {
                 "query": query,
                 "results": []
             }
-            
-            for result in results:
+
+            for result in valid_results:  # ✅ Use valid_results instead of results
                 result_context = {
                     "entity_id": result.entity_id,
                     "entity_type": result.entity_type,
                     "original_score": result.final_score,
-                    "content_preview": result.content_preview,
-                    "metadata": result.metadata
+                    "content_preview": result.content_preview or "",  # ✅ Handle None
+                    "metadata": result.metadata or {}  # ✅ Handle None
                 }
                 context_data["results"].append(result_context)
             
@@ -944,17 +952,17 @@ class ResultRerankerService(IHealthCheck):
         
         try:
             # Create cache key based on query and result IDs
-            result_ids = sorted([r.entity_id for r in results])
+            result_ids = sorted([str(r.entity_id) for r in results])  # Convert UUIDs to strings
             cache_data = {
                 "query": query.lower().strip(),
                 "result_ids": result_ids,
-                "tenant_id": tenant_id,
+                "tenant_id": str(tenant_id) if tenant_id else None,  # Convert UUID to string
                 "strategy": config.strategy.value,
-                "weights": config.criteria_weights
+                "weights": {k.value: v for k, v in config.criteria_weights.items()}  # Convert Enum keys to values
             }
-            
-            cache_key = f"reranking:{hash(json.dumps(cache_data, sort_keys=True)) % (2**31)}"
-            
+
+            cache_key = f"reranking:{hash(json.dumps(cache_data, sort_keys=True, cls=UUIDEncoder)) % (2**31)}"
+
             cached_response = await self.cache_manager.get(
                 cache_key,
                 content_type="reranking_results"
@@ -986,21 +994,21 @@ class ResultRerankerService(IHealthCheck):
         
         try:
             # Create cache key
-            result_ids = sorted([r.entity_id for r in results])
+            result_ids = sorted([str(r.entity_id) for r in results])  # Convert UUIDs to strings
             cache_data = {
                 "query": query.lower().strip(),
                 "result_ids": result_ids,
-                "tenant_id": tenant_id,
+                "tenant_id": str(tenant_id) if tenant_id else None,  # Convert UUID to string
                 "strategy": config.strategy.value,
-                "weights": config.criteria_weights
+                "weights": {k.value: v for k, v in config.criteria_weights.items()}  # Convert Enum keys to values
             }
-            
-            cache_key = f"reranking:{hash(json.dumps(cache_data, sort_keys=True)) % (2**31)}"
-            
+
+            cache_key = f"reranking:{hash(json.dumps(cache_data, sort_keys=True, cls=UUIDEncoder)) % (2**31)}"
+
             # Convert response to cacheable format
-            cacheable_response = asdict(response)
+            cacheable_response = self._serialize_reranking_response(response)
             cacheable_response["cache_hit"] = False
-            
+
             await self.cache_manager.set(
                 key=cache_key,
                 value=cacheable_response,
@@ -1067,16 +1075,16 @@ class ResultRerankerService(IHealthCheck):
     
     async def check_health(self) -> Dict[str, Any]:
         """Check result reranker service health"""
-        
+
         try:
             start_time = datetime.now()
-            
+
             # Test OpenAI service
             openai_health = await self.openai_service.check_health()
-            
+
             # Test prompt manager
             prompt_health = "available"
-            
+
             # Test cache service
             cache_health = "disabled"
             if self.cache_manager:
@@ -1085,9 +1093,9 @@ class ResultRerankerService(IHealthCheck):
                     cache_health = cache_status.get('status', 'unknown')
                 except Exception:
                     cache_health = "error"
-            
+
             health_check_time = int((datetime.now() - start_time).total_seconds() * 1000)
-            
+
             return {
                 "status": "healthy",
                 "result_reranker_service": "operational",
@@ -1098,10 +1106,61 @@ class ResultRerankerService(IHealthCheck):
                 "health_check_time_ms": health_check_time,
                 "timestamp": datetime.now().isoformat()
             }
-            
+
         except Exception as e:
             return {
                 "status": "unhealthy",
                 "error": str(e),
                 "timestamp": datetime.now().isoformat()
             }
+
+    # === STATIC HELPER METHODS ===
+
+    @staticmethod
+    def _serialize_reranking_response(response: RerankingResponse) -> Dict[str, Any]:
+        """
+        Serialize RerankingResponse for Redis caching, converting enums to strings.
+
+        Handles conversion of:
+        - RankingStrategy enum to string value
+        - RankingCriteria enum to string value (in nested RankingCriterion objects)
+        - Nested dataclass structures
+        - UUID objects to strings
+
+        Args:
+            response: RerankingResponse object to serialize
+
+        Returns:
+            Dictionary with all enums converted to string values, safe for Redis JSON serialization
+        """
+        # Convert response to dict using dataclasses.asdict
+        response_dict = asdict(response)
+
+        # Convert strategy enum to string value
+        if hasattr(response.strategy, 'value'):
+            response_dict["strategy"] = response.strategy.value
+
+        # Convert nested RankingCriteria enums in results
+        for result in response_dict.get("results", []):
+            if "ranking_criteria" in result:
+                for criterion in result["ranking_criteria"]:
+                    # Convert enum name to string value
+                    if "name" in criterion and hasattr(criterion["name"], "value"):
+                        criterion["name"] = criterion["name"].value
+
+        # Convert config criteria_weights enums in metadata (if present)
+        if "reranking_metadata" in response_dict and response_dict["reranking_metadata"]:
+            metadata = response_dict["reranking_metadata"]
+            if "config" in metadata and isinstance(metadata["config"], dict):
+                config = metadata["config"]
+                if "criteria_weights" in config and isinstance(config["criteria_weights"], dict):
+                    # Convert enum keys to string values
+                    config["criteria_weights"] = {
+                        k.value if hasattr(k, "value") else str(k): v
+                        for k, v in config["criteria_weights"].items()
+                    }
+                # Convert strategy enum in config
+                if "strategy" in config and hasattr(config["strategy"], "value"):
+                    config["strategy"] = config["strategy"].value
+
+        return response_dict

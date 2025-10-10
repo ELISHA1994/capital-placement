@@ -76,7 +76,7 @@ class QueryProcessor:
         self.prompt_manager = prompt_manager
         self.cache_manager = cache_manager
         self.db_adapter = db_adapter
-        
+
         # Processing statistics
         self._stats = {
             "queries_processed": 0,
@@ -85,6 +85,9 @@ class QueryProcessor:
             "ai_calls": 0,
             "processing_errors": 0
         }
+
+        # Track if query_expansions table warning has been logged
+        self._query_expansions_warning_logged = False
     
     async def process_query(
         self,
@@ -500,41 +503,53 @@ class QueryProcessor:
                     elif isinstance(cached_data, QueryExpansion):
                         return cached_data
             
-            # Try database cache
-            query_hash = hashlib.sha256(query.encode()).hexdigest()
-            
-            async with self.db_adapter.get_connection() as conn:
-                result = await conn.fetchrow("""
-                    SELECT * FROM query_expansions 
-                    WHERE query_hash = $1 
-                    AND (tenant_id = $2 OR tenant_id IS NULL)
-                    AND expires_at > NOW()
-                    ORDER BY usage_count DESC
-                    LIMIT 1
-                """, query_hash, tenant_id)
-                
-                if result:
-                    # Update usage count
-                    await conn.execute("""
-                        UPDATE query_expansions 
-                        SET usage_count = usage_count + 1, last_used_at = NOW()
-                        WHERE id = $1
-                    """, result['id'])
-                    
-                    return QueryExpansion(
-                        original_query=result['original_query'],
-                        expanded_terms=result['expanded_terms'],
-                        primary_skills=result['primary_skills'],
-                        job_roles=result['job_roles'],
-                        experience_level=result['experience_level'],
-                        industry=result['industry'],
-                        confidence=float(result['confidence_score']) if result['confidence_score'] else 0.8,
-                        intent="cached",
-                        metadata={"cached_at": result['created_at'].isoformat()}
+            # Try database cache (gracefully handle missing table)
+            try:
+                query_hash = hashlib.sha256(query.encode()).hexdigest()
+
+                async with self.db_adapter.get_connection() as conn:
+                    result = await conn.fetchrow("""
+                        SELECT * FROM query_expansions
+                        WHERE query_hash = $1
+                        AND (tenant_id = $2 OR tenant_id IS NULL)
+                        AND expires_at > NOW()
+                        ORDER BY usage_count DESC
+                        LIMIT 1
+                    """, query_hash, tenant_id)
+
+                    if result:
+                        # Update usage count
+                        await conn.execute("""
+                            UPDATE query_expansions
+                            SET usage_count = usage_count + 1, last_used_at = NOW()
+                            WHERE id = $1
+                        """, result['id'])
+
+                        return QueryExpansion(
+                            original_query=result['original_query'],
+                            expanded_terms=result['expanded_terms'],
+                            primary_skills=result['primary_skills'],
+                            job_roles=result['job_roles'],
+                            experience_level=result['experience_level'],
+                            industry=result['industry'],
+                            confidence=float(result['confidence_score']) if result['confidence_score'] else 0.8,
+                            intent="cached",
+                            metadata={"cached_at": result['created_at'].isoformat()}
+                        )
+            except Exception as db_error:
+                # Gracefully handle missing query_expansions table
+                if "does not exist" in str(db_error).lower() and not self._query_expansions_warning_logged:
+                    logger.warning(
+                        "Query expansions table not found - database caching disabled",
+                        feature="query_expansion_db_cache",
+                        status="disabled",
+                        reason="table_missing"
                     )
-            
+                    self._query_expansions_warning_logged = True
+                # Silently continue without database cache
+
             return None
-            
+
         except Exception as e:
             logger.warning(f"Failed to retrieve cached expansion: {e}")
             return None
@@ -556,42 +571,54 @@ class QueryProcessor:
                     content_type="query_expansion",
                     generate_embedding=False
                 )
-            
-            # Cache in database
-            query_hash = hashlib.sha256(expansion.original_query.encode()).hexdigest()
-            expires_at = datetime.now() + timedelta(seconds=self.settings.SEMANTIC_CACHE_TTL)
-            
-            async with self.db_adapter.get_connection() as conn:
-                await conn.execute("""
-                    INSERT INTO query_expansions (
-                        original_query, query_hash, expanded_terms, primary_skills,
-                        job_roles, experience_level, industry, confidence_score,
-                        tenant_id, ai_model_used, expires_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                    ON CONFLICT (query_hash, tenant_id) 
-                    DO UPDATE SET
-                        expanded_terms = EXCLUDED.expanded_terms,
-                        primary_skills = EXCLUDED.primary_skills,
-                        job_roles = EXCLUDED.job_roles,
-                        experience_level = EXCLUDED.experience_level,
-                        industry = EXCLUDED.industry,
-                        confidence_score = EXCLUDED.confidence_score,
-                        expires_at = EXCLUDED.expires_at,
-                        last_used_at = NOW()
-                """, 
-                expansion.original_query,
-                query_hash,
-                json.dumps(expansion.expanded_terms),
-                json.dumps(expansion.primary_skills),
-                json.dumps(expansion.job_roles),
-                expansion.experience_level,
-                expansion.industry,
-                expansion.confidence,
-                tenant_id,
-                expansion.metadata.get("ai_model", "unknown"),
-                expires_at
-                )
-            
+
+            # Cache in database (gracefully handle missing table)
+            try:
+                query_hash = hashlib.sha256(expansion.original_query.encode()).hexdigest()
+                expires_at = datetime.now() + timedelta(seconds=self.settings.SEMANTIC_CACHE_TTL)
+
+                async with self.db_adapter.get_connection() as conn:
+                    await conn.execute("""
+                        INSERT INTO query_expansions (
+                            original_query, query_hash, expanded_terms, primary_skills,
+                            job_roles, experience_level, industry, confidence_score,
+                            tenant_id, ai_model_used, expires_at
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                        ON CONFLICT (query_hash, tenant_id)
+                        DO UPDATE SET
+                            expanded_terms = EXCLUDED.expanded_terms,
+                            primary_skills = EXCLUDED.primary_skills,
+                            job_roles = EXCLUDED.job_roles,
+                            experience_level = EXCLUDED.experience_level,
+                            industry = EXCLUDED.industry,
+                            confidence_score = EXCLUDED.confidence_score,
+                            expires_at = EXCLUDED.expires_at,
+                            last_used_at = NOW()
+                    """,
+                    expansion.original_query,
+                    query_hash,
+                    json.dumps(expansion.expanded_terms),
+                    json.dumps(expansion.primary_skills),
+                    json.dumps(expansion.job_roles),
+                    expansion.experience_level,
+                    expansion.industry,
+                    expansion.confidence,
+                    tenant_id,
+                    expansion.metadata.get("ai_model", "unknown"),
+                    expires_at
+                    )
+            except Exception as db_error:
+                # Gracefully handle missing query_expansions table
+                if "does not exist" in str(db_error).lower() and not self._query_expansions_warning_logged:
+                    logger.warning(
+                        "Query expansions table not found - database caching disabled",
+                        feature="query_expansion_db_cache",
+                        status="disabled",
+                        reason="table_missing"
+                    )
+                    self._query_expansions_warning_logged = True
+                # Silently continue without database cache
+
         except Exception as e:
             logger.warning(f"Failed to cache expansion: {e}")
     

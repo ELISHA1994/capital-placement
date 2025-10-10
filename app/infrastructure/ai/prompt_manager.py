@@ -423,16 +423,64 @@ Provide quality assessment:
         formatted_results = []
         for i, candidate in enumerate(candidate_results):
             formatted_results.append(f"Candidate {i+1} (ID: {candidate.get('id', 'unknown')}):\n{candidate.get('summary', 'No summary available')}")
-        
+
         context = {
             "job_requirements": job_requirements,
             "candidate_results": "\n\n".join(formatted_results)
         }
-        
+
         custom_instructions = None
         if ranking_factors:
             custom_instructions = f"Prioritize these ranking factors: {', '.join(ranking_factors)}"
-        
+
+        return await self.generate_prompt(
+            PromptType.RESULT_RANKING,
+            context,
+            custom_instructions
+        )
+
+    async def create_result_reranking_prompt(
+        self,
+        query: str,
+        results_context: Dict[str, Any],
+        ranking_criteria: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Create prompt for semantic result reranking.
+
+        Args:
+            query: Original search query
+            results_context: Context about search results including results list
+            ranking_criteria: Specific criteria to use for ranking
+
+        Returns:
+            Dictionary containing the generated prompt
+        """
+        # Format results for the prompt
+        formatted_results = []
+        if "results" in results_context:
+            for i, result in enumerate(results_context["results"]):
+                entity_id = result.get("entity_id", "unknown")
+                content = result.get("content_preview", result.get("metadata", {}).get("summary", "No content"))
+                score = result.get("original_score", 0)
+                formatted_results.append(
+                    f"Result {i+1} (ID: {entity_id}, Score: {score:.3f}):\n{content[:500]}"
+                )
+
+        # Build context for the prompt template
+        context = {
+            "job_requirements": f"Query: {query}",
+            "candidate_results": "\n\n".join(formatted_results) if formatted_results else "No results to rank"
+        }
+
+        # Add custom instructions about ranking criteria
+        custom_instructions = None
+        if ranking_criteria:
+            criteria_str = ", ".join(ranking_criteria)
+            custom_instructions = f"Rank results based on these criteria: {criteria_str}. Return JSON with entity_id, score (0-1), and explanation for each result."
+        else:
+            custom_instructions = "Rank results by relevance to the query. Return JSON with entity_id, score (0-1), and explanation for each result."
+
+        # Use the existing RESULT_RANKING prompt type
         return await self.generate_prompt(
             PromptType.RESULT_RANKING,
             context,

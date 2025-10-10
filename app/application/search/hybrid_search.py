@@ -25,6 +25,7 @@ from uuid import uuid4
 
 from app.core.config import get_settings
 from app.domain.interfaces import IHealthCheck
+from app.infrastructure.ai.cache_manager import UUIDEncoder
 
 # Import infrastructure types only for type checking
 if TYPE_CHECKING:
@@ -101,7 +102,7 @@ class HybridSearchConfig:
     vector_weight: float = 0.6
     fusion_method: FusionMethod = FusionMethod.WEIGHTED_AVERAGE
     text_similarity_threshold: float = 0.1
-    vector_similarity_threshold: float = 0.7
+    vector_similarity_threshold: float = 0.3  # Lowered from 0.7 to allow more results (actual similarities ~0.47)
     max_text_results: int = 100
     max_vector_results: int = 100
     enable_query_expansion: bool = True
@@ -769,8 +770,8 @@ class HybridSearchService(IHealthCheck):
                 "filters": asdict(search_filter) if search_filter else None
             }
             
-            cache_key = f"hybrid_search:{hashlib.sha256(json.dumps(cache_data, sort_keys=True).encode()).hexdigest()[:16]}"
-            
+            cache_key = f"hybrid_search:{hashlib.sha256(json.dumps(cache_data, sort_keys=True, cls=UUIDEncoder).encode()).hexdigest()[:16]}"
+
             cached_response = await self.cache_manager.get(
                 cache_key,
                 content_type="hybrid_search_results"
@@ -815,8 +816,8 @@ class HybridSearchService(IHealthCheck):
                 }
             }
             
-            cache_key = f"hybrid_search:{hashlib.sha256(json.dumps(cache_data, sort_keys=True).encode()).hexdigest()[:16]}"
-            
+            cache_key = f"hybrid_search:{hashlib.sha256(json.dumps(cache_data, sort_keys=True, cls=UUIDEncoder).encode()).hexdigest()[:16]}"
+
             # Convert response to cacheable format
             cacheable_response = asdict(response)
             cacheable_response["cache_hit"] = False  # Reset for caching

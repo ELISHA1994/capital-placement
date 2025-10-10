@@ -794,7 +794,7 @@ class UploadApplicationService:
                             current_time,
                             current_time,
                             profile_id,
-                            "cv_profile",
+                            "profile",  # Fixed: Changed from 'cv_profile' to match search expectations
                             tenant_id,
                             settings.OPENAI_EMBEDDING_MODEL,
                             f"[{','.join(map(str, embedding_vector))}]",

@@ -6,6 +6,7 @@ vector embeddings for AI/ML similarity search, and comprehensive validation
 while preserving all original Pydantic functionality.
 """
 
+import json
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from uuid import UUID, uuid4
@@ -363,6 +364,42 @@ class ProfileTable(AuditableModel, table=True):
         sa_column=Column(Vector(EMBEDDING_DIMENSION), nullable=True),
         description="Summary-specific vector embedding"
     )
+
+    # ✅ FIX P0-B: Validator to convert pgvector JSON string embeddings to Python lists
+    @field_validator(
+        'overall_embedding',
+        'skills_embedding',
+        'experience_embedding',
+        'summary_embedding',
+        mode='before'
+    )
+    @classmethod
+    def parse_embedding_json(cls, v):
+        """Convert JSON string embeddings from pgvector to Python lists.
+
+        pgvector returns embeddings as JSON string representations when fetched
+        via raw SQL queries. This validator automatically deserializes them to
+        the expected List[float] type.
+
+        Args:
+            v: Raw embedding value (could be string, list, or None)
+
+        Returns:
+            List[float] or None
+        """
+        if v is None:
+            return None
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return [float(x) for x in parsed]
+                return None
+            except (json.JSONDecodeError, ValueError, TypeError):
+                return None
+        if isinstance(v, list):
+            return [float(x) for x in v]
+        return v
 
     # Processing and quality metadata
     processing_status: ProcessingStatus = Field(
