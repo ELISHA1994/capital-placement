@@ -557,10 +557,10 @@ async def get_profile_analytics(
 @router.get("/export/csv")
 async def export_profiles_csv(
     current_user: CurrentUserDep,
-    status_filter: ProcessingStatus | None = Query(
+    status_filter: ProcessingStatus = Query(
         None, description="Filter by processing status"
     ),
-    skill_filter: str | None = Query(None, description="Filter by skill (partial match)"),
+    skill_filter: str = Query(None, description="Filter by skill (partial match)"),
     include_contact_info: bool = Query(
         False, description="Include contact information (email, phone, location)"
     ),
