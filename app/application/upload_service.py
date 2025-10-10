@@ -2236,7 +2236,7 @@ class UploadApplicationService:
             candidate = analysis["candidate_name"].strip()
 
         if not candidate:
-            candidate = self._guess_name_from_text(text_content)
+            candidate = UploadApplicationService._guess_name_from_text(text_content)
 
         if not candidate:
             candidate = Path(filename).stem.replace("_", " ").replace("-", " ").strip()
@@ -2265,7 +2265,7 @@ class UploadApplicationService:
             possible_emails.append(contact_email)
 
         if not possible_emails:
-            email_from_text = self._find_first_email(text_content)
+            email_from_text = UploadApplicationService._find_first_email(text_content)
             if email_from_text:
                 possible_emails.append(email_from_text)
 
@@ -2299,7 +2299,7 @@ class UploadApplicationService:
                 candidates.append(match.group(0))
 
         for entry in candidates:
-            normalized = self._normalize_phone(entry)
+            normalized = UploadApplicationService._normalize_phone(entry)
             if normalized:
                 return normalized
         return None
@@ -2658,7 +2658,7 @@ class UploadApplicationService:
         return None
 
     @staticmethod
-    def _extract_quality_confidence(self, quality_assessment: Dict[str, Any]) -> Optional[float]:
+    def _extract_quality_confidence(quality_assessment: Dict[str, Any]) -> Optional[float]:
         """Extract confidence score from quality assessment."""
         if not isinstance(quality_assessment, dict):
             return None
