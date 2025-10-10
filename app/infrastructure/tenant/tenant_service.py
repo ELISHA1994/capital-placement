@@ -319,6 +319,69 @@ class TenantService:
             return tenant.dict()
         return {}
 
+    async def check_feature_access(
+        self,
+        tenant_id: str,
+        feature_name: str
+    ) -> bool:
+        """
+        Check if a tenant has access to a specific feature.
+
+        Args:
+            tenant_id: Tenant ID
+            feature_name: Name of the feature to check (e.g., 'export', 'webhooks', 'ai_recommendations')
+
+        Returns:
+            True if tenant has access to the feature, False otherwise
+        """
+        tenant = await self.get_tenant(tenant_id)
+        if not tenant:
+            logger.warning(f"Tenant not found for feature access check: {tenant_id}")
+            return False
+
+        # Map common feature names to feature flag attributes
+        feature_flag_map = {
+            "export": "enable_export",
+            "advanced_search": "enable_advanced_search",
+            "bulk_operations": "enable_bulk_operations",
+            "webhooks": "enable_webhooks",
+            "ai_recommendations": "enable_ai_recommendations",
+            "skill_extraction": "enable_skill_extraction",
+            "sentiment_analysis": "enable_sentiment_analysis",
+            "candidate_scoring": "enable_candidate_scoring",
+            "analytics_dashboard": "enable_analytics_dashboard",
+            "custom_reports": "enable_custom_reports",
+            "data_insights": "enable_data_insights",
+            "ats_integration": "enable_ats_integration",
+            "crm_integration": "enable_crm_integration",
+            "api_access": "enable_api_access",
+            "sso": "enable_sso",
+        }
+
+        # Get the feature flag attribute name
+        flag_attr = feature_flag_map.get(feature_name)
+        if not flag_attr:
+            logger.warning(f"Unknown feature name: {feature_name}")
+            return False
+
+        # Get feature flags from tenant
+        feature_flags = tenant.feature_flags
+        if not feature_flags:
+            logger.warning(f"No feature flags found for tenant: {tenant_id}")
+            return False
+
+        # Check if the feature is enabled
+        is_enabled = getattr(feature_flags, flag_attr, False)
+
+        logger.debug(
+            "Feature access checked",
+            tenant_id=tenant_id,
+            feature_name=feature_name,
+            is_enabled=is_enabled
+        )
+
+        return is_enabled
+
     async def check_quota_limit(
         self,
         tenant_id: str,

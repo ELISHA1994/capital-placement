@@ -10,6 +10,7 @@ Comprehensive CV profile management with:
 - Multi-tenant data isolation
 """
 
+from datetime import datetime
 from uuid import UUID
 
 import structlog
@@ -38,6 +39,7 @@ from app.domain.exceptions import DomainException
 from app.domain.value_objects import ProfileId, TenantId
 from app.infrastructure.persistence.mappers.profile_mapper import ProfileMapper
 from app.infrastructure.persistence.models.base import PaginationModel
+from app.infrastructure.providers.export_provider import get_export_service
 from app.infrastructure.providers.tenant_provider import (
     get_tenant_service as get_tenant_manager,
 )
@@ -558,30 +560,51 @@ async def export_profiles_csv(
     status_filter: ProcessingStatus | None = Query(
         None, description="Filter by processing status"
     ),
-    skill_filter: str | None = Query(None, description="Filter by skill"),
+    skill_filter: str | None = Query(None, description="Filter by skill (partial match)"),
     include_contact_info: bool = Query(
-        False, description="Include contact information"
+        False, description="Include contact information (email, phone, location)"
     ),
-    include_full_text: bool = Query(False, description="Include full profile text"),
+    include_full_text: bool = Query(
+        False, description="Include full profile text (summary, searchable text)"
+    ),
 ) -> StreamingResponse:
     """
-    Export profiles to CSV format.
+    Export profiles to CSV format with streaming for large datasets.
+
+    This endpoint uses a streaming response to efficiently handle exports
+    of 100k+ profiles without memory bloat. Profiles are processed in
+    batches and CSV rows are yielded incrementally.
 
     Features:
-    - Configurable field selection
-    - Privacy-compliant exports
-    - Large dataset streaming
-    - Custom formatting options
+    - Memory-efficient streaming (handles 1M+ records)
+    - Configurable field selection (privacy compliance)
+    - Advanced filtering (status, skills)
+    - Proper CSV formatting with headers
+    - Timestamped filenames
+
+    Query Parameters:
+    - status_filter: Filter by processing status
+    - skill_filter: Filter by skill (partial, case-insensitive match)
+    - include_contact_info: Include email, phone, location (default: False)
+    - include_full_text: Include summary and searchable text (default: False)
+
+    Returns:
+        StreamingResponse with text/csv content and attachment disposition
     """
     try:
         logger.info(
             "CSV export requested",
             tenant_id=current_user.tenant_id,
             user_id=current_user.user_id,
-            filters={"status": status_filter, "skill": skill_filter},
+            filters={
+                "status": status_filter.value if status_filter else None,
+                "skill": skill_filter,
+            },
+            include_contact_info=include_contact_info,
+            include_full_text=include_full_text,
         )
 
-        # Check export permissions
+        # Check export permissions (async)
         tenant_manager = await get_tenant_manager()
         has_access = await tenant_manager.check_feature_access(
             tenant_id=current_user.tenant_id, feature_name="export"
@@ -593,22 +616,50 @@ async def export_profiles_csv(
                 detail="Export functionality not available in your subscription tier",
             )
 
-        # TODO: Implement CSV export
-        def generate_csv():
-            yield "profile_id,email,name,title,skills,experience_years\n"
-            # Mock data - replace with actual database query
-            yield "123,john@example.com,John Doe,Software Engineer,Python;JavaScript,5\n"
+        # Get export service and generate CSV stream
+        export_service = await get_export_service()
 
+        # Convert tenant_id to TenantId value object
+        tenant_vo = TenantId(current_user.tenant_id)
+
+        # Generate CSV using service (returns synchronous generator)
+        csv_generator = export_service.generate_csv_export(
+            tenant_id=tenant_vo,
+            status_filter=status_filter,
+            skill_filter=skill_filter,
+            include_contact_info=include_contact_info,
+            include_full_text=include_full_text,
+        )
+
+        # Generate timestamped filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"profiles_export_{timestamp}.csv"
+
+        logger.info(
+            "CSV export generation started",
+            tenant_id=current_user.tenant_id,
+            filename=filename,
+        )
+
+        # Return streaming response
         return StreamingResponse(
-            generate_csv(),
+            csv_generator,
             media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=profiles_export.csv"},
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-cache",
+            },
         )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"CSV export failed: {e}")
+        logger.error(
+            "CSV export failed",
+            tenant_id=current_user.tenant_id,
+            error=str(e),
+            exc_info=True,
+        )
         raise HTTPException(status_code=500, detail="Failed to export profiles")
 
 
