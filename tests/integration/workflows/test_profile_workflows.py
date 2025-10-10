@@ -21,8 +21,9 @@ from app.domain.entities.profile import (
     PrivacySettings,
     ExperienceLevel,
     ProfileEmbeddings,
+    Skill,
 )
-from app.domain.value_objects import ProfileId, TenantId, EmailAddress, EmbeddingVector
+from app.domain.value_objects import ProfileId, TenantId, EmailAddress, EmbeddingVector, SkillName
 
 
 # ========================================
@@ -277,6 +278,11 @@ class MockBackgroundTasks:
 # ========================================
 # Test Fixtures and Helpers
 # ========================================
+
+
+def create_skill(name: str) -> Skill:
+    """Create a Skill object from a string name."""
+    return Skill(name=SkillName(name))
 
 
 def create_test_profile(
@@ -870,3 +876,811 @@ class TestProfileSoftDeleteWorkflow:
         assert len(audit_events) == 1
         assert audit_events[0]["details"]["deletion_type"] == "soft_delete"
         assert audit_events[0]["details"]["reason"] == "Compliance"
+
+
+class TestProfileAnalyticsWorkflow:
+    """Integration tests for profile analytics retrieval workflow."""
+
+    def setup_method(self):
+        """Setup for each test method."""
+        # Create mock services (reuse existing patterns)
+        self.mock_repo = MockProfileRepository()
+        self.mock_embedding = MockEmbeddingService()
+        self.mock_search = MockSearchIndexService()
+        self.mock_usage = MockUsageService()
+        self.mock_audit = MockAuditService()
+
+        # Create dependencies
+        self.dependencies = ProfileDependencies(
+            profile_repository=self.mock_repo,
+            embedding_service=self.mock_embedding,
+            search_index_service=self.mock_search,
+            usage_service=self.mock_usage,
+            audit_service=self.mock_audit,
+        )
+
+        # Create service
+        self.profile_service = ProfileApplicationService(self.dependencies)
+
+        # Test data
+        self.test_tenant_id = TenantId(uuid4())
+        self.test_user_id = "user-789"
+
+    @pytest.mark.asyncio
+    async def test_get_analytics_for_profile_with_views(self):
+        """Test analytics retrieval for profile with engagement history."""
+        # Arrange - Create profile with analytics data
+        profile_id = ProfileId(uuid4())
+
+        profile = Profile(
+            id=profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="Jane Doe",
+                email=EmailAddress("jane@example.com"),
+                headline="Senior Software Engineer",
+                summary="Experienced developer with 5 years of experience",
+                skills=[create_skill("Python"), create_skill("FastAPI"), create_skill("PostgreSQL"), create_skill("Docker")],
+                experience=[],
+                education=[],
+            ),
+        )
+
+        # Set analytics data using record methods
+        profile.analytics.view_count = 50
+        profile.analytics.search_appearances = 20
+        profile.analytics.last_viewed_at = datetime(2025, 10, 9, 15, 30, 0)
+
+        # Save to mock repository
+        await self.mock_repo.save(profile)
+
+        # Act - Retrieve analytics
+        analytics = await self.profile_service.get_profile_analytics(
+            profile_id=profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=30,
+        )
+
+        # Assert
+        assert analytics is not None
+        assert analytics["profile_id"] == str(profile_id.value)
+        assert analytics["view_count"] == 50
+        assert analytics["search_appearances"] == 20
+        assert analytics["last_viewed"] == datetime(2025, 10, 9, 15, 30, 0)
+        assert analytics["profile_completeness"] > 0.0
+
+        # MVP placeholders
+        assert analytics["match_score_distribution"] == {}
+        assert analytics["popular_searches"] == []
+        assert analytics["skill_demand_score"] is None
+
+    @pytest.mark.asyncio
+    async def test_get_analytics_for_new_profile_with_zero_engagement(self):
+        """Test analytics retrieval for new profile with no engagement."""
+        # Arrange - Create profile with no views/searches
+        profile_id = ProfileId(uuid4())
+
+        profile = Profile(
+            id=profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="New User",
+                email=EmailAddress("newuser@example.com"),
+                headline="Junior Developer",
+                summary="Fresh graduate seeking opportunities",
+                skills=[create_skill("JavaScript")],
+                experience=[],
+                education=[],
+            ),
+        )
+
+        # Default analytics should be zero
+        assert profile.analytics.view_count == 0
+        assert profile.analytics.search_appearances == 0
+        assert profile.analytics.last_viewed_at is None
+
+        # Save to mock repository
+        await self.mock_repo.save(profile)
+
+        # Act - Retrieve analytics
+        analytics = await self.profile_service.get_profile_analytics(
+            profile_id=profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=30,
+        )
+
+        # Assert
+        assert analytics is not None
+        assert analytics["profile_id"] == str(profile_id.value)
+        assert analytics["view_count"] == 0
+        assert analytics["search_appearances"] == 0
+        assert analytics["last_viewed"] is None
+        assert analytics["profile_completeness"] > 0.0, "Completeness should still be calculated"
+
+    @pytest.mark.asyncio
+    async def test_get_analytics_calculates_completeness_correctly(self):
+        """Test that analytics calculates completeness scores correctly."""
+        # Arrange - Create minimal profile (low completeness)
+        minimal_profile_id = ProfileId(uuid4())
+        minimal_profile = Profile(
+            id=minimal_profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="Minimal User",
+                email=EmailAddress("minimal@example.com"),
+                # Only name and email, no other data
+                skills=[],
+                experience=[],
+                education=[],
+            ),
+        )
+        await self.mock_repo.save(minimal_profile)
+
+        # Create complete profile (high completeness)
+        complete_profile_id = ProfileId(uuid4())
+        complete_profile = Profile(
+            id=complete_profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="Complete User",
+                email=EmailAddress("complete@example.com"),
+                headline="Senior Full Stack Developer",
+                summary="Comprehensive professional summary with detailed experience",
+                skills=[create_skill("Python"), create_skill("JavaScript"), create_skill("TypeScript"), create_skill("React"), create_skill("FastAPI"), create_skill("PostgreSQL")],
+                experience=[],
+                education=[],
+            ),
+        )
+        await self.mock_repo.save(complete_profile)
+
+        # Act - Retrieve analytics for both profiles
+        minimal_analytics = await self.profile_service.get_profile_analytics(
+            profile_id=minimal_profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=30,
+        )
+
+        complete_analytics = await self.profile_service.get_profile_analytics(
+            profile_id=complete_profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=30,
+        )
+
+        # Assert - Completeness scores differ appropriately
+        assert minimal_analytics is not None
+        assert complete_analytics is not None
+
+        minimal_score = minimal_analytics["profile_completeness"]
+        complete_score = complete_analytics["profile_completeness"]
+
+        assert minimal_score < complete_score, \
+            f"Minimal profile ({minimal_score}) should have lower completeness than complete profile ({complete_score})"
+        assert minimal_score >= 0.0, "Completeness score should be non-negative"
+        assert complete_score <= 100.0, "Completeness score should not exceed 100.0"
+
+    @pytest.mark.asyncio
+    async def test_get_analytics_for_nonexistent_profile(self):
+        """Test analytics retrieval for profile that doesn't exist."""
+        # Arrange - Profile ID that doesn't exist in repository
+        nonexistent_profile_id = ProfileId(uuid4())
+
+        # Act - Try to get analytics
+        analytics = await self.profile_service.get_profile_analytics(
+            profile_id=nonexistent_profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=30,
+        )
+
+        # Assert - Should return None
+        assert analytics is None
+
+        # Verify repository was queried
+        assert self.mock_repo.get_call_count("get_by_id") >= 1
+
+    @pytest.mark.asyncio
+    async def test_analytics_reflects_profile_updates(self):
+        """Test that analytics completeness score improves after profile updates."""
+        # Arrange - Create initial minimal profile
+        profile_id = ProfileId(uuid4())
+        profile = Profile(
+            id=profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="User",
+                email=EmailAddress("user@example.com"),
+                skills=[],
+                experience=[],
+                education=[],
+            ),
+        )
+        await self.mock_repo.save(profile)
+
+        # Act - Get initial analytics
+        initial_analytics = await self.profile_service.get_profile_analytics(
+            profile_id=profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=30,
+        )
+
+        # Update profile - add skills and experience
+        profile.profile_data.headline = "Senior Developer"
+        profile.profile_data.summary = "Experienced software engineer with strong technical skills"
+        profile.profile_data.skills = [create_skill("Python"), create_skill("FastAPI"), create_skill("PostgreSQL"), create_skill("Docker"), create_skill("Kubernetes")]
+        await self.mock_repo.save(profile)
+
+        # Get updated analytics
+        updated_analytics = await self.profile_service.get_profile_analytics(
+            profile_id=profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=30,
+        )
+
+        # Assert - Completeness score improved
+        assert initial_analytics is not None
+        assert updated_analytics is not None
+
+        initial_score = initial_analytics["profile_completeness"]
+        updated_score = updated_analytics["profile_completeness"]
+
+        assert updated_score > initial_score, \
+            f"Updated profile ({updated_score}) should have higher completeness than initial ({initial_score})"
+
+    @pytest.mark.asyncio
+    async def test_analytics_includes_last_viewed_timestamp(self):
+        """Test that analytics includes correct last_viewed timestamp."""
+        # Arrange - Create profile with last_viewed_at set
+        profile_id = ProfileId(uuid4())
+        last_viewed_time = datetime(2025, 10, 8, 14, 30, 45)
+
+        profile = Profile(
+            id=profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="Viewed User",
+                email=EmailAddress("viewed@example.com"),
+                skills=[create_skill("Python")],
+                experience=[],
+                education=[],
+            ),
+        )
+
+        # Set last viewed timestamp
+        profile.analytics.last_viewed_at = last_viewed_time
+        profile.analytics.view_count = 15
+
+        await self.mock_repo.save(profile)
+
+        # Act - Retrieve analytics
+        analytics = await self.profile_service.get_profile_analytics(
+            profile_id=profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=30,
+        )
+
+        # Assert - Last viewed matches
+        assert analytics is not None
+        assert analytics["last_viewed"] == last_viewed_time
+        assert analytics["view_count"] == 15
+
+    @pytest.mark.asyncio
+    async def test_get_analytics_with_different_time_ranges(self):
+        """Test analytics retrieval with different time_range_days values."""
+        # Arrange - Create profile
+        profile_id = ProfileId(uuid4())
+        profile = Profile(
+            id=profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="Time Range User",
+                email=EmailAddress("timerange@example.com"),
+                skills=[create_skill("Python"), create_skill("FastAPI")],
+                experience=[],
+                education=[],
+            ),
+        )
+        profile.analytics.view_count = 100
+        profile.analytics.search_appearances = 50
+
+        await self.mock_repo.save(profile)
+
+        # Act - Test different time ranges (7, 30, 90 days)
+        analytics_7_days = await self.profile_service.get_profile_analytics(
+            profile_id=profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=7,
+        )
+
+        analytics_30_days = await self.profile_service.get_profile_analytics(
+            profile_id=profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=30,
+        )
+
+        analytics_90_days = await self.profile_service.get_profile_analytics(
+            profile_id=profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=90,
+        )
+
+        # Assert - All requests succeed and return data
+        assert analytics_7_days is not None
+        assert analytics_30_days is not None
+        assert analytics_90_days is not None
+
+        # Note: MVP doesn't filter by time, but validates parameter handling
+        # All should return same counts since filtering not implemented
+        assert analytics_7_days["view_count"] == 100
+        assert analytics_30_days["view_count"] == 100
+        assert analytics_90_days["view_count"] == 100
+
+    @pytest.mark.asyncio
+    async def test_analytics_workflow_profile_view_then_analytics(self):
+        """Test workflow: create profile → record view → retrieve analytics."""
+        # Arrange - Create profile
+        profile_id = ProfileId(uuid4())
+        profile = Profile(
+            id=profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="Workflow User",
+                email=EmailAddress("workflow@example.com"),
+                headline="Software Engineer",
+                skills=[create_skill("Python")],
+                experience=[],
+                education=[],
+            ),
+        )
+
+        # Initial state - no views
+        assert profile.analytics.view_count == 0
+        assert profile.analytics.last_viewed_at is None
+
+        await self.mock_repo.save(profile)
+
+        # Act - Record a view (simulating profile being viewed)
+        profile.analytics.record_view()
+        await self.mock_repo.save(profile)
+
+        # Retrieve analytics after view
+        analytics = await self.profile_service.get_profile_analytics(
+            profile_id=profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=30,
+        )
+
+        # Assert - Analytics reflects the view
+        assert analytics is not None
+        assert analytics["view_count"] == 1
+        assert analytics["last_viewed"] is not None
+        assert analytics["profile_completeness"] > 0.0
+
+    @pytest.mark.asyncio
+    async def test_analytics_workflow_search_appearance_tracking(self):
+        """Test workflow: profile appears in search → analytics shows appearance count."""
+        # Arrange - Create profile
+        profile_id = ProfileId(uuid4())
+        profile = Profile(
+            id=profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="Search User",
+                email=EmailAddress("search@example.com"),
+                skills=[create_skill("Python"), create_skill("FastAPI"), create_skill("PostgreSQL")],
+                experience=[],
+                education=[],
+            ),
+        )
+
+        await self.mock_repo.save(profile)
+
+        # Act - Record multiple search appearances
+        profile.analytics.record_search_appearance()
+        profile.analytics.record_search_appearance()
+        profile.analytics.record_search_appearance()
+        await self.mock_repo.save(profile)
+
+        # Retrieve analytics
+        analytics = await self.profile_service.get_profile_analytics(
+            profile_id=profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=30,
+        )
+
+        # Assert - Search appearances tracked correctly
+        assert analytics is not None
+        assert analytics["search_appearances"] == 3
+        assert analytics["view_count"] == 0, "Views should be separate from search appearances"
+
+    @pytest.mark.asyncio
+    async def test_analytics_for_deleted_profile_status(self):
+        """Test analytics retrieval for deleted profile (should still work)."""
+        # Arrange - Create deleted profile
+        profile_id = ProfileId(uuid4())
+        profile = Profile(
+            id=profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.DELETED,  # Deleted status
+            profile_data=ProfileData(
+                name="Deleted User",
+                email=EmailAddress("deleted@example.com"),
+                skills=[create_skill("Python")],
+                experience=[],
+                education=[],
+            ),
+        )
+
+        # Profile had engagement before deletion
+        profile.analytics.view_count = 25
+        profile.analytics.search_appearances = 10
+
+        await self.mock_repo.save(profile)
+
+        # Act - Retrieve analytics for deleted profile
+        analytics = await self.profile_service.get_profile_analytics(
+            profile_id=profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=30,
+        )
+
+        # Assert - Analytics still accessible for deleted profile
+        assert analytics is not None
+        assert analytics["view_count"] == 25
+        assert analytics["search_appearances"] == 10
+        assert analytics["profile_completeness"] > 0.0
+
+
+class TestProfileViewTrackingWorkflow:
+    """Integration tests for complete profile view tracking workflow."""
+
+    def setup_method(self):
+        """Setup for each test method."""
+        # Create mock services
+        self.mock_repo = MockProfileRepository()
+        self.mock_embedding = MockEmbeddingService()
+        self.mock_search = MockSearchIndexService()
+        self.mock_usage = MockUsageService()
+        self.mock_audit = MockAuditService()
+
+        # Create dependencies
+        self.dependencies = ProfileDependencies(
+            profile_repository=self.mock_repo,
+            embedding_service=self.mock_embedding,
+            search_index_service=self.mock_search,
+            usage_service=self.mock_usage,
+            audit_service=self.mock_audit,
+        )
+
+        # Create service
+        self.profile_service = ProfileApplicationService(self.dependencies)
+
+        # Test data
+        self.test_tenant_id = TenantId(uuid4())
+        self.test_user_id = "user-analytics-123"
+
+    @pytest.mark.asyncio
+    async def test_profile_view_increments_count_workflow(self):
+        """Test complete workflow of viewing a profile and updating analytics."""
+        # Arrange - Create profile with zero views
+        profile_id = ProfileId(uuid4())
+
+        profile = Profile(
+            id=profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="John Doe",
+                email=EmailAddress("john@example.com"),
+                headline="Software Engineer",
+                skills=[create_skill("Python")],
+                experience=[],
+                education=[],
+            ),
+        )
+
+        # Initial analytics
+        assert profile.analytics.view_count == 0
+
+        # Save to repository
+        await self.mock_repo.save(profile)
+
+        # Act - Get profile with background tasks
+        mock_bg_tasks = MockBackgroundTasks()
+        retrieved_profile = await self.profile_service.get_profile(
+            profile_id=profile_id,
+            tenant_id=self.test_tenant_id,
+            schedule_task=mock_bg_tasks,
+        )
+
+        # Execute background tasks
+        await mock_bg_tasks.execute_all()
+
+        # Fetch profile again to see updated analytics
+        updated_profile = await self.mock_repo.get_by_id(profile_id, self.test_tenant_id)
+
+        # Assert
+        assert retrieved_profile is not None
+        assert updated_profile.analytics.view_count == 1
+        assert updated_profile.analytics.last_viewed_at is not None
+
+    @pytest.mark.asyncio
+    async def test_multiple_profile_views_accumulate(self):
+        """Test that multiple views accumulate correctly."""
+        # Arrange - Create profile
+        profile_id = ProfileId(uuid4())
+
+        profile = Profile(
+            id=profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="Jane Smith",
+                email=EmailAddress("jane@example.com"),
+                headline="Data Scientist",
+                skills=[create_skill("Python"), create_skill("Machine Learning")],
+                experience=[],
+                education=[],
+            ),
+        )
+
+        await self.mock_repo.save(profile)
+
+        # Act - View profile 3 times
+        for _ in range(3):
+            mock_bg_tasks = MockBackgroundTasks()
+            await self.profile_service.get_profile(
+                profile_id=profile_id,
+                tenant_id=self.test_tenant_id,
+                schedule_task=mock_bg_tasks,
+            )
+            # Execute background tasks each time
+            await mock_bg_tasks.execute_all()
+
+        # Fetch profile to verify accumulation
+        updated_profile = await self.mock_repo.get_by_id(profile_id, self.test_tenant_id)
+
+        # Assert - View count accumulated to 3
+        assert updated_profile.analytics.view_count == 3
+        assert updated_profile.analytics.last_viewed_at is not None
+
+    @pytest.mark.asyncio
+    async def test_view_tracking_updates_last_viewed_timestamp(self):
+        """Test that viewing a profile updates last_viewed_at timestamp."""
+        # Arrange - Create profile with no last_viewed_at
+        profile_id = ProfileId(uuid4())
+
+        profile = Profile(
+            id=profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="Bob Johnson",
+                email=EmailAddress("bob@example.com"),
+                headline="DevOps Engineer",
+                skills=[create_skill("Docker"), create_skill("Kubernetes")],
+                experience=[],
+                education=[],
+            ),
+        )
+
+        assert profile.analytics.last_viewed_at is None
+
+        await self.mock_repo.save(profile)
+
+        # Record time before view
+        from datetime import datetime, timedelta
+        time_before_view = datetime.utcnow()
+
+        # Act - View profile
+        mock_bg_tasks = MockBackgroundTasks()
+        await self.profile_service.get_profile(
+            profile_id=profile_id,
+            tenant_id=self.test_tenant_id,
+            schedule_task=mock_bg_tasks,
+        )
+
+        # Execute background task
+        await mock_bg_tasks.execute_all()
+
+        # Fetch updated profile
+        updated_profile = await self.mock_repo.get_by_id(profile_id, self.test_tenant_id)
+
+        # Assert - last_viewed_at is set and recent
+        assert updated_profile.analytics.last_viewed_at is not None
+        assert updated_profile.analytics.last_viewed_at >= time_before_view
+        assert updated_profile.analytics.last_viewed_at <= datetime.utcnow() + timedelta(seconds=1)
+
+    @pytest.mark.asyncio
+    async def test_search_appearance_tracking_workflow(self):
+        """Test workflow for tracking search appearances across multiple profiles."""
+        # Arrange - Create 5 profiles
+        profile_ids = []
+        profiles = []
+
+        for i in range(5):
+            profile_id = ProfileId(uuid4())
+            profile = Profile(
+                id=profile_id,
+                tenant_id=self.test_tenant_id,
+                status=ProfileStatus.ACTIVE,
+                profile_data=ProfileData(
+                    name=f"User {i+1}",
+                    email=EmailAddress(f"user{i+1}@example.com"),
+                    headline=f"Engineer {i+1}",
+                    skills=[create_skill("Python"), create_skill("FastAPI")],
+                    experience=[],
+                    education=[],
+                ),
+            )
+
+            await self.mock_repo.save(profile)
+            profile_ids.append(profile_id)
+            profiles.append(profile)
+
+        # Act - Simulate search returning all 5 profiles
+        mock_bg_tasks = MockBackgroundTasks()
+
+        # Track search appearance for all profiles
+        for profile_id in profile_ids:
+            profile = await self.mock_repo.get_by_id(profile_id, self.test_tenant_id)
+            profile.analytics.record_search_appearance()
+            await self.mock_repo.save(profile)
+
+        # Fetch all profiles and verify
+        updated_profiles = []
+        for profile_id in profile_ids:
+            updated_profile = await self.mock_repo.get_by_id(profile_id, self.test_tenant_id)
+            updated_profiles.append(updated_profile)
+
+        # Assert - All 5 profiles have search_appearances = 1
+        for updated_profile in updated_profiles:
+            assert updated_profile.analytics.search_appearances == 1
+
+    @pytest.mark.asyncio
+    async def test_search_appearances_accumulate_across_searches(self):
+        """Test that search appearances accumulate across multiple searches."""
+        # Arrange - Create profile
+        profile_id = ProfileId(uuid4())
+
+        profile = Profile(
+            id=profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="Popular User",
+                email=EmailAddress("popular@example.com"),
+                headline="Senior Software Engineer",
+                skills=[create_skill("Python"), create_skill("JavaScript"), create_skill("TypeScript")],
+                experience=[],
+                education=[],
+            ),
+        )
+
+        await self.mock_repo.save(profile)
+
+        # Act - Appear in 3 different searches
+        for _ in range(3):
+            profile = await self.mock_repo.get_by_id(profile_id, self.test_tenant_id)
+            profile.analytics.record_search_appearance()
+            await self.mock_repo.save(profile)
+
+        # Fetch profile
+        updated_profile = await self.mock_repo.get_by_id(profile_id, self.test_tenant_id)
+
+        # Assert - Search appearances accumulated to 3
+        assert updated_profile.analytics.search_appearances == 3
+
+    @pytest.mark.asyncio
+    async def test_view_and_search_tracking_independent(self):
+        """Test that view count and search appearances are tracked independently."""
+        # Arrange - Create profile
+        profile_id = ProfileId(uuid4())
+
+        profile = Profile(
+            id=profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="Independent User",
+                email=EmailAddress("independent@example.com"),
+                headline="Full Stack Developer",
+                skills=[create_skill("React"), create_skill("Node.js")],
+                experience=[],
+                education=[],
+            ),
+        )
+
+        await self.mock_repo.save(profile)
+
+        # Act - View profile twice
+        for _ in range(2):
+            mock_bg_tasks = MockBackgroundTasks()
+            await self.profile_service.get_profile(
+                profile_id=profile_id,
+                tenant_id=self.test_tenant_id,
+                schedule_task=mock_bg_tasks,
+            )
+            await mock_bg_tasks.execute_all()
+
+        # Appear in 3 searches
+        for _ in range(3):
+            profile = await self.mock_repo.get_by_id(profile_id, self.test_tenant_id)
+            profile.analytics.record_search_appearance()
+            await self.mock_repo.save(profile)
+
+        # Fetch profile
+        updated_profile = await self.mock_repo.get_by_id(profile_id, self.test_tenant_id)
+
+        # Assert - Both metrics are independent
+        assert updated_profile.analytics.view_count == 2
+        assert updated_profile.analytics.search_appearances == 3
+
+        # Verify neither affects the other
+        assert updated_profile.analytics.view_count != updated_profile.analytics.search_appearances
+
+    @pytest.mark.asyncio
+    async def test_analytics_workflow_with_get_analytics(self):
+        """Test complete analytics workflow: view, search, then retrieve analytics."""
+        # Arrange - Create profile
+        profile_id = ProfileId(uuid4())
+
+        profile = Profile(
+            id=profile_id,
+            tenant_id=self.test_tenant_id,
+            status=ProfileStatus.ACTIVE,
+            profile_data=ProfileData(
+                name="Analytics User",
+                email=EmailAddress("analytics@example.com"),
+                headline="Data Engineer",
+                summary="Experienced data engineer with expertise in big data technologies",
+                skills=[create_skill("Python"), create_skill("Spark"), create_skill("Kafka"), create_skill("Airflow")],
+                experience=[],
+                education=[],
+            ),
+        )
+
+        await self.mock_repo.save(profile)
+
+        # Act - View profile multiple times (5 views)
+        for _ in range(5):
+            mock_bg_tasks = MockBackgroundTasks()
+            await self.profile_service.get_profile(
+                profile_id=profile_id,
+                tenant_id=self.test_tenant_id,
+                schedule_task=mock_bg_tasks,
+            )
+            await mock_bg_tasks.execute_all()
+
+        # Appear in searches (7 search appearances)
+        for _ in range(7):
+            profile = await self.mock_repo.get_by_id(profile_id, self.test_tenant_id)
+            profile.analytics.record_search_appearance()
+            await self.mock_repo.save(profile)
+
+        # Call get_profile_analytics
+        analytics = await self.profile_service.get_profile_analytics(
+            profile_id=profile_id,
+            tenant_id=self.test_tenant_id,
+            time_range_days=30,
+        )
+
+        # Assert - Analytics show correct counts
+        assert analytics is not None
+        assert analytics["profile_id"] == str(profile_id.value)
+        assert analytics["view_count"] == 5
+        assert analytics["search_appearances"] == 7
+        assert analytics["last_viewed"] is not None
+        assert analytics["profile_completeness"] > 0.0
+
+        # Verify MVP placeholders
+        assert analytics["match_score_distribution"] == {}
+        assert analytics["popular_searches"] == []
+        assert analytics["skill_demand_score"] is None
