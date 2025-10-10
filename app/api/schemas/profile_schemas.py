@@ -252,3 +252,13 @@ class ProfileAnalyticsSummary(BaseModel):
     skill_demand_score: Optional[float] = Field(None, description="Market demand score for skills")
     profile_completeness: float = Field(default=0.0, description="Profile completeness percentage")
     last_viewed: Optional[datetime] = Field(None, description="Last view timestamp")
+
+
+class ProfileDeletionResponse(BaseModel):
+    """Response for profile deletion operation."""
+
+    success: bool = Field(..., description="Whether deletion was successful")
+    deletion_type: str = Field(..., description="Type of deletion: soft_delete or permanent_delete")
+    profile_id: str = Field(..., description="ID of deleted profile")
+    message: str = Field(..., description="Human-readable deletion message")
+    can_restore: bool = Field(default=False, description="Whether profile can be restored")

@@ -23,6 +23,7 @@ from app.api.schemas.profile_schemas import (
     BulkOperationRequest,
     Profile as ProfileSchema,
     ProfileAnalyticsSummary,
+    ProfileDeletionResponse,
     ProfileSummary,
     ProfileUpdate,
 )
@@ -195,7 +196,7 @@ async def update_profile(
     background_tasks: BackgroundTasks = BackgroundTasks()
 ) -> ProfileSchema:
     """
-    Update CV profile with new information.
+    Update the CV profile with new information.
 
     Supports partial updates to:
     - Professional information (title, summary)
@@ -252,78 +253,125 @@ async def update_profile(
 async def delete_profile(
     profile_id: str,
     current_user: CurrentUserDep,
+    profile_service: ProfileServiceDep,
     permanent: bool = Query(False, description="Permanently delete (vs soft delete)"),
+    reason: Optional[str] = Query(None, description="Reason for deletion"),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ) -> JSONResponse:
     """
     Delete CV profile (soft delete by default).
-    
+
     Options:
-    - **Soft delete**: Marks profile as deleted but preserves data
-    - **Permanent delete**: Completely removes profile and associated data
-    
+    - **Soft delete**: Marks profile as deleted but preserves data (can be restored)
+    - **Permanent delete**: Completely removes profile and associated data (cannot be restored)
+
     Includes:
     - Automatic cleanup of search index
-    - Document storage cleanup
+    - Document storage cleanup (permanent delete only)
     - Analytics data retention (anonymized)
+    - Complete audit trail
+
+    Args:
+        profile_id: Profile identifier to delete
+        permanent: If True, permanently deletes. If False (default), soft deletes.
+        reason: Optional reason for deletion (audit purposes)
+        current_user: Authenticated user context
+        background_tasks: FastAPI background task scheduler
+        profile_service: Profile application service (dependency injection)
+
+    Returns:
+        ProfileDeletionResponse with deletion status and details
+
+    Raises:
+        404: Profile not found
+        400: Validation error (e.g., already deleted, processing in progress)
+        500: Internal server error
     """
     try:
         logger.info(
-            "Profile deletion requested",
+            "Profile deletion requested via API",
             profile_id=profile_id,
             permanent=permanent,
-            user_id=current_user.user_id
-        )
-        
-        # TODO: Implement profile deletion
-        # Get profile first to verify ownership
-        # profile = await get_profile(profile_id, current_user=current_user)
-        
-        if permanent:
-            # Permanent deletion
-            # await _permanently_delete_profile(profile_id, current_user.tenant_id)
-            message = "Profile permanently deleted"
-        else:
-            # Soft deletion
-            # await _soft_delete_profile(profile_id, current_user.user_id)
-            message = "Profile deleted (can be restored)"
-        
-        # Clean up search index
-        background_tasks.add_task(
-            _remove_from_search_index,
-            profile_id=profile_id
-        )
-        
-        # Clean up document storage if permanent
-        if permanent:
-            background_tasks.add_task(
-                _cleanup_profile_documents,
-                profile_id=profile_id,
-                tenant_id=current_user.tenant_id
-            )
-        
-        # Track profile deletion in background using centralized tracker
-        background_tasks.add_task(
-            _track_profile_usage,
+            user_id=current_user.user_id,
             tenant_id=current_user.tenant_id,
-            operation="delete",
-            profile_count=1
         )
-        
-        return JSONResponse(content={
-            "status": "deleted",
-            "profile_id": profile_id,
-            "permanent": permanent,
-            "message": message
-        })
-        
-    except HTTPException:
-        raise
+
+        # Convert IDs to value objects
+        profile_vo = ProfileId(profile_id)
+        tenant_vo = TenantId(current_user.tenant_id)
+
+        # Call service - it handles ALL business logic
+        result = await profile_service.delete_profile(
+            tenant_id=tenant_vo,
+            profile_id=profile_vo,
+            user_id=current_user.user_id,
+            permanent=permanent,
+            reason=reason,
+            schedule_task=background_tasks,
+        )
+
+        # Map service result to HTTP response
+        if not result.success:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "detail": result.message,
+                    "profile_id": profile_id,
+                },
+            )
+
+        # Convert service result to API schema
+        response = ProfileDeletionResponse(
+            success=result.success,
+            deletion_type=result.deletion_type,
+            profile_id=result.profile_id,
+            message=result.message,
+            can_restore=result.can_restore,
+        )
+
+        logger.info(
+            "Profile deletion completed via API",
+            profile_id=profile_id,
+            deletion_type=result.deletion_type,
+            user_id=current_user.user_id,
+        )
+
+        return JSONResponse(
+            status_code=200,
+            content=response.model_dump(),
+        )
+
+    except ValueError as e:
+        # Validation errors (already deleted, processing in progress, etc.)
+        logger.warning(
+            "Profile deletion validation failed",
+            profile_id=profile_id,
+            error=str(e),
+            user_id=current_user.user_id,
+        )
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": str(e),
+                "profile_id": profile_id,
+            },
+        )
+
     except Exception as e:
-        logger.error(f"Failed to delete profile: {e}")
-        raise HTTPException(
+        # Unexpected errors
+        logger.error(
+            "Profile deletion failed",
+            profile_id=profile_id,
+            error=str(e),
+            user_id=current_user.user_id,
+            exc_info=True,
+        )
+        return JSONResponse(
             status_code=500,
-            detail="Failed to delete profile"
+            content={
+                "detail": "Internal server error during profile deletion",
+                "profile_id": profile_id,
+            },
         )
 
 

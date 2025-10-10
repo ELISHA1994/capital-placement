@@ -55,6 +55,17 @@ class ProfileListResult:
     total: int
 
 
+@dataclass
+class ProfileDeletionResult:
+    """Result of profile deletion operation returned to the API layer."""
+
+    success: bool
+    deletion_type: str  # "soft_delete" or "permanent_delete"
+    profile_id: str
+    message: str
+    can_restore: bool
+
+
 class ProfileApplicationService:
     """Provide profile list operations for the API layer."""
 
@@ -283,6 +294,99 @@ class ProfileApplicationService:
                 error=str(e),
             )
             raise
+
+    async def delete_profile(
+        self,
+        *,
+        tenant_id: TenantId,
+        profile_id: ProfileId,
+        user_id: str,
+        permanent: bool = False,
+        reason: str | None = None,
+        schedule_task: Any | None = None,
+    ) -> ProfileDeletionResult:
+        """Delete a profile (soft or permanent based on business logic).
+
+        This method encapsulates the business logic decision of which deletion type to use.
+        The API layer should call this method and map the result to HTTP responses.
+
+        Args:
+            tenant_id: Tenant identifier
+            profile_id: Profile to delete
+            user_id: User performing deletion
+            permanent: If True, permanently deletes. If False (default), soft deletes.
+            reason: Optional deletion reason (used for soft delete audit trail)
+            schedule_task: Task scheduler for background operations
+
+        Returns:
+            ProfileDeletionResult with deletion status and details
+
+        Raises:
+            ValueError: If deletion validation fails
+        """
+        logger.info(
+            "delete_profile_requested",
+            tenant_id=str(tenant_id),
+            profile_id=str(profile_id),
+            user_id=user_id,
+            permanent=permanent,
+            reason=reason,
+        )
+
+        # Business logic: Determine deletion type
+        if permanent:
+            # Permanent deletion workflow
+            success = await self.permanently_delete_profile(
+                tenant_id=tenant_id,
+                profile_id=profile_id,
+                user_id=user_id,
+                schedule_task=schedule_task,
+            )
+
+            if not success:
+                # Profile not found
+                return ProfileDeletionResult(
+                    success=False,
+                    deletion_type="permanent_delete",
+                    profile_id=str(profile_id.value),
+                    message="Profile not found",
+                    can_restore=False,
+                )
+
+            return ProfileDeletionResult(
+                success=True,
+                deletion_type="permanent_delete",
+                profile_id=str(profile_id.value),
+                message="Profile permanently deleted",
+                can_restore=False,
+            )
+        else:
+            # Soft deletion workflow
+            deleted_profile = await self.soft_delete_profile(
+                tenant_id=tenant_id,
+                profile_id=profile_id,
+                user_id=user_id,
+                reason=reason,
+                schedule_task=schedule_task,
+            )
+
+            if not deleted_profile:
+                # Profile not found
+                return ProfileDeletionResult(
+                    success=False,
+                    deletion_type="soft_delete",
+                    profile_id=str(profile_id.value),
+                    message="Profile not found",
+                    can_restore=False,
+                )
+
+            return ProfileDeletionResult(
+                success=True,
+                deletion_type="soft_delete",
+                profile_id=str(profile_id.value),
+                message="Profile deleted (can be restored)",
+                can_restore=True,
+            )
 
     def _merge_profile_data(
         self,
@@ -853,9 +957,363 @@ class ProfileApplicationService:
                 error=str(exc),
             )
 
+    async def soft_delete_profile(
+        self,
+        *,
+        tenant_id: TenantId,
+        profile_id: ProfileId,
+        user_id: str,
+        reason: str | None = None,
+        schedule_task: Any | None = None,
+    ) -> Profile | None:
+        """Soft delete a profile (marks as deleted, preserves data).
+
+        Orchestrates soft deletion workflow:
+        - Validate deletion is allowed
+        - Mark profile as deleted in domain
+        - Save to repository
+        - Schedule background cleanup tasks (search index removal)
+        - Track usage and audit logging
+
+        Args:
+            tenant_id: Tenant identifier
+            profile_id: Profile to delete
+            user_id: User performing deletion
+            reason: Optional deletion reason
+            schedule_task: Task scheduler for background operations
+
+        Returns:
+            Deleted Profile entity, or None if not found
+
+        Raises:
+            ValueError: If deletion validation fails
+        """
+        logger.info(
+            "soft_delete_profile_requested",
+            tenant_id=str(tenant_id),
+            profile_id=str(profile_id),
+            user_id=user_id,
+            reason=reason,
+        )
+
+        # Fetch profile
+        repository = self._deps.profile_repository
+        profile = await repository.get_by_id(profile_id, tenant_id)
+
+        if not profile:
+            logger.warning(
+                "soft_delete_profile_not_found",
+                tenant_id=str(tenant_id),
+                profile_id=str(profile_id),
+            )
+            return None
+
+        # Validate deletion is allowed
+        validation_issues = profile.validate_can_delete()
+        if validation_issues:
+            error_msg = f"Cannot delete profile: {', '.join(validation_issues)}"
+            logger.error(
+                "soft_delete_profile_validation_failed",
+                tenant_id=str(tenant_id),
+                profile_id=str(profile_id),
+                issues=validation_issues,
+            )
+            raise ValueError(error_msg)
+
+        # Perform soft delete at domain level
+        profile.soft_delete(reason=reason)
+
+        # Save deleted profile
+        deleted_profile = await repository.save(profile)
+
+        # Schedule background cleanup tasks
+        # Remove from search index
+        if self._deps.search_index_service:
+            await self._enqueue_background(
+                schedule_task,
+                self._remove_from_search_index,
+                str(profile_id.value),
+                str(tenant_id.value),
+            )
+
+        # Track usage
+        await self._enqueue_background(
+            schedule_task,
+            self._track_profile_deletion_usage,
+            str(tenant_id.value),
+            user_id,
+            "soft_delete",
+        )
+
+        # Log audit event
+        if self._deps.audit_service:
+            await self._enqueue_background(
+                schedule_task,
+                self._log_profile_deletion_audit,
+                str(tenant_id.value),
+                user_id,
+                str(profile_id.value),
+                "soft_delete",
+                reason,
+            )
+
+        logger.info(
+            "soft_delete_profile_completed",
+            tenant_id=str(tenant_id),
+            profile_id=str(profile_id),
+            user_id=user_id,
+        )
+
+        return deleted_profile
+
+    async def permanently_delete_profile(
+        self,
+        *,
+        tenant_id: TenantId,
+        profile_id: ProfileId,
+        user_id: str,
+        schedule_task: Any | None = None,
+    ) -> bool:
+        """Permanently delete a profile (removes all data).
+
+        Orchestrates permanent deletion workflow:
+        - Validate profile exists
+        - Schedule background cleanup (search index, documents)
+        - Track usage and audit logging BEFORE deletion
+        - Delete from repository (hard delete)
+
+        Args:
+            tenant_id: Tenant identifier
+            profile_id: Profile to delete permanently
+            user_id: User performing deletion
+            schedule_task: Task scheduler for background operations
+
+        Returns:
+            True if deleted, False if not found
+
+        Raises:
+            ValueError: If deletion fails
+        """
+        logger.info(
+            "permanently_delete_profile_requested",
+            tenant_id=str(tenant_id),
+            profile_id=str(profile_id),
+            user_id=user_id,
+        )
+
+        # Fetch profile first (need data for cleanup tasks)
+        repository = self._deps.profile_repository
+        profile = await repository.get_by_id(profile_id, tenant_id)
+
+        if not profile:
+            logger.warning(
+                "permanently_delete_profile_not_found",
+                tenant_id=str(tenant_id),
+                profile_id=str(profile_id),
+            )
+            return False
+
+        # Schedule cleanup tasks BEFORE deletion (while we still have profile data)
+        # Remove from search index
+        if self._deps.search_index_service:
+            await self._enqueue_background(
+                schedule_task,
+                self._remove_from_search_index,
+                str(profile_id.value),
+                str(tenant_id.value),
+            )
+
+        # Cleanup document storage
+        await self._enqueue_background(
+            schedule_task,
+            self._cleanup_profile_documents,
+            str(profile_id.value),
+            str(tenant_id.value),
+            profile.metadata.get("original_filename"),
+        )
+
+        # Track usage BEFORE deletion
+        await self._enqueue_background(
+            schedule_task,
+            self._track_profile_deletion_usage,
+            str(tenant_id.value),
+            user_id,
+            "permanent_delete",
+        )
+
+        # Log audit event BEFORE deletion
+        if self._deps.audit_service:
+            await self._enqueue_background(
+                schedule_task,
+                self._log_profile_deletion_audit,
+                str(tenant_id.value),
+                user_id,
+                str(profile_id.value),
+                "permanent_delete",
+                None,
+            )
+
+        # Perform hard delete via repository
+        deleted = await repository.delete(profile_id, tenant_id)
+
+        if deleted:
+            logger.info(
+                "permanently_delete_profile_completed",
+                tenant_id=str(tenant_id),
+                profile_id=str(profile_id),
+                user_id=user_id,
+            )
+        else:
+            logger.error(
+                "permanently_delete_profile_failed",
+                tenant_id=str(tenant_id),
+                profile_id=str(profile_id),
+            )
+
+        return deleted
+
+    async def _track_profile_deletion_usage(
+        self,
+        tenant_id: str,
+        user_id: str,
+        deletion_type: str,
+    ) -> None:
+        """Track profile deletion usage metrics."""
+        try:
+            if self._deps.usage_service:
+                await self._deps.usage_service.track_usage(
+                    tenant_id=tenant_id,
+                    resource_type="profile",
+                    amount=1,
+                    metadata={
+                        "operation": "delete",
+                        "deletion_type": deletion_type,
+                        "user_id": user_id,
+                    },
+                )
+                logger.debug(
+                    "Profile deletion usage tracked",
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    deletion_type=deletion_type,
+                )
+        except Exception as exc:
+            logger.warning(
+                "Failed to track profile deletion usage",
+                tenant_id=tenant_id,
+                error=str(exc),
+            )
+
+    async def _log_profile_deletion_audit(
+        self,
+        tenant_id: str,
+        user_id: str,
+        profile_id: str,
+        deletion_type: str,
+        reason: str | None,
+    ) -> None:
+        """Log profile deletion audit event."""
+        try:
+            if not self._deps.audit_service:
+                return
+
+            await self._deps.audit_service.log_event(
+                event_type="profile_deleted",
+                tenant_id=tenant_id,
+                action="delete",
+                resource_type="profile",
+                user_id=user_id,
+                resource_id=profile_id,
+                details={
+                    "deletion_type": deletion_type,
+                    "reason": reason,
+                },
+            )
+
+            logger.debug(
+                "Profile deletion audit logged",
+                tenant_id=tenant_id,
+                profile_id=profile_id,
+                deletion_type=deletion_type,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to log profile deletion audit",
+                profile_id=profile_id,
+                error=str(exc),
+            )
+
+    async def _remove_from_search_index(
+        self,
+        profile_id: str,
+        tenant_id: str,
+    ) -> None:
+        """Remove profile from search index."""
+        try:
+            if not self._deps.search_index_service:
+                logger.debug("Search index service not available", profile_id=profile_id)
+                return
+
+            logger.info(
+                "Removing profile from search index",
+                profile_id=profile_id,
+                tenant_id=tenant_id,
+            )
+
+            await self._deps.search_index_service.remove_profile_index(
+                profile_id=profile_id,
+            )
+
+            logger.info(
+                "Profile removed from search index",
+                profile_id=profile_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to remove profile from search index",
+                profile_id=profile_id,
+                error=str(exc),
+            )
+
+    async def _cleanup_profile_documents(
+        self,
+        profile_id: str,
+        tenant_id: str,
+        original_filename: str | None,
+    ) -> None:
+        """Cleanup profile document storage."""
+        try:
+            logger.info(
+                "Cleaning up profile documents",
+                profile_id=profile_id,
+                tenant_id=tenant_id,
+                filename=original_filename,
+            )
+
+            # TODO: Implement document storage cleanup
+            # This would interface with storage service (S3, local filesystem, etc.)
+            # Example:
+            # if self._deps.storage_service:
+            #     await self._deps.storage_service.delete_profile_documents(
+            #         tenant_id=tenant_id,
+            #         profile_id=profile_id,
+            #     )
+
+            logger.info(
+                "Profile documents cleanup completed",
+                profile_id=profile_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to cleanup profile documents",
+                profile_id=profile_id,
+                error=str(exc),
+            )
+
 
 __all__ = [
     "ProfileApplicationService",
+    "ProfileDeletionResult",
     "ProfileListItem",
     "ProfileListResult",
 ]

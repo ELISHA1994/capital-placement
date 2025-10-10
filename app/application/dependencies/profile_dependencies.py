@@ -34,6 +34,10 @@ class ISearchIndexService(Protocol):
         """Remove profile from search index."""
         ...
 
+    async def remove_profile_index(self, profile_id: str) -> None:
+        """Remove profile from search index (alias for delete_profile_index)."""
+        ...
+
 
 @dataclass
 class ProfileDependencies:

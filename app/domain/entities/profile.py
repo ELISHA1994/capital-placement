@@ -351,6 +351,45 @@ class Profile:
         self.status = ProfileStatus.DELETED
         self.updated_at = datetime.utcnow()
 
+    def request_deletion(self) -> None:
+        """Request profile deletion (GDPR compliance)."""
+        self.privacy.request_deletion()
+        self.updated_at = datetime.utcnow()
+
+    def soft_delete(self, reason: str | None = None) -> None:
+        """Soft delete profile - marks as deleted but preserves data.
+
+        Args:
+            reason: Optional reason for deletion (stored in metadata)
+        """
+        if self.status == ProfileStatus.DELETED:
+            raise ValueError("Profile is already deleted")
+
+        self.mark_deleted()
+        self.privacy.request_deletion()
+
+        if reason:
+            self.metadata["deletion_reason"] = reason
+            self.metadata["deleted_at"] = datetime.utcnow().isoformat()
+
+    def validate_can_delete(self) -> list[str]:
+        """Validate if profile can be deleted, return list of issues.
+
+        Returns:
+            List of validation issues preventing deletion. Empty list means deletion is allowed.
+        """
+        issues = []
+
+        # Check if already deleted
+        if self.status == ProfileStatus.DELETED:
+            issues.append("Profile is already deleted")
+
+        # Check if processing is in progress
+        if self.processing.status == ProcessingStatus.PROCESSING:
+            issues.append("Cannot delete profile while processing is in progress")
+
+        return issues
+
     def activate(self) -> None:
         """Activate the profile."""
         if self.status == ProfileStatus.DELETED:
