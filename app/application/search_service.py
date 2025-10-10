@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from app.core.config import get_settings
 from app.api.schemas.search_schemas import SearchMode, SearchRequest, SearchResponse
 from app.application.search.hybrid_search import (
     FusionMethod,
@@ -20,6 +19,8 @@ from app.application.search.result_reranker import (
     RankingStrategy,
     RerankingConfig,
 )
+from app.core.config import get_settings
+
 if TYPE_CHECKING:
     from app.application.dependencies.search_dependencies import SearchDependencies
 
@@ -99,6 +100,12 @@ class SearchApplicationService:
         )
         await self._schedule_usage_tracking(
             schedule_task, str(search_request.tenant_id), 1
+        )
+        # Track search appearances for profiles in results
+        await self._schedule_search_appearance_tracking(
+            schedule_task,
+            search_response,
+            str(search_request.tenant_id),
         )
 
         self._logger.info(
@@ -475,6 +482,31 @@ class SearchApplicationService:
             search_count,
         )
 
+    async def _schedule_search_appearance_tracking(
+        self,
+        schedule_task: Any | None,
+        search_response: SearchResponse,
+        tenant_id: str,
+    ) -> None:
+        """Schedule search appearance tracking for all profiles in results.
+
+        Args:
+            schedule_task: Task scheduler
+            search_response: Search response with results
+            tenant_id: Tenant identifier
+        """
+        if not search_response.results:
+            return
+
+        profile_ids = [result["id"] for result in search_response.results]
+
+        await self._schedule(
+            schedule_task,
+            self._track_search_appearances,
+            profile_ids,
+            tenant_id,
+        )
+
     async def _track_search_analytics(
         self,
         search_request: SearchRequest,
@@ -526,6 +558,57 @@ class SearchApplicationService:
             )
         except Exception as exc:  # pragma: no cover - best effort
             self._logger.warning("Failed to update search usage", error=str(exc))
+
+    async def _track_search_appearances(
+        self,
+        profile_ids: list[str],
+        tenant_id: str,
+    ) -> None:
+        """Track search appearances for multiple profiles.
+
+        Args:
+            profile_ids: List of profile IDs that appeared in search
+            tenant_id: Tenant identifier
+        """
+        try:
+            from app.domain.value_objects import ProfileId, TenantId
+
+            tenant = TenantId(tenant_id)
+            tracked_count = 0
+
+            for profile_id_str in profile_ids:
+                try:
+                    profile = await self._deps.profile_repository.get_by_id(
+                        ProfileId(profile_id_str),
+                        tenant,
+                    )
+
+                    if profile:
+                        profile.record_search_appearance()
+                        await self._deps.profile_repository.save(profile)
+                        tracked_count += 1
+                except Exception as profile_exc:
+                    self._logger.warning(
+                        "Failed to track appearance for profile",
+                        profile_id=profile_id_str,
+                        error=str(profile_exc),
+                    )
+                    continue
+
+            self._logger.debug(
+                "Search appearances tracked",
+                tenant_id=tenant_id,
+                total_profiles=len(profile_ids),
+                tracked_count=tracked_count,
+            )
+        except Exception as exc:
+            # Analytics tracking failures should not break the search flow
+            self._logger.warning(
+                "Failed to track search appearances",
+                tenant_id=tenant_id,
+                profile_count=len(profile_ids) if profile_ids else 0,
+                error=str(exc),
+            )
 
     async def update_saved_search_last_run(self, search_id: str, result_count: int) -> None:
         """Update statistics for saved search execution.

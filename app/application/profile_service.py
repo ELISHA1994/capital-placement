@@ -140,11 +140,34 @@ class ProfileApplicationService:
         *,
         tenant_id: TenantId,
         profile_id: ProfileId,
+        schedule_task: Any | None = None,
     ) -> Profile | None:
-        """Load a profile aggregate for a tenant."""
+        """Load a profile aggregate for a tenant.
 
+        Args:
+            tenant_id: Tenant identifier for multi-tenant isolation
+            profile_id: Profile identifier
+            schedule_task: Optional task scheduler for background operations
+
+        Returns:
+            Profile entity if found, None otherwise
+
+        Note:
+            Profile views are tracked asynchronously to avoid latency impact.
+        """
         repository = self._deps.profile_repository
-        return await repository.get_by_id(profile_id, tenant_id)
+        profile = await repository.get_by_id(profile_id, tenant_id)
+
+        # Track view in background (non-blocking)
+        if profile:
+            await self._enqueue_background(
+                schedule_task,
+                self._record_profile_view,
+                str(profile_id.value),
+                str(tenant_id.value),
+            )
+
+        return profile
 
     async def update_profile(
         self,
@@ -1180,6 +1203,85 @@ class ProfileApplicationService:
 
         return restored_profile
 
+    async def get_profile_analytics(
+        self,
+        *,
+        profile_id: ProfileId,
+        tenant_id: TenantId,
+        time_range_days: int = 30,
+    ) -> dict[str, Any] | None:
+        """
+        Retrieve comprehensive analytics for a profile.
+
+        Args:
+            profile_id: The profile identifier
+            tenant_id: The tenant identifier for multi-tenant isolation
+            time_range_days: Analytics time range in days (default: 30)
+
+        Returns:
+            Dictionary containing profile analytics data, or None if profile not found
+
+        Note:
+            MVP implementation returns basic analytics (views, searches, completeness).
+            Advanced metrics (match score distribution, popular searches, skill demand)
+            require additional infrastructure and return placeholder values.
+        """
+        logger.info(
+            "Profile analytics requested",
+            profile_id=str(profile_id.value),
+            tenant_id=str(tenant_id.value),
+            time_range_days=time_range_days,
+        )
+
+        try:
+            # Fetch the profile
+            repository = self._deps.profile_repository
+            profile = await repository.get_by_id(profile_id, tenant_id)
+
+            if not profile:
+                logger.warning(
+                    "get_profile_analytics_not_found",
+                    profile_id=str(profile_id.value),
+                    tenant_id=str(tenant_id.value),
+                )
+                return None
+
+            # Calculate profile completeness
+            completeness_score = profile.calculate_completeness_score()
+
+            # Extract analytics data from profile entity
+            analytics_data = {
+                "profile_id": str(profile_id.value),
+                "view_count": profile.analytics.view_count,
+                "search_appearances": profile.analytics.search_appearances,
+                "last_viewed": profile.analytics.last_viewed_at,
+                "profile_completeness": completeness_score,
+                # MVP: Return empty/None for advanced metrics that require additional infrastructure
+                "match_score_distribution": {},
+                "popular_searches": [],
+                "skill_demand_score": None,
+            }
+
+            logger.info(
+                "Profile analytics retrieved successfully",
+                profile_id=str(profile_id.value),
+                tenant_id=str(tenant_id.value),
+                view_count=profile.analytics.view_count,
+                search_appearances=profile.analytics.search_appearances,
+                completeness=completeness_score,
+            )
+
+            return analytics_data
+
+        except Exception as exc:
+            logger.error(
+                "Failed to retrieve profile analytics",
+                profile_id=str(profile_id.value),
+                tenant_id=str(tenant_id.value),
+                error=str(exc),
+            )
+            raise
+
     async def permanently_delete_profile(
         self,
         *,
@@ -1418,6 +1520,45 @@ class ProfileApplicationService:
             logger.warning(
                 "Failed to log profile restoration audit",
                 profile_id=profile_id,
+                error=str(exc),
+            )
+
+    async def _record_profile_view(
+        self,
+        profile_id: str,
+        tenant_id: str,
+    ) -> None:
+        """Record profile view in background.
+
+        Args:
+            profile_id: Profile identifier string
+            tenant_id: Tenant identifier string
+        """
+        try:
+            # Re-fetch profile for update
+            profile = await self._deps.profile_repository.get_by_id(
+                ProfileId(profile_id),
+                TenantId(tenant_id),
+            )
+
+            if profile:
+                # Update analytics
+                profile.record_view()
+
+                # Persist updated analytics
+                await self._deps.profile_repository.save(profile)
+
+                logger.debug(
+                    "Profile view recorded",
+                    profile_id=profile_id,
+                    view_count=profile.analytics.view_count,
+                    last_viewed_at=profile.analytics.last_viewed_at.isoformat() if profile.analytics.last_viewed_at else None,
+                )
+        except Exception as exc:
+            logger.warning(
+                "Failed to record profile view",
+                profile_id=profile_id,
+                tenant_id=tenant_id,
                 error=str(exc),
             )
 

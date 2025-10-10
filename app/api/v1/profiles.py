@@ -163,6 +163,7 @@ async def get_profile(
         domain_profile = await profile_service.get_profile(
             tenant_id=TenantId(current_user.tenant_id),
             profile_id=ProfileId(profile_id),
+            schedule_task=background_tasks,  # Enable view tracking
         )
 
         if domain_profile is None:
@@ -488,108 +489,80 @@ async def restore_profile(
 async def get_profile_analytics(
     profile_id: str,
     current_user: CurrentUserDep,
+    profile_service: ProfileServiceDep,
     time_range_days: int = Query(30, ge=1, le=365, description="Analytics time range in days")
 ) -> ProfileAnalyticsSummary:
     """
     Get comprehensive analytics for a profile.
-    
+
     Provides insights on:
     - View patterns and engagement
-    - Search performance and visibility  
-    - Market demand for skills
+    - Search performance and visibility
+    - Market demand for skills (MVP: placeholder)
     - Profile optimization suggestions
-    - Competitive benchmarking
+    - Competitive benchmarking (MVP: placeholder)
     """
     try:
-        # TODO: Implement analytics retrieval
-        # This would involve querying various analytics tables/collections
-        
-        analytics = ProfileAnalyticsSummary(
+        logger.info(
+            "Profile analytics requested",
             profile_id=profile_id,
-            view_count=0,
-            search_appearances=0,
-            profile_completeness=0.0
+            tenant_id=current_user.tenant_id,
+            time_range_days=time_range_days
         )
-        
+
+        # Convert to value objects
+        profile_vo = ProfileId(profile_id)
+        tenant_vo = TenantId(current_user.tenant_id)
+
+        # Call service - it handles ALL business logic
+        analytics_data = await profile_service.get_profile_analytics(
+            profile_id=profile_vo,
+            tenant_id=tenant_vo,
+            time_range_days=time_range_days,
+        )
+
+        # Handle not found
+        if analytics_data is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Profile not found",
+            )
+
+        # Construct response from service result
+        analytics = ProfileAnalyticsSummary(**analytics_data)
+
+        logger.info(
+            "Profile analytics retrieved successfully",
+            profile_id=profile_id,
+            view_count=analytics.view_count,
+            search_appearances=analytics.search_appearances
+        )
+
         return analytics
-        
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.warning(
+            "Profile analytics validation failed",
+            profile_id=profile_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    except DomainException as domain_exc:
+        raise map_domain_exception_to_http(domain_exc)
     except Exception as e:
-        logger.error(f"Failed to get profile analytics: {e}")
+        logger.error(
+            "Failed to get profile analytics",
+            profile_id=profile_id,
+            error=str(e),
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500,
             detail="Failed to retrieve profile analytics"
         )
 
-
-@router.post("/bulk", response_model=Dict[str, Any])
-async def bulk_operation(
-    bulk_request: BulkOperationRequest,
-    current_user: CurrentUserDep,
-    background_tasks: BackgroundTasks = BackgroundTasks()
-) -> Dict[str, Any]:
-    """
-    Perform bulk operations on multiple profiles.
-    
-    Supported operations:
-    - **update**: Apply updates to multiple profiles
-    - **delete**: Bulk delete profiles (soft or permanent)
-    - **tag**: Add/remove tags from profiles
-    - **export**: Export profile data in various formats
-    - **reprocess**: Reprocess documents for multiple profiles
-    """
-    try:
-        logger.info(
-            "Bulk operation requested",
-            operation=bulk_request.operation,
-            profile_count=len(bulk_request.profile_ids),
-            user_id=current_user.user_id
-        )
-        
-        # Validate profile ownership
-        # TODO: Check that all profiles belong to the tenant
-        
-        # Check feature access for bulk operations
-        tenant_manager = await get_tenant_manager()
-        has_access = await tenant_manager.check_feature_access(
-            tenant_id=current_user.tenant_id,
-            feature_name="bulk_operations"
-        )
-        
-        if not has_access:
-            raise HTTPException(
-                status_code=403,
-                detail="Bulk operations not available in your subscription tier"
-            )
-        
-        # Execute bulk operation in background
-        operation_id = f"bulk_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
-        background_tasks.add_task(
-            _execute_bulk_operation,
-            operation_id=operation_id,
-            operation_type=bulk_request.operation,
-            profile_ids=bulk_request.profile_ids,
-            parameters=bulk_request.parameters or {},
-            tenant_id=current_user.tenant_id,
-            user_id=current_user.user_id
-        )
-        
-        return {
-            "operation_id": operation_id,
-            "status": "started",
-            "profile_count": len(bulk_request.profile_ids),
-            "operation": bulk_request.operation,
-            "message": f"Bulk {bulk_request.operation} operation started for {len(bulk_request.profile_ids)} profiles"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Bulk operation failed: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to execute bulk operation"
-        )
 
 
 @router.get("/export/csv")
