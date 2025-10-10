@@ -1081,125 +1081,6 @@ class UploadApplicationService:
                 error=str(cleanup_error)
             )
 
-    async def _validate_upload_file(
-        self,
-        *,
-        file: UploadFile,
-        tenant_id: str,
-        tenant_config: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """
-        Comprehensive file validation with stream-based size checking.
-        
-        This method performs validation without loading the entire file into memory,
-        providing protection against memory exhaustion attacks.
-        """
-        filename = getattr(file, 'filename', 'unknown')
-        
-        logger.debug(
-            "Starting file validation",
-            filename=filename,
-            tenant_id=tenant_id,
-            has_size_attr=hasattr(file, 'size')
-        )
-        
-        # 1. Validate filename
-        if not file.filename or len(file.filename) > 255:
-            logger.warning(
-                "Invalid filename during validation",
-                filename=filename,
-                filename_length=len(file.filename) if file.filename else 0
-            )
-            return {"valid": False, "reason": "Invalid filename"}
-        
-        # 2. Validate file extension
-        allowed_extensions = tenant_config.get(
-            "allowed_file_extensions",
-            [".pdf", ".doc", ".docx", ".txt"],
-        )
-        file_extension = None
-        if file.filename:
-            file_extension = "." + file.filename.split(".")[-1].lower()
-
-        if file_extension not in allowed_extensions:
-            logger.warning(
-                "Unsupported file type during validation",
-                filename=filename,
-                file_extension=file_extension,
-                allowed_extensions=allowed_extensions
-            )
-            return {
-                "valid": False,
-                "reason": "File type not supported. Allowed types: "
-                + ", ".join(allowed_extensions),
-            }
-        
-        # 3. Validate file size using stream-based approach
-        try:
-            max_size_bytes = FileSizeValidator.get_tenant_max_file_size(
-                tenant_config=tenant_config,
-                default_mb=10
-            )
-            
-            logger.debug(
-                "Performing file size validation",
-                filename=filename,
-                max_size_mb=max_size_bytes / (1024 * 1024)
-            )
-            
-            # Use stream-based validation that works with or without file.size
-            size_validation = await FileSizeValidator.validate_file_size(
-                file=file,
-                max_size_bytes=max_size_bytes,
-                tenant_config=tenant_config
-            )
-            
-            logger.info(
-                "File size validation completed",
-                filename=filename,
-                file_size=size_validation["size"],
-                size_mb=size_validation["size"] / (1024 * 1024),
-                validation_method=size_validation.get("validation_method", "unknown")
-            )
-            
-            return {"valid": True, "file_size": size_validation["size"]}
-            
-        except FileSizeExceededError as e:
-            logger.warning(
-                "File size exceeded during validation",
-                filename=filename,
-                actual_size=e.actual_size,
-                max_size=e.max_size,
-                actual_mb=e.actual_size / (1024 * 1024),
-                max_mb=e.max_size / (1024 * 1024)
-            )
-            return {
-                "valid": False,
-                "reason": str(e)
-            }
-        except InvalidFileError as e:
-            logger.error(
-                "Invalid file error during validation",
-                filename=filename,
-                error=str(e),
-                reason=e.reason
-            )
-            return {
-                "valid": False,
-                "reason": str(e)
-            }
-        except Exception as e:
-            logger.error(
-                "Unexpected error during file validation",
-                filename=filename,
-                error=str(e),
-                error_type=type(e).__name__
-            )
-            return {
-                "valid": False,
-                "reason": f"File validation failed: {str(e)}"
-            }
-
     async def _update_upload_usage(
         self,
         tenant_id: str,
@@ -1727,10 +1608,6 @@ class UploadApplicationService:
                 "message": f"Cancellation failed: {str(exc)}",
                 "error_details": str(exc)
             }
-
-    async def _mock_reprocess(self, upload_id: str) -> None:
-        await asyncio.sleep(2)
-        logger.info("Mock reprocessing completed", upload_id=upload_id)
     
     async def _get_processing_status_from_db(self, upload_id: str, tenant_id: str) -> Optional[str]:
         """Get the current processing status from database."""
@@ -2230,309 +2107,6 @@ class UploadApplicationService:
 
         return profile
 
-    def _extract_candidate_name(
-        self,
-        personal_info: Dict[str, Any],
-        analysis: Dict[str, Any],
-        text_content: str,
-        filename: str,
-    ) -> str:
-        """Best-effort extraction of candidate name."""
-        candidate = None
-        for key in ("name", "full_name"):
-            value = personal_info.get(key) if personal_info else None
-            if value and isinstance(value, str) and value.strip():
-                candidate = value.strip()
-                break
-
-        if not candidate and isinstance(analysis.get("candidate_name"), str):
-            candidate = analysis["candidate_name"].strip()
-
-        if not candidate:
-            candidate = self._guess_name_from_text(text_content)
-
-        if not candidate:
-            candidate = Path(filename).stem.replace("_", " ").replace("-", " ").strip()
-
-        return candidate.title() if candidate else "Unknown Candidate"
-
-    def _extract_candidate_email(
-        self,
-        personal_info: Dict[str, Any],
-        analysis: Dict[str, Any],
-        text_content: str,
-    ) -> Optional[str]:
-        """Extract email address from structured data or raw text."""
-        possible_emails: List[str] = []
-
-        if personal_info:
-            value = personal_info.get("email") or personal_info.get("email_address")
-            if isinstance(value, str):
-                possible_emails.append(value)
-            elif isinstance(value, list):
-                possible_emails.extend(str(item) for item in value if isinstance(item, (str, bytes)))
-
-        contact_info = analysis.get("contact") if isinstance(analysis.get("contact"), dict) else {}
-        contact_email = contact_info.get("email") if isinstance(contact_info, dict) else None
-        if isinstance(contact_email, str):
-            possible_emails.append(contact_email)
-
-        if not possible_emails:
-            email_from_text = self._find_first_email(text_content)
-            if email_from_text:
-                possible_emails.append(email_from_text)
-
-        for email in possible_emails:
-            if email and "@" in email:
-                return email.strip()
-
-        return None
-
-    def _extract_candidate_phone(
-        self,
-        personal_info: Dict[str, Any],
-        analysis: Dict[str, Any],
-        text_content: str,
-    ) -> Optional[str]:
-        """Extract phone number using structured data or regex fallback."""
-        candidates: List[str] = []
-        if personal_info:
-            phone = personal_info.get("phone") or personal_info.get("phone_number")
-            if isinstance(phone, str):
-                candidates.append(phone)
-        contact_info = analysis.get("contact") if isinstance(analysis.get("contact"), dict) else {}
-        if isinstance(contact_info, dict):
-            phone = contact_info.get("phone")
-            if isinstance(phone, str):
-                candidates.append(phone)
-
-        if not candidates:
-            match = re.search(r"(\+?\d[\d\-\s]{8,})", text_content or "")
-            if match:
-                candidates.append(match.group(0))
-
-        for entry in candidates:
-            normalized = self._normalize_phone(entry)
-            if normalized:
-                return normalized
-        return None
-
-    def _normalize_phone(self, phone: str) -> Optional[str]:
-        """Normalize phone strings to digit format."""
-        if not phone:
-            return None
-        digits = re.sub(r"[^\d]", "", phone)
-        if phone.strip().startswith("+") and digits:
-            normalized = f"+{digits}"
-        else:
-            normalized = digits
-        return normalized if normalized and len(normalized.replace("+", "")) >= 10 else None
-
-    def _parse_location(self, location_data: Any) -> Optional[Location]:
-        """Parse location information into a domain Location object."""
-        if not location_data:
-            return None
-
-        if isinstance(location_data, dict):
-            return Location(
-                city=location_data.get("city"),
-                state=location_data.get("state") or location_data.get("region"),
-                country=location_data.get("country"),
-            )
-
-        if isinstance(location_data, str):
-            parts = [part.strip() for part in location_data.split(",") if part.strip()]
-            if not parts:
-                return None
-            city = parts[0] if len(parts) >= 2 else None
-            state = parts[1] if len(parts) >= 3 else None
-            country = parts[-1] if parts else None
-            return Location(city=city, state=state, country=country)
-
-        return None
-
-    def _parse_skills(self, skills_data: Any) -> List[Skill]:
-        """Convert structured skills into domain Skill objects."""
-        if not skills_data:
-            return []
-
-        skills: List[Skill] = []
-
-        if isinstance(skills_data, dict):
-            flattened: List[Any] = []
-            for value in skills_data.values():
-                if isinstance(value, list):
-                    flattened.extend(value)
-            skills_data = flattened
-
-        if isinstance(skills_data, list):
-            for entry in skills_data:
-                try:
-                    if isinstance(entry, str):
-                        skills.append(Skill(name=SkillName(entry)))
-                    elif isinstance(entry, dict):
-                        name_value = entry.get("name") or entry.get("skill") or entry.get("value")
-                        if not name_value:
-                            continue
-                        skill_kwargs = {
-                            "name": SkillName(name_value),
-                            "category": str(entry.get("category", "technical")),
-                        }
-                        if entry.get("proficiency") is not None:
-                            try:
-                                skill_kwargs["proficiency"] = int(entry["proficiency"])
-                            except (ValueError, TypeError):
-                                pass
-                        if entry.get("years_of_experience") is not None:
-                            try:
-                                skill_kwargs["years_of_experience"] = int(entry["years_of_experience"])
-                            except (ValueError, TypeError):
-                                pass
-                        if entry.get("endorsed") is not None:
-                            skill_kwargs["endorsed"] = bool(entry["endorsed"])
-                        if entry.get("last_used"):
-                            skill_kwargs["last_used"] = str(entry["last_used"])
-                        skills.append(Skill(**skill_kwargs))
-                except (ValueError, TypeError) as err:
-                    logger.debug("Skipping malformed skill entry", error=str(err), entry=entry)
-
-        return skills
-
-    def _parse_experience(self, experience_data: Any) -> List[Experience]:
-        """Convert structured experience entries to domain Experience objects."""
-        if not isinstance(experience_data, list):
-            return []
-
-        experiences: List[Experience] = []
-        for entry in experience_data[:50]:
-            if not isinstance(entry, dict):
-                continue
-            title = entry.get("title") or entry.get("position") or "Unknown Role"
-            company = entry.get("company") or entry.get("employer") or "Unknown Company"
-            start_date = entry.get("start_date") or entry.get("start") or datetime.utcnow().strftime("%Y-%m-01")
-            end_date = entry.get("end_date") or entry.get("end")
-            description = entry.get("description") or entry.get("summary") or ""
-            current = entry.get("current")
-            if current is None:
-                current = not bool(end_date)
-            location = entry.get("location")
-            achievements = entry.get("achievements")
-            if not isinstance(achievements, list):
-                achievements = []
-            skill_entries = entry.get("skills")
-            skill_names: List[SkillName] = []
-            if isinstance(skill_entries, list):
-                for skill in skill_entries:
-                    try:
-                        if isinstance(skill, dict) and skill.get("name"):
-                            skill_names.append(SkillName(skill["name"]))
-                        elif isinstance(skill, str):
-                            skill_names.append(SkillName(skill))
-                    except (ValueError, TypeError):
-                        continue
-            try:
-                experiences.append(
-                    Experience(
-                        title=title,
-                        company=company,
-                        start_date=str(start_date),
-                        end_date=str(end_date) if end_date else None,
-                        description=str(description),
-                        current=bool(current),
-                        location=location,
-                        achievements=[str(a) for a in achievements],
-                        skills=skill_names,
-                    )
-                )
-            except Exception as err:
-                logger.debug("Skipping experience entry", error=str(err), entry=entry)
-
-        return experiences
-
-    def _parse_education(self, education_data: Any) -> List[Education]:
-        """Convert structured education entries to domain Education objects."""
-        if not isinstance(education_data, list):
-            return []
-
-        education_entries: List[Education] = []
-        for entry in education_data[:25]:
-            if not isinstance(entry, dict):
-                continue
-            institution = entry.get("institution") or entry.get("school")
-            degree = entry.get("degree")
-            field = entry.get("field") or entry.get("area")
-            if not (institution and degree and field):
-                continue
-            try:
-                education_entries.append(
-                    Education(
-                        institution=str(institution),
-                        degree=str(degree),
-                        field=str(field),
-                        start_date=entry.get("start_date"),
-                        end_date=entry.get("end_date"),
-                        gpa=entry.get("gpa"),
-                        achievements=[
-                            str(ach) for ach in entry.get("achievements", []) if isinstance(ach, (str, bytes))
-                        ],
-                    )
-                )
-            except Exception as err:
-                logger.debug("Skipping education entry", error=str(err), entry=entry)
-
-        return education_entries
-
-    def _parse_languages(self, languages_data: Any) -> List[str]:
-        """Normalize language information."""
-        if not languages_data:
-            return []
-
-        languages: List[str] = []
-        if isinstance(languages_data, list):
-            for item in languages_data:
-                if isinstance(item, str):
-                    languages.append(item)
-                elif isinstance(item, dict):
-                    name = item.get("name") or item.get("language")
-                    if isinstance(name, str):
-                        languages.append(name)
-        elif isinstance(languages_data, dict):
-            for value in languages_data.values():
-                if isinstance(value, str):
-                    languages.append(value)
-                elif isinstance(value, list):
-                    languages.extend(str(item) for item in value)
-        return languages
-
-    def _format_embedding_vector(self, vector: Optional[List[float]]) -> Optional[EmbeddingVector]:
-        """Normalize raw vector data into EmbeddingVector."""
-        if not vector:
-            return None
-
-        try:
-            expected_dimension = get_settings().EMBEDDING_DIMENSION
-            values = [float(value) for value in vector]
-
-            if len(values) != expected_dimension:
-                if len(values) > expected_dimension:
-                    logger.debug(
-                        "Truncating embedding vector to expected dimension",
-                        original_dimension=len(values),
-                        expected_dimension=expected_dimension,
-                    )
-                    values = values[:expected_dimension]
-                else:
-                    logger.debug(
-                        "Padding embedding vector to expected dimension",
-                        original_dimension=len(values),
-                        expected_dimension=expected_dimension,
-                    )
-                    values.extend([0.0] * (expected_dimension - len(values)))
-
-            return EmbeddingVector(dimensions=expected_dimension, values=values)
-        except Exception as err:
-            logger.debug("Failed to format embedding vector", error=str(err))
-            return None
 
     async def _generate_profile_embeddings(
         self,
@@ -2617,35 +2191,7 @@ class UploadApplicationService:
 
         return embeddings
 
-    def _extract_quality_score(self, quality_assessment: Dict[str, Any]) -> Optional[float]:
-        """Extract overall quality score in a resilient manner."""
-        if not isinstance(quality_assessment, dict):
-            return None
-        score = quality_assessment.get("overall_score") or quality_assessment.get("score")
-        if isinstance(score, (int, float)):
-            return float(score)
-        return None
 
-    def _extract_quality_confidence(self, quality_assessment: Dict[str, Any]) -> Optional[float]:
-        """Extract confidence score from quality assessment."""
-        if not isinstance(quality_assessment, dict):
-            return None
-        confidence = quality_assessment.get("confidence") or quality_assessment.get("analysis_confidence")
-        if isinstance(confidence, (int, float)):
-            return float(confidence)
-        return None
-
-    def _build_profile_preview(self, profile: Profile) -> Dict[str, Any]:
-        """Create a lightweight snapshot of persisted profile details."""
-        top_skills = [skill.name.value for skill in profile.profile_data.skills[:5]]
-        return {
-            "name": profile.profile_data.name,
-            "email": str(profile.profile_data.email),
-            "headline": profile.profile_data.headline,
-            "summary": profile.profile_data.summary,
-            "experience_level": profile.experience_level.value if profile.experience_level else None,
-            "top_skills": top_skills,
-        }
 
     async def _publish_profile_created_event(self, profile_entity: Profile, user_id: str, filename: str) -> None:
         """Publish domain event for newly created profiles."""
@@ -2671,7 +2217,471 @@ class UploadApplicationService:
         except Exception as exc:
             logger.warning("Failed to publish profile created event", error=str(exc))
 
-    def _guess_name_from_text(self, text_content: str) -> Optional[str]:
+    @staticmethod
+    def _extract_candidate_name(
+            personal_info: Dict[str, Any],
+            analysis: Dict[str, Any],
+            text_content: str,
+            filename: str,
+    ) -> str:
+        """Best-effort extraction of candidate name."""
+        candidate = None
+        for key in ("name", "full_name"):
+            value = personal_info.get(key) if personal_info else None
+            if value and isinstance(value, str) and value.strip():
+                candidate = value.strip()
+                break
+
+        if not candidate and isinstance(analysis.get("candidate_name"), str):
+            candidate = analysis["candidate_name"].strip()
+
+        if not candidate:
+            candidate = self._guess_name_from_text(text_content)
+
+        if not candidate:
+            candidate = Path(filename).stem.replace("_", " ").replace("-", " ").strip()
+
+        return candidate.title() if candidate else "Unknown Candidate"
+
+    @staticmethod
+    def _extract_candidate_email(
+            personal_info: Dict[str, Any],
+            analysis: Dict[str, Any],
+            text_content: str,
+    ) -> Optional[str]:
+        """Extract email address from structured data or raw text."""
+        possible_emails: List[str] = []
+
+        if personal_info:
+            value = personal_info.get("email") or personal_info.get("email_address")
+            if isinstance(value, str):
+                possible_emails.append(value)
+            elif isinstance(value, list):
+                possible_emails.extend(str(item) for item in value if isinstance(item, (str, bytes)))
+
+        contact_info = analysis.get("contact") if isinstance(analysis.get("contact"), dict) else {}
+        contact_email = contact_info.get("email") if isinstance(contact_info, dict) else None
+        if isinstance(contact_email, str):
+            possible_emails.append(contact_email)
+
+        if not possible_emails:
+            email_from_text = self._find_first_email(text_content)
+            if email_from_text:
+                possible_emails.append(email_from_text)
+
+        for email in possible_emails:
+            if email and "@" in email:
+                return email.strip()
+
+        return None
+
+    @staticmethod
+    def _extract_candidate_phone(
+            personal_info: Dict[str, Any],
+            analysis: Dict[str, Any],
+            text_content: str,
+    ) -> Optional[str]:
+        """Extract phone number using structured data or regex fallback."""
+        candidates: List[str] = []
+        if personal_info:
+            phone = personal_info.get("phone") or personal_info.get("phone_number")
+            if isinstance(phone, str):
+                candidates.append(phone)
+        contact_info = analysis.get("contact") if isinstance(analysis.get("contact"), dict) else {}
+        if isinstance(contact_info, dict):
+            phone = contact_info.get("phone")
+            if isinstance(phone, str):
+                candidates.append(phone)
+
+        if not candidates:
+            match = re.search(r"(\+?\d[\d\-\s]{8,})", text_content or "")
+            if match:
+                candidates.append(match.group(0))
+
+        for entry in candidates:
+            normalized = self._normalize_phone(entry)
+            if normalized:
+                return normalized
+        return None
+
+    @staticmethod
+    async def _validate_upload_file(
+            *,
+            file: UploadFile,
+            tenant_id: str,
+            tenant_config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Comprehensive file validation with stream-based size checking.
+
+        This method performs validation without loading the entire file into memory,
+        providing protection against memory exhaustion attacks.
+        """
+        filename = getattr(file, 'filename', 'unknown')
+
+        logger.debug(
+            "Starting file validation",
+            filename=filename,
+            tenant_id=tenant_id,
+            has_size_attr=hasattr(file, 'size')
+        )
+
+        # 1. Validate filename
+        if not file.filename or len(file.filename) > 255:
+            logger.warning(
+                "Invalid filename during validation",
+                filename=filename,
+                filename_length=len(file.filename) if file.filename else 0
+            )
+            return {"valid": False, "reason": "Invalid filename"}
+
+        # 2. Validate file extension
+        allowed_extensions = tenant_config.get(
+            "allowed_file_extensions",
+            [".pdf", ".doc", ".docx", ".txt"],
+        )
+        file_extension = None
+        if file.filename:
+            file_extension = "." + file.filename.split(".")[-1].lower()
+
+        if file_extension not in allowed_extensions:
+            logger.warning(
+                "Unsupported file type during validation",
+                filename=filename,
+                file_extension=file_extension,
+                allowed_extensions=allowed_extensions
+            )
+            return {
+                "valid": False,
+                "reason": "File type not supported. Allowed types: "
+                          + ", ".join(allowed_extensions),
+            }
+
+        # 3. Validate file size using stream-based approach
+        try:
+            max_size_bytes = FileSizeValidator.get_tenant_max_file_size(
+                tenant_config=tenant_config,
+                default_mb=10
+            )
+
+            logger.debug(
+                "Performing file size validation",
+                filename=filename,
+                max_size_mb=max_size_bytes / (1024 * 1024)
+            )
+
+            # Use stream-based validation that works with or without file.size
+            size_validation = await FileSizeValidator.validate_file_size(
+                file=file,
+                max_size_bytes=max_size_bytes,
+                tenant_config=tenant_config
+            )
+
+            logger.info(
+                "File size validation completed",
+                filename=filename,
+                file_size=size_validation["size"],
+                size_mb=size_validation["size"] / (1024 * 1024),
+                validation_method=size_validation.get("validation_method", "unknown")
+            )
+
+            return {"valid": True, "file_size": size_validation["size"]}
+
+        except FileSizeExceededError as e:
+            logger.warning(
+                "File size exceeded during validation",
+                filename=filename,
+                actual_size=e.actual_size,
+                max_size=e.max_size,
+                actual_mb=e.actual_size / (1024 * 1024),
+                max_mb=e.max_size / (1024 * 1024)
+            )
+            return {
+                "valid": False,
+                "reason": str(e)
+            }
+        except InvalidFileError as e:
+            logger.error(
+                "Invalid file error during validation",
+                filename=filename,
+                error=str(e),
+                reason=e.reason
+            )
+            return {
+                "valid": False,
+                "reason": str(e)
+            }
+        except Exception as e:
+            logger.error(
+                "Unexpected error during file validation",
+                filename=filename,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            return {
+                "valid": False,
+                "reason": f"File validation failed: {str(e)}"
+            }
+
+    @staticmethod
+    def _normalize_phone(phone: str) -> Optional[str]:
+        """Normalize phone strings to digit format."""
+        if not phone:
+            return None
+        digits = re.sub(r"[^\d]", "", phone)
+        if phone.strip().startswith("+") and digits:
+            normalized = f"+{digits}"
+        else:
+            normalized = digits
+        return normalized if normalized and len(normalized.replace("+", "")) >= 10 else None
+
+    @staticmethod
+    def _parse_location(location_data: Any) -> Optional[Location]:
+        """Parse location information into a domain Location object."""
+        if not location_data:
+            return None
+
+        if isinstance(location_data, dict):
+            return Location(
+                city=location_data.get("city"),
+                state=location_data.get("state") or location_data.get("region"),
+                country=location_data.get("country"),
+            )
+
+        if isinstance(location_data, str):
+            parts = [part.strip() for part in location_data.split(",") if part.strip()]
+            if not parts:
+                return None
+            city = parts[0] if len(parts) >= 2 else None
+            state = parts[1] if len(parts) >= 3 else None
+            country = parts[-1] if parts else None
+            return Location(city=city, state=state, country=country)
+
+        return None
+
+    @staticmethod
+    def _parse_skills(skills_data: Any) -> List[Skill]:
+        """Convert structured skills into domain Skill objects."""
+        if not skills_data:
+            return []
+
+        skills: List[Skill] = []
+
+        if isinstance(skills_data, dict):
+            flattened: List[Any] = []
+            for value in skills_data.values():
+                if isinstance(value, list):
+                    flattened.extend(value)
+            skills_data = flattened
+
+        if isinstance(skills_data, list):
+            for entry in skills_data:
+                try:
+                    if isinstance(entry, str):
+                        skills.append(Skill(name=SkillName(entry)))
+                    elif isinstance(entry, dict):
+                        name_value = entry.get("name") or entry.get("skill") or entry.get("value")
+                        if not name_value:
+                            continue
+                        skill_kwargs = {
+                            "name": SkillName(name_value),
+                            "category": str(entry.get("category", "technical")),
+                        }
+                        if entry.get("proficiency") is not None:
+                            try:
+                                skill_kwargs["proficiency"] = int(entry["proficiency"])
+                            except (ValueError, TypeError):
+                                pass
+                        if entry.get("years_of_experience") is not None:
+                            try:
+                                skill_kwargs["years_of_experience"] = int(entry["years_of_experience"])
+                            except (ValueError, TypeError):
+                                pass
+                        if entry.get("endorsed") is not None:
+                            skill_kwargs["endorsed"] = bool(entry["endorsed"])
+                        if entry.get("last_used"):
+                            skill_kwargs["last_used"] = str(entry["last_used"])
+                        skills.append(Skill(**skill_kwargs))
+                except (ValueError, TypeError) as err:
+                    logger.debug("Skipping malformed skill entry", error=str(err), entry=entry)
+
+        return skills
+
+    @staticmethod
+    def _parse_experience(experience_data: Any) -> List[Experience]:
+        """Convert structured experience entries to domain Experience objects."""
+        if not isinstance(experience_data, list):
+            return []
+
+        experiences: List[Experience] = []
+        for entry in experience_data[:50]:
+            if not isinstance(entry, dict):
+                continue
+            title = entry.get("title") or entry.get("position") or "Unknown Role"
+            company = entry.get("company") or entry.get("employer") or "Unknown Company"
+            start_date = entry.get("start_date") or entry.get("start") or datetime.utcnow().strftime("%Y-%m-01")
+            end_date = entry.get("end_date") or entry.get("end")
+            description = entry.get("description") or entry.get("summary") or ""
+            current = entry.get("current")
+            if current is None:
+                current = not bool(end_date)
+            location = entry.get("location")
+            achievements = entry.get("achievements")
+            if not isinstance(achievements, list):
+                achievements = []
+            skill_entries = entry.get("skills")
+            skill_names: List[SkillName] = []
+            if isinstance(skill_entries, list):
+                for skill in skill_entries:
+                    try:
+                        if isinstance(skill, dict) and skill.get("name"):
+                            skill_names.append(SkillName(skill["name"]))
+                        elif isinstance(skill, str):
+                            skill_names.append(SkillName(skill))
+                    except (ValueError, TypeError):
+                        continue
+            try:
+                experiences.append(
+                    Experience(
+                        title=title,
+                        company=company,
+                        start_date=str(start_date),
+                        end_date=str(end_date) if end_date else None,
+                        description=str(description),
+                        current=bool(current),
+                        location=location,
+                        achievements=[str(a) for a in achievements],
+                        skills=skill_names,
+                    )
+                )
+            except Exception as err:
+                logger.debug("Skipping experience entry", error=str(err), entry=entry)
+
+        return experiences
+
+    @staticmethod
+    def _parse_education(education_data: Any) -> List[Education]:
+        """Convert structured education entries to domain Education objects."""
+        if not isinstance(education_data, list):
+            return []
+
+        education_entries: List[Education] = []
+        for entry in education_data[:25]:
+            if not isinstance(entry, dict):
+                continue
+            institution = entry.get("institution") or entry.get("school")
+            degree = entry.get("degree")
+            field = entry.get("field") or entry.get("area")
+            if not (institution and degree and field):
+                continue
+            try:
+                education_entries.append(
+                    Education(
+                        institution=str(institution),
+                        degree=str(degree),
+                        field=str(field),
+                        start_date=entry.get("start_date"),
+                        end_date=entry.get("end_date"),
+                        gpa=entry.get("gpa"),
+                        achievements=[
+                            str(ach) for ach in entry.get("achievements", []) if isinstance(ach, (str, bytes))
+                        ],
+                    )
+                )
+            except Exception as err:
+                logger.debug("Skipping education entry", error=str(err), entry=entry)
+
+        return education_entries
+
+    @staticmethod
+    def _parse_languages(languages_data: Any) -> List[str]:
+        """Normalize language information."""
+        if not languages_data:
+            return []
+
+        languages: List[str] = []
+        if isinstance(languages_data, list):
+            for item in languages_data:
+                if isinstance(item, str):
+                    languages.append(item)
+                elif isinstance(item, dict):
+                    name = item.get("name") or item.get("language")
+                    if isinstance(name, str):
+                        languages.append(name)
+        elif isinstance(languages_data, dict):
+            for value in languages_data.values():
+                if isinstance(value, str):
+                    languages.append(value)
+                elif isinstance(value, list):
+                    languages.extend(str(item) for item in value)
+        return languages
+
+    @staticmethod
+    def _format_embedding_vector(vector: Optional[List[float]]) -> Optional[EmbeddingVector]:
+        """Normalize raw vector data into EmbeddingVector."""
+        if not vector:
+            return None
+
+        try:
+            expected_dimension = get_settings().EMBEDDING_DIMENSION
+            values = [float(value) for value in vector]
+
+            if len(values) != expected_dimension:
+                if len(values) > expected_dimension:
+                    logger.debug(
+                        "Truncating embedding vector to expected dimension",
+                        original_dimension=len(values),
+                        expected_dimension=expected_dimension,
+                    )
+                    values = values[:expected_dimension]
+                else:
+                    logger.debug(
+                        "Padding embedding vector to expected dimension",
+                        original_dimension=len(values),
+                        expected_dimension=expected_dimension,
+                    )
+                    values.extend([0.0] * (expected_dimension - len(values)))
+
+            return EmbeddingVector(dimensions=expected_dimension, values=values)
+        except Exception as err:
+            logger.debug("Failed to format embedding vector", error=str(err))
+            return None
+
+    @staticmethod
+    def _extract_quality_score(quality_assessment: Dict[str, Any]) -> Optional[float]:
+        """Extract overall quality score in a resilient manner."""
+        if not isinstance(quality_assessment, dict):
+            return None
+        score = quality_assessment.get("overall_score") or quality_assessment.get("score")
+        if isinstance(score, (int, float)):
+            return float(score)
+        return None
+
+    @staticmethod
+    def _extract_quality_confidence(self, quality_assessment: Dict[str, Any]) -> Optional[float]:
+        """Extract confidence score from quality assessment."""
+        if not isinstance(quality_assessment, dict):
+            return None
+        confidence = quality_assessment.get("confidence") or quality_assessment.get("analysis_confidence")
+        if isinstance(confidence, (int, float)):
+            return float(confidence)
+        return None
+
+    @staticmethod
+    def _build_profile_preview(profile: Profile) -> Dict[str, Any]:
+        """Create a lightweight snapshot of persisted profile details."""
+        top_skills = [skill.name.value for skill in profile.profile_data.skills[:5]]
+        return {
+            "name": profile.profile_data.name,
+            "email": str(profile.profile_data.email),
+            "headline": profile.profile_data.headline,
+            "summary": profile.profile_data.summary,
+            "experience_level": profile.experience_level.value if profile.experience_level else None,
+            "top_skills": top_skills,
+        }
+
+    @staticmethod
+    def _guess_name_from_text(text_content: str) -> Optional[str]:
         """Guess candidate name from raw document text."""
         if not text_content:
             return None
@@ -2688,7 +2698,8 @@ class UploadApplicationService:
                 return cleaned
         return None
 
-    def _find_first_email(self, text: str) -> Optional[str]:
+    @staticmethod
+    def _find_first_email(text: str) -> Optional[str]:
         """Find the first email address in text."""
         if not text:
             return None

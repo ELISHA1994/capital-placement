@@ -506,275 +506,6 @@ class ProfileApplicationService:
             languages=languages,
         )
 
-    def _convert_skills_from_dict(self, skills_data: list[dict[str, Any]]) -> list[Skill]:
-        """Convert skill dictionaries to Skill domain objects.
-
-        Args:
-            skills_data: List of skill dictionaries with name, category, etc.
-
-        Returns:
-            List of Skill domain objects
-        """
-        skills: list[Skill] = []
-
-        for skill_dict in skills_data:
-            if not isinstance(skill_dict, dict):
-                continue
-
-            # Name is required
-            name = skill_dict.get("name")
-            if not name:
-                continue
-
-            try:
-                skill = Skill(
-                    name=SkillName(name),
-                    category=skill_dict.get("category", "technical"),
-                    proficiency=skill_dict.get("proficiency"),
-                    years_of_experience=skill_dict.get("years_of_experience"),
-                    endorsed=skill_dict.get("endorsed", False),
-                    last_used=skill_dict.get("last_used"),
-                )
-                skills.append(skill)
-            except ValueError as e:
-                logger.warning("invalid_skill_data", skill_name=name, error=str(e))
-                continue
-
-        return skills
-
-    def _convert_experience_from_dict(self, experience_data: list[dict[str, Any]]) -> list[Experience]:
-        """Convert experience dictionaries to Experience domain objects.
-
-        Args:
-            experience_data: List of experience dictionaries
-
-        Returns:
-            List of Experience domain objects
-        """
-        experience_entries: list[Experience] = []
-
-        for exp_dict in experience_data:
-            if not isinstance(exp_dict, dict):
-                continue
-
-            # Required fields: title, company, start_date
-            title = exp_dict.get("title")
-            company = exp_dict.get("company")
-            start_date = exp_dict.get("start_date")
-
-            if not (title and company and start_date):
-                logger.warning("incomplete_experience_entry", exp_dict=exp_dict)
-                continue
-
-            # Convert skills if present
-            exp_skills: list[SkillName] = []
-            if "skills" in exp_dict and isinstance(exp_dict["skills"], list):
-                for skill_name in exp_dict["skills"]:
-                    try:
-                        exp_skills.append(SkillName(skill_name))
-                    except ValueError:
-                        continue
-
-            try:
-                experience = Experience(
-                    title=title,
-                    company=company,
-                    start_date=start_date,
-                    description=exp_dict.get("description", ""),
-                    end_date=exp_dict.get("end_date"),
-                    current=exp_dict.get("current", False),
-                    location=exp_dict.get("location"),
-                    achievements=exp_dict.get("achievements", []),
-                    skills=exp_skills,
-                )
-                experience_entries.append(experience)
-            except (ValueError, TypeError) as e:
-                logger.warning("invalid_experience_entry", error=str(e))
-                continue
-
-        return experience_entries
-
-    def _convert_education_from_dict(self, education_data: list[dict[str, Any]]) -> list[Education]:
-        """Convert education dictionaries to Education domain objects.
-
-        Args:
-            education_data: List of education dictionaries
-
-        Returns:
-            List of Education domain objects
-        """
-        education_entries: list[Education] = []
-
-        for edu_dict in education_data:
-            if not isinstance(edu_dict, dict):
-                continue
-
-            # Required fields: institution, degree, field
-            institution = edu_dict.get("institution")
-            degree = edu_dict.get("degree")
-            field = edu_dict.get("field")
-
-            if not (institution and degree and field):
-                logger.warning("incomplete_education_entry", edu_dict=edu_dict)
-                continue
-
-            try:
-                education = Education(
-                    institution=institution,
-                    degree=degree,
-                    field=field,
-                    start_date=edu_dict.get("start_date"),
-                    end_date=edu_dict.get("end_date"),
-                    gpa=edu_dict.get("gpa"),
-                    achievements=edu_dict.get("achievements", []),
-                )
-                education_entries.append(education)
-            except (ValueError, TypeError) as e:
-                logger.warning("invalid_education_entry", error=str(e))
-                continue
-
-        return education_entries
-
-    def _convert_location_from_dict(self, location_data: dict[str, Any]) -> Location | None:
-        """Convert location dict to Location domain object.
-
-        Args:
-            location_data: Dict with city, state, country, coordinates
-
-        Returns:
-            Location domain object or None if all fields are empty
-        """
-        city = location_data.get("city")
-        state = location_data.get("state")
-        country = location_data.get("country")
-        coordinates_data = location_data.get("coordinates")
-
-        # Parse coordinates if provided
-        coordinates = None
-        if coordinates_data:
-            if isinstance(coordinates_data, dict):
-                lat = coordinates_data.get("lat")
-                lng = coordinates_data.get("lng") or coordinates_data.get("lon")
-                if lat is not None and lng is not None:
-                    try:
-                        coordinates = (float(lat), float(lng))
-                    except (TypeError, ValueError):
-                        logger.warning("invalid_coordinates", coordinates=coordinates_data)
-            elif isinstance(coordinates_data, (list, tuple)) and len(coordinates_data) == 2:
-                try:
-                    coordinates = (float(coordinates_data[0]), float(coordinates_data[1]))
-                except (TypeError, ValueError):
-                    logger.warning("invalid_coordinates", coordinates=coordinates_data)
-
-        # Only create Location if at least one field has a value
-        if city or state or country or coordinates:
-            return Location(
-                city=city,
-                state=state,
-                country=country,
-                coordinates=coordinates
-            )
-        return None
-
-    def _build_summaries(
-        self,
-        profiles: Iterable[Profile],
-        *,
-        quality_min: float | None,
-        experience_min: int | None,
-        experience_max: int | None,
-        skill_filter: str,
-        status_filter: DomainProcessingStatus | None,
-        include_incomplete: bool,
-    ) -> list[ProfileListItem]:
-        summaries: list[ProfileListItem] = []
-
-        for profile in profiles:
-            if status_filter and profile.processing.status != status_filter:
-                continue
-
-            if not include_incomplete and profile.processing.status != DomainProcessingStatus.COMPLETED:
-                continue
-
-            quality_score = profile.processing.quality_score
-            if quality_min is not None and (quality_score or 0.0) < quality_min:
-                continue
-
-            experience_years = profile.profile_data.total_experience_years()
-            if experience_min is not None and experience_years < experience_min:
-                continue
-            if experience_max is not None and experience_years > experience_max:
-                continue
-
-            normalized_skills = [str(skill) for skill in (profile.normalized_skills or [])]
-            if skill_filter and not any(skill_filter in skill for skill in normalized_skills):
-                continue
-
-            top_skills = [skill.name.value for skill in profile.profile_data.skills[:5]]
-
-            current_company = None
-            for experience in profile.profile_data.experience:
-                if experience.is_current_role():
-                    current_company = experience.company
-                    break
-            if current_company is None and profile.profile_data.experience:
-                current_company = profile.profile_data.experience[0].company
-
-            summaries.append(
-                ProfileListItem(
-                    profile_id=str(profile.id.value),
-                    email=str(profile.profile_data.email),
-                    full_name=profile.profile_data.name,
-                    title=profile.profile_data.headline,
-                    current_company=current_company,
-                    total_experience_years=int(round(experience_years)) if experience_years else None,
-                    top_skills=top_skills,
-                    last_updated=profile.updated_at,
-                    processing_status=profile.processing.status,
-                    quality_score=quality_score,
-                )
-            )
-
-        return summaries
-
-    def _resolve_sort_key(self, sort_by: str):
-        mapping = {
-            "quality_score": lambda item: item.quality_score or 0.0,
-            "experience": lambda item: item.total_experience_years or 0,
-        }
-        return mapping.get(sort_by, lambda item: item.last_updated)
-
-    # Background task handlers following upload_service pattern
-
-    async def _enqueue_background(self, scheduler: Any | None, func, *args, **kwargs) -> None:
-        """Enqueue a background task for async execution.
-
-        Similar to upload_service pattern - handles both FastAPI BackgroundTasks
-        and task manager scheduling.
-
-        Args:
-            scheduler: Task scheduler (FastAPI BackgroundTasks or TaskManager)
-            func: Async function to execute
-            *args: Positional arguments for func
-            **kwargs: Keyword arguments for func
-        """
-        import asyncio
-
-        if scheduler is None:
-            # No scheduler provided, run as fire-and-forget task
-            result = func(*args, **kwargs)
-            if asyncio.iscoroutine(result):
-                asyncio.create_task(result)
-        else:
-            # Use the provided scheduler (FastAPI BackgroundTasks)
-            if hasattr(scheduler, 'add_task'):
-                scheduler.add_task(func, *args, **kwargs)
-            else:
-                # Fallback to creating task
-                result = func(*args, **kwargs)
-                if asyncio.iscoroutine(result):
-                    asyncio.create_task(result)
-
     async def _track_profile_update_usage(
         self,
         tenant_id: str,
@@ -1594,8 +1325,281 @@ class ProfileApplicationService:
                 error=str(exc),
             )
 
+    @staticmethod
+    def _convert_skills_from_dict(skills_data: list[dict[str, Any]]) -> list[Skill]:
+        """Convert skill dictionaries to Skill domain objects.
+
+        Args:
+            skills_data: List of skill dictionaries with name, category, etc.
+
+        Returns:
+            List of Skill domain objects
+        """
+        skills: list[Skill] = []
+
+        for skill_dict in skills_data:
+            if not isinstance(skill_dict, dict):
+                continue
+
+            # Name is required
+            name = skill_dict.get("name")
+            if not name:
+                continue
+
+            try:
+                skill = Skill(
+                    name=SkillName(name),
+                    category=skill_dict.get("category", "technical"),
+                    proficiency=skill_dict.get("proficiency"),
+                    years_of_experience=skill_dict.get("years_of_experience"),
+                    endorsed=skill_dict.get("endorsed", False),
+                    last_used=skill_dict.get("last_used"),
+                )
+                skills.append(skill)
+            except ValueError as e:
+                logger.warning("invalid_skill_data", skill_name=name, error=str(e))
+                continue
+
+        return skills
+
+    @staticmethod
+    def _convert_experience_from_dict(experience_data: list[dict[str, Any]]) -> list[Experience]:
+        """Convert experience dictionaries to Experience domain objects.
+
+        Args:
+            experience_data: List of experience dictionaries
+
+        Returns:
+            List of Experience domain objects
+        """
+        experience_entries: list[Experience] = []
+
+        for exp_dict in experience_data:
+            if not isinstance(exp_dict, dict):
+                continue
+
+            # Required fields: title, company, start_date
+            title = exp_dict.get("title")
+            company = exp_dict.get("company")
+            start_date = exp_dict.get("start_date")
+
+            if not (title and company and start_date):
+                logger.warning("incomplete_experience_entry", exp_dict=exp_dict)
+                continue
+
+            # Convert skills if present
+            exp_skills: list[SkillName] = []
+            if "skills" in exp_dict and isinstance(exp_dict["skills"], list):
+                for skill_name in exp_dict["skills"]:
+                    try:
+                        exp_skills.append(SkillName(skill_name))
+                    except ValueError:
+                        continue
+
+            try:
+                experience = Experience(
+                    title=title,
+                    company=company,
+                    start_date=start_date,
+                    description=exp_dict.get("description", ""),
+                    end_date=exp_dict.get("end_date"),
+                    current=exp_dict.get("current", False),
+                    location=exp_dict.get("location"),
+                    achievements=exp_dict.get("achievements", []),
+                    skills=exp_skills,
+                )
+                experience_entries.append(experience)
+            except (ValueError, TypeError) as e:
+                logger.warning("invalid_experience_entry", error=str(e))
+                continue
+
+        return experience_entries
+
+    @staticmethod
+    def _convert_education_from_dict(education_data: list[dict[str, Any]]) -> list[Education]:
+        """Convert education dictionaries to Education domain objects.
+
+        Args:
+            education_data: List of education dictionaries
+
+        Returns:
+            List of Education domain objects
+        """
+        education_entries: list[Education] = []
+
+        for edu_dict in education_data:
+            if not isinstance(edu_dict, dict):
+                continue
+
+            # Required fields: institution, degree, field
+            institution = edu_dict.get("institution")
+            degree = edu_dict.get("degree")
+            field = edu_dict.get("field")
+
+            if not (institution and degree and field):
+                logger.warning("incomplete_education_entry", edu_dict=edu_dict)
+                continue
+
+            try:
+                education = Education(
+                    institution=institution,
+                    degree=degree,
+                    field=field,
+                    start_date=edu_dict.get("start_date"),
+                    end_date=edu_dict.get("end_date"),
+                    gpa=edu_dict.get("gpa"),
+                    achievements=edu_dict.get("achievements", []),
+                )
+                education_entries.append(education)
+            except (ValueError, TypeError) as e:
+                logger.warning("invalid_education_entry", error=str(e))
+                continue
+
+        return education_entries
+
+    @staticmethod
+    def _convert_location_from_dict(location_data: dict[str, Any]) -> Location | None:
+        """Convert location dict to Location domain object.
+
+        Args:
+            location_data: Dict with city, state, country, coordinates
+
+        Returns:
+            Location domain object or None if all fields are empty
+        """
+        city = location_data.get("city")
+        state = location_data.get("state")
+        country = location_data.get("country")
+        coordinates_data = location_data.get("coordinates")
+
+        # Parse coordinates if provided
+        coordinates = None
+        if coordinates_data:
+            if isinstance(coordinates_data, dict):
+                lat = coordinates_data.get("lat")
+                lng = coordinates_data.get("lng") or coordinates_data.get("lon")
+                if lat is not None and lng is not None:
+                    try:
+                        coordinates = (float(lat), float(lng))
+                    except (TypeError, ValueError):
+                        logger.warning("invalid_coordinates", coordinates=coordinates_data)
+            elif isinstance(coordinates_data, (list, tuple)) and len(coordinates_data) == 2:
+                try:
+                    coordinates = (float(coordinates_data[0]), float(coordinates_data[1]))
+                except (TypeError, ValueError):
+                    logger.warning("invalid_coordinates", coordinates=coordinates_data)
+
+        # Only create Location if at least one field has a value
+        if city or state or country or coordinates:
+            return Location(
+                city=city,
+                state=state,
+                country=country,
+                coordinates=coordinates
+            )
+        return None
+
+    @staticmethod
+    def _build_summaries(
+            profiles: Iterable[Profile],
+            *,
+            quality_min: float | None,
+            experience_min: int | None,
+            experience_max: int | None,
+            skill_filter: str,
+            status_filter: DomainProcessingStatus | None,
+            include_incomplete: bool,
+    ) -> list[ProfileListItem]:
+        summaries: list[ProfileListItem] = []
+
+        for profile in profiles:
+            if status_filter and profile.processing.status != status_filter:
+                continue
+
+            if not include_incomplete and profile.processing.status != DomainProcessingStatus.COMPLETED:
+                continue
+
+            quality_score = profile.processing.quality_score
+            if quality_min is not None and (quality_score or 0.0) < quality_min:
+                continue
+
+            experience_years = profile.profile_data.total_experience_years()
+            if experience_min is not None and experience_years < experience_min:
+                continue
+            if experience_max is not None and experience_years > experience_max:
+                continue
+
+            normalized_skills = [str(skill) for skill in (profile.normalized_skills or [])]
+            if skill_filter and not any(skill_filter in skill for skill in normalized_skills):
+                continue
+
+            top_skills = [skill.name.value for skill in profile.profile_data.skills[:5]]
+
+            current_company = None
+            for experience in profile.profile_data.experience:
+                if experience.is_current_role():
+                    current_company = experience.company
+                    break
+            if current_company is None and profile.profile_data.experience:
+                current_company = profile.profile_data.experience[0].company
+
+            summaries.append(
+                ProfileListItem(
+                    profile_id=str(profile.id.value),
+                    email=str(profile.profile_data.email),
+                    full_name=profile.profile_data.name,
+                    title=profile.profile_data.headline,
+                    current_company=current_company,
+                    total_experience_years=int(round(experience_years)) if experience_years else None,
+                    top_skills=top_skills,
+                    last_updated=profile.updated_at,
+                    processing_status=profile.processing.status,
+                    quality_score=quality_score,
+                )
+            )
+
+        return summaries
+
+    @staticmethod
+    def _resolve_sort_key(sort_by: str):
+        mapping = {
+            "quality_score": lambda item: item.quality_score or 0.0,
+            "experience": lambda item: item.total_experience_years or 0,
+        }
+        return mapping.get(sort_by, lambda item: item.last_updated)
+
+    @staticmethod
+    async def _enqueue_background(scheduler: Any | None, func, *args, **kwargs) -> None:
+        """Enqueue a background task for async execution.
+
+        Similar to upload_service pattern - handles both FastAPI BackgroundTasks
+        and task manager scheduling.
+
+        Args:
+            scheduler: Task scheduler (FastAPI BackgroundTasks or TaskManager)
+            func: Async function to execute
+            *args: Positional arguments for func
+            **kwargs: Keyword arguments for func
+        """
+        import asyncio
+
+        if scheduler is None:
+            # No scheduler provided, run as fire-and-forget task
+            result = func(*args, **kwargs)
+            if asyncio.iscoroutine(result):
+                asyncio.create_task(result)
+        else:
+            # Use the provided scheduler (FastAPI BackgroundTasks)
+            if hasattr(scheduler, 'add_task'):
+                scheduler.add_task(func, *args, **kwargs)
+            else:
+                # Fallback to creating task
+                result = func(*args, **kwargs)
+                if asyncio.iscoroutine(result):
+                    asyncio.create_task(result)
+
+    @staticmethod
     async def _cleanup_profile_documents(
-        self,
         profile_id: str,
         tenant_id: str,
         original_filename: str | None,
