@@ -760,25 +760,22 @@ class SearchAnalyticsService(IAnalyticsService):
                     ON search_metrics(tenant_id, timestamp)
                 """)
                 
-                # Batch insert metrics
-                values = []
+                # Batch insert metrics (asyncpg doesn't support executemany, use individual inserts)
                 for metric in metrics:
-                    values.append((
-                        metric.metric_name,
-                        metric.value,
-                        metric.timestamp,
-                        metric.tenant_id,
-                        metric.user_id,
-                        metric.search_id,
-                        json.dumps(metric.metadata or {})
-                    ))
-                
-                await conn.executemany("""
-                    INSERT INTO search_metrics (
-                        metric_name, value, timestamp, tenant_id, 
-                        user_id, search_id, metadata
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-                """, values)
+                    await conn.execute("""
+                        INSERT INTO search_metrics (
+                            metric_name, value, timestamp, tenant_id,
+                            user_id, search_id, metadata
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    """,
+                    metric.metric_name,
+                    metric.value,
+                    metric.timestamp,
+                    metric.tenant_id,
+                    metric.user_id,
+                    metric.search_id,
+                    json.dumps(metric.metadata or {})
+                    )
                 
                 self._stats["database_writes"] += len(metrics)
                 

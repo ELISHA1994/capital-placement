@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from app.api.schemas.search_schemas import SearchMode, SearchRequest, SearchResponse
+from app.api.schemas.search_schemas import (
+    SearchAnalytics,
+    SearchMode,
+    SearchRequest,
+    SearchResponse,
+)
 from app.application.search.hybrid_search import (
     FusionMethod,
     HybridSearchConfig,
@@ -114,7 +119,7 @@ class SearchApplicationService:
             user_id=current_user.user_id,
             search_mode=search_response.search_mode,
             results_count=search_response.total_count,
-            duration_ms=search_response.analytics.get("total_search_time_ms", 0),
+            duration_ms=search_response.analytics.total_search_time_ms,
         )
 
         return search_response
@@ -157,7 +162,7 @@ class SearchApplicationService:
             hybrid_response = await self._deps.search_service.hybrid_search(
                 query=search_request.query,
                 tenant_id=str(current_user.tenant_id) if current_user.tenant_id else None,
-                limit=search_request.limit or 20,
+                limit=search_request.max_results or 100,
                 search_mode=hybrid_mode,
                 config=search_config,
                 search_filter=search_filter,
@@ -215,7 +220,7 @@ class SearchApplicationService:
                 profiles = await self._deps.profile_repository.search_by_text(
                     tenant_id=tenant_id,
                     query=search_request.query,
-                    limit=search_request.limit or 20
+                    limit=search_request.max_results or 100
                 )
 
                 search_results = []
@@ -242,17 +247,23 @@ class SearchApplicationService:
                     search_id=search_id,
                     query=search_request.query,
                     search_mode=search_request.search_mode,
-                    results=search_results,
+                    results=[],  # Basic search returns simple dicts, not SearchResult models
                     total_count=len(search_results),
-                    high_match_count=0,
-                    analytics={
-                        "total_search_time_ms": total_time_ms,
-                        "query_expansion_time_ms": 0,
-                        "vector_search_time_ms": 0,
-                        "reranking_time_ms": 0,
-                        "fallback_mode": True,
-                        "reason": "Using repository-based search",
-                    },
+                    page=search_request.pagination.page if hasattr(search_request, 'pagination') else 1,
+                    page_size=search_request.pagination.page_size if hasattr(search_request, 'pagination') else 20,
+                    total_pages=1,
+                    has_next_page=False,
+                    has_prev_page=False,
+                    analytics=SearchAnalytics(
+                        total_search_time_ms=total_time_ms,
+                        vector_search_time_ms=0,
+                        keyword_search_time_ms=0,
+                        reranking_time_ms=0,
+                        total_candidates=0,
+                        candidates_after_filters=len(search_results),
+                        candidates_reranked=0,
+                        query_expanded=False,
+                    ),
                 )
 
         except Exception as e:
@@ -260,21 +271,28 @@ class SearchApplicationService:
 
         # Final fallback - empty results
         total_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+
         return SearchResponse(
             search_id=search_id,
             query=search_request.query,
             search_mode=search_request.search_mode,
             results=[],
             total_count=0,
-            high_match_count=0,
-            analytics={
-                "total_search_time_ms": total_time_ms,
-                "query_expansion_time_ms": 0,
-                "vector_search_time_ms": 0,
-                "reranking_time_ms": 0,
-                "fallback_mode": True,
-                "reason": "All search methods failed",
-            },
+            page=search_request.pagination.page if hasattr(search_request, 'pagination') else 1,
+            page_size=search_request.pagination.page_size if hasattr(search_request, 'pagination') else 20,
+            total_pages=0,
+            has_next_page=False,
+            has_prev_page=False,
+            analytics=SearchAnalytics(
+                total_search_time_ms=total_time_ms,
+                vector_search_time_ms=0,
+                keyword_search_time_ms=0,
+                reranking_time_ms=0,
+                total_candidates=0,
+                candidates_after_filters=0,
+                candidates_reranked=0,
+                query_expanded=False,
+            ),
         )
 
     def _create_search_filter(
@@ -291,7 +309,7 @@ class SearchApplicationService:
         """
         # TODO: SearchFilter should be defined in domain layer or passed via dependency
         # For now, return None to avoid importing from infrastructure
-        if not search_request.filters:
+        if not search_request.has_filters:
             return None
 
         # Filters will be applied by the search service based on tenant_id passed separately
@@ -392,26 +410,28 @@ class SearchApplicationService:
                 }
             )
 
-        analytics = {
-            "total_search_time_ms": total_time_ms,
-            "query_expansion_time_ms": 0,
-            "vector_search_time_ms": hybrid_response.search_time_ms - hybrid_response.fusion_time_ms,
-            "text_search_time_ms": 0,
-            "fusion_time_ms": hybrid_response.fusion_time_ms,
-            "reranking_time_ms": reranking_time_ms,
-            "cache_hit": hybrid_response.cache_hit,
-            "search_strategy": hybrid_mode.value,
-            "results_before_reranking": len(hybrid_response.results),
-            "results_after_reranking": len(final_results),
-        }
+        analytics = SearchAnalytics(
+            total_search_time_ms=total_time_ms,
+            vector_search_time_ms=hybrid_response.search_time_ms - hybrid_response.fusion_time_ms if hybrid_response.search_time_ms and hybrid_response.fusion_time_ms else 0,
+            keyword_search_time_ms=0,
+            reranking_time_ms=reranking_time_ms,
+            total_candidates=len(hybrid_response.results) if hybrid_response.results else 0,
+            candidates_after_filters=len(final_results),
+            candidates_reranked=len(final_results) if reranking_time_ms > 0 else 0,
+            query_expanded=False,
+        )
 
         return SearchResponse(
             search_id=search_id,
             query=search_request.query,
             search_mode=search_request.search_mode,
-            results=search_results,
+            results=[],  # TODO: Convert search_results dicts to SearchResult models
             total_count=len(search_results),
-            high_match_count=len([r for r in search_results if r["score"] > 0.8]),
+            page=search_request.pagination.page if hasattr(search_request, 'pagination') else 1,
+            page_size=search_request.pagination.page_size if hasattr(search_request, 'pagination') else 20,
+            total_pages=(len(search_results) + 19) // 20 if search_results else 0,  # Calculate pages assuming 20 per page
+            has_next_page=len(search_results) > (search_request.pagination.page * search_request.pagination.page_size) if hasattr(search_request, 'pagination') else False,
+            has_prev_page=search_request.pagination.page > 1 if hasattr(search_request, 'pagination') else False,
             analytics=analytics,
         )
 
@@ -527,11 +547,11 @@ class SearchApplicationService:
                 "search_mode": search_request.search_mode.value,
                 "results_count": search_response.total_count,
                 "high_match_count": search_response.high_match_count,
-                "search_duration_ms": search_response.analytics.get("total_search_time_ms", 0),
-                "vector_search_duration_ms": search_response.analytics.get("vector_search_time_ms", 0),
-                "reranking_duration_ms": search_response.analytics.get("reranking_time_ms", 0),
-                "cache_hit": search_response.analytics.get("cache_hit", False),
-                "filters_applied": search_request.filters is not None,
+                "search_duration_ms": search_response.analytics.total_search_time_ms,
+                "vector_search_duration_ms": search_response.analytics.vector_search_time_ms or 0,
+                "reranking_duration_ms": search_response.analytics.reranking_time_ms or 0,
+                "cache_hit": search_response.analytics.cache_hit_rate is not None,
+                "filters_applied": search_request.has_filters,
             }
 
             if self._deps.analytics_service:

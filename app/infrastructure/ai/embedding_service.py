@@ -222,23 +222,23 @@ class EmbeddingService:
         try:
             # Build query with filters
             query_parts = [
-                "SELECT entity_id, entity_type, embedding_vector,",
-                "1 - (embedding_vector <=> %s::vector) as similarity",
+                "SELECT entity_id, entity_type, embedding,",
+                "1 - (embedding <=> %s::vector) as similarity",
                 "FROM embeddings",
-                "WHERE 1 - (embedding_vector <=> %s::vector) >= %s"
+                "WHERE 1 - (embedding <=> %s::vector) >= %s"
             ]
             params = [query_embedding, query_embedding, threshold]
-            
+
             if entity_type:
                 query_parts.append("AND entity_type = %s")
                 params.append(entity_type)
-            
+
             if tenant_id:
                 query_parts.append("AND tenant_id = %s")
                 params.append(tenant_id)
-            
+
             query_parts.extend([
-                "ORDER BY embedding_vector <=> %s::vector",
+                "ORDER BY embedding <=> %s::vector",
                 "LIMIT %s"
             ])
             params.extend([query_embedding, limit])
@@ -344,23 +344,23 @@ class EmbeddingService:
         """
         try:
             query_parts = [
-                "SELECT embedding_vector FROM embeddings",
+                "SELECT embedding FROM embeddings",
                 "WHERE entity_id = %s AND entity_type = %s"
             ]
             params = [entity_id, entity_type]
-            
+
             if tenant_id:
                 query_parts.append("AND tenant_id = %s")
                 params.append(tenant_id)
-            
+
             query_sql = " ".join(query_parts)
-            
+
             async with self.db_adapter.get_connection() as conn:
                 result = await conn.execute(text(query_sql), params)
                 row = result.fetchone()
-            
+
             if row:
-                return list(row.embedding_vector)
+                return list(row.embedding)
             return None
             
         except Exception as e:
@@ -402,7 +402,7 @@ class EmbeddingService:
             # Update in database
             query_parts = [
                 "UPDATE embeddings SET",
-                "embedding_vector = %s::vector,",
+                "embedding = %s::vector,",
                 "embedding_model = %s,",
                 "updated_at = NOW()",
                 "WHERE entity_id = %s AND entity_type = %s"
@@ -534,14 +534,14 @@ class EmbeddingService:
         """Store single embedding in database"""
         query_sql = """
             INSERT INTO embeddings (
-                id, entity_id, entity_type, embedding_model, 
-                embedding_vector, tenant_id, created_at, updated_at
+                id, entity_id, entity_type, embedding_model,
+                embedding, tenant_id, created_at, updated_at
             ) VALUES (
                 gen_random_uuid(), %s, %s, %s, %s::vector, %s, NOW(), NOW()
             )
             ON CONFLICT (entity_id, entity_type, tenant_id)
             DO UPDATE SET
-                embedding_vector = EXCLUDED.embedding_vector,
+                embedding = EXCLUDED.embedding,
                 embedding_model = EXCLUDED.embedding_model,
                 updated_at = NOW()
         """
@@ -584,12 +584,12 @@ class EmbeddingService:
         
         query_sql = f"""
             INSERT INTO embeddings (
-                entity_id, entity_type, embedding_model, 
-                embedding_vector, tenant_id
+                entity_id, entity_type, embedding_model,
+                embedding, tenant_id
             ) VALUES {placeholders}
             ON CONFLICT (entity_id, entity_type, tenant_id)
             DO UPDATE SET
-                embedding_vector = EXCLUDED.embedding_vector,
+                embedding = EXCLUDED.embedding,
                 embedding_model = EXCLUDED.embedding_model,
                 updated_at = NOW()
         """

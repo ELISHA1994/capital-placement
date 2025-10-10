@@ -408,45 +408,33 @@ class HybridSearchService(IHealthCheck):
             # Note: This assumes you have a text search setup on your entities
             # You might need to adjust table/column names based on your schema
             query_sql = f"""
-                SELECT 
-                    entity_id,
-                    entity_type,
+                SELECT
+                    id::text as entity_id,
+                    'profile' as entity_type,
                     ts_rank_cd(search_vector, plainto_tsquery('english', $1)) as relevance_score,
                     ts_headline('english', content, plainto_tsquery('english', $1)) as highlighted_content,
                     metadata
                 FROM (
-                    SELECT 
-                        id::text as entity_id,
-                        'profile' as entity_type,
-                        to_tsvector('english', 
-                            COALESCE(ai_summary, '') || ' ' ||
-                            COALESCE(title, '') || ' ' ||
-                            COALESCE(skills::text, '')
+                    SELECT
+                        id,
+                        to_tsvector('english',
+                            COALESCE(searchable_text, '') || ' ' ||
+                            COALESCE(name, '') || ' ' ||
+                            COALESCE(array_to_string(normalized_skills, ' '), '')
                         ) as search_vector,
-                        COALESCE(ai_summary, title) as content,
-                        jsonb_build_object('title', title, 'skills', skills) as metadata,
+                        COALESCE(searchable_text, name) as content,
+                        jsonb_build_object(
+                            'name', name,
+                            'email', email,
+                            'skills', normalized_skills,
+                            'location_city', location_city,
+                            'location_country', location_country
+                        ) as metadata,
                         tenant_id,
                         created_at
                     FROM profiles
-                    WHERE ai_summary IS NOT NULL OR title IS NOT NULL
-                    
-                    UNION ALL
-                    
-                    SELECT 
-                        id::text as entity_id,
-                        'job' as entity_type,
-                        to_tsvector('english',
-                            COALESCE(description, '') || ' ' ||
-                            COALESCE(title, '') || ' ' ||
-                            COALESCE(ai_requirements::text, '')
-                        ) as search_vector,
-                        COALESCE(description, title) as content,
-                        jsonb_build_object('title', title, 'requirements', ai_requirements) as metadata,
-                        tenant_id,
-                        created_at
-                    FROM jobs
-                    WHERE description IS NOT NULL OR title IS NOT NULL
-                ) searchable_entities
+                    WHERE (searchable_text IS NOT NULL OR name IS NOT NULL)
+                ) searchable_profiles
                 {where_clause}
                 AND plainto_tsquery('english', $1) @@ search_vector
                 ORDER BY relevance_score DESC

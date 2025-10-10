@@ -351,15 +351,15 @@ class VectorSearchService(IHealthCheck):
             # Get the reference entity's embedding
             async with self.db_adapter.get_connection() as conn:
                 embedding_row = await conn.fetchrow("""
-                    SELECT embedding_vector, embedding_model, metadata
+                    SELECT embedding, embedding_model
                     FROM embeddings
-                    WHERE entity_id = $1 
+                    WHERE entity_id = $1
                     AND entity_type = $2
                     AND (tenant_id = $3 OR tenant_id IS NULL)
                     ORDER BY created_at DESC
                     LIMIT 1
                 """, entity_id, entity_type, tenant_id)
-                
+
                 if not embedding_row:
                     logger.warning(f"No embedding found for entity {entity_id}")
                     return VectorSearchResponse(
@@ -371,16 +371,16 @@ class VectorSearchService(IHealthCheck):
                         search_metadata={"error": "Reference entity embedding not found"},
                         cache_hit=False
                     )
-            
+
             # Create search filter to exclude self if needed
             search_filter = SearchFilter(
                 entity_types=[entity_type],
                 exclude_entity_ids=[entity_id] if exclude_self else None
             )
-            
+
             # Perform similarity search using the reference embedding
             return await self.similarity_search(
-                query_embedding=embedding_row['embedding_vector'],
+                query_embedding=embedding_row['embedding'],
                 tenant_id=tenant_id,
                 limit=limit,
                 similarity_threshold=similarity_threshold,
@@ -429,7 +429,9 @@ class VectorSearchService(IHealthCheck):
             
             # Build base query
             where_conditions = []
-            params = [query_embedding, limit]
+            # Convert embedding list to JSON string for pgvector compatibility
+            embedding_str = json.dumps(query_embedding)
+            params = [embedding_str, limit]
             param_count = 2
             
             # Add tenant filtering
@@ -475,23 +477,22 @@ class VectorSearchService(IHealthCheck):
             
             # Construct the full query
             query = f"""
-                SELECT 
+                SELECT
                     entity_id,
                     entity_type,
-                    embedding_vector {distance_op} $1 AS distance,
-                    {f'metadata,' if include_metadata else ''}
+                    embedding {distance_op} $1 AS distance,
                     tenant_id,
                     embedding_model,
                     created_at
                 FROM embeddings
                 {where_clause}
-                ORDER BY embedding_vector {distance_op} $1
+                ORDER BY embedding {distance_op} $1
                 LIMIT $2
             """
-            
+
             async with self.db_adapter.get_connection() as conn:
                 rows = await conn.fetch(query, *params)
-                
+
                 # Convert results to VectorSearchResult objects
                 results = []
                 for row in rows:
@@ -501,21 +502,23 @@ class VectorSearchService(IHealthCheck):
                     else:  # L2
                         # Convert L2 distance to similarity (0-1 scale)
                         similarity_score = max(0, 1 - (row['distance'] / 4.0))
-                    
+
                     # Apply similarity threshold
                     if similarity_score >= similarity_threshold:
+                        # Metadata would need to be fetched from profiles table via join
+                        # For now, return empty metadata dict
                         result = VectorSearchResult(
                             entity_id=row['entity_id'],
                             entity_type=row['entity_type'],
                             similarity_score=float(similarity_score),
                             distance=float(row['distance']),
-                            metadata=row.get('metadata', {}) if include_metadata else {},
+                            metadata={},  # Embeddings table has no metadata column
                             tenant_id=str(row['tenant_id']) if row['tenant_id'] else None,
                             embedding_model=row.get('embedding_model'),
                             created_at=row.get('created_at')
                         )
                         results.append(result)
-                
+
                 return results
                 
         except Exception as e:
