@@ -174,6 +174,9 @@ Claude *must* preserve the following constraints when making changes:
 
 4. **API Layer isolation**
    - API routers/controllers should orchestrate application services only; never reach into infrastructure adapters directly.
+   - **CRITICAL**: Business logic must NOT reside in API routers. API endpoints should be thin controllers that only handle HTTP concerns (request parsing, response formatting, status codes).
+   - All business logic, orchestration, and decision-making must be in the application service layer.
+   - API routers should call a single service method and map the result to HTTP responses.
 
 5. **Cross-layer rules**
    - No shared mutable state across layers; use providers/factories for lifecycle management.
@@ -713,6 +716,120 @@ alembic upgrade head
 **Application Layer** (`app/application/`):
 - ✅ Can import: Domain entities, domain interfaces, repositories
 - ❌ Cannot import: Persistence tables directly
+
+**API Layer** (`app/api/`):
+- ✅ Can import: Application services, API schemas (DTOs), domain value objects for type conversion
+- ❌ Cannot import: Infrastructure adapters, persistence tables directly
+- ❌ Cannot contain: Business logic, orchestration, or decision-making
+
+### API Layer Best Practices
+
+**CRITICAL**: API routers must be thin controllers that only handle HTTP concerns.
+
+#### ❌ WRONG: Business Logic in API Router
+
+```python
+@router.delete("/{profile_id}")
+async def delete_profile(
+    profile_id: str,
+    permanent: bool,
+    profile_service: ProfileServiceDep,
+    background_tasks: BackgroundTasks
+):
+    # ❌ BAD: Business logic branching in API router
+    if permanent:
+        # Permanent deletion logic
+        success = await profile_service.permanently_delete_profile(...)
+        if not success:
+            return JSONResponse(status_code=404, ...)
+        response = ProfileDeletionResponse(
+            success=True,
+            deletion_type="permanent_delete",
+            message="Profile permanently deleted",
+            can_restore=False
+        )
+    else:
+        # Soft deletion logic
+        deleted_profile = await profile_service.soft_delete_profile(...)
+        if not deleted_profile:
+            return JSONResponse(status_code=404, ...)
+        response = ProfileDeletionResponse(
+            success=True,
+            deletion_type="soft_delete",
+            message="Profile deleted (can be restored)",
+            can_restore=True
+        )
+    return JSONResponse(content=response.model_dump())
+```
+
+**Problems with this approach:**
+- Business logic decision (soft vs permanent) made in router
+- Duplicated response construction logic
+- Router knows about deletion types and business rules
+- Harder to test business logic separately from HTTP layer
+- Cannot reuse deletion logic from other entry points (CLI, GraphQL, etc.)
+
+#### ✅ CORRECT: Thin API Router Delegating to Service
+
+```python
+@router.delete("/{profile_id}")
+async def delete_profile(
+    profile_id: str,
+    permanent: bool,
+    profile_service: ProfileServiceDep,
+    background_tasks: BackgroundTasks
+):
+    # ✅ GOOD: Just call service and map result to HTTP
+    result = await profile_service.delete_profile(
+        profile_id=ProfileId(profile_id),
+        tenant_id=TenantId(current_user.tenant_id),
+        user_id=current_user.user_id,
+        permanent=permanent,  # Pass parameter, don't decide what to do
+        schedule_task=background_tasks
+    )
+
+    # Map service result to HTTP response
+    if not result.success:
+        return JSONResponse(status_code=404, content={"detail": result.message})
+
+    # Convert service result to API schema
+    response = ProfileDeletionResponse(
+        success=result.success,
+        deletion_type=result.deletion_type,
+        profile_id=result.profile_id,
+        message=result.message,
+        can_restore=result.can_restore
+    )
+
+    return JSONResponse(status_code=200, content=response.model_dump())
+```
+
+**Benefits of this approach:**
+- ✅ Router only handles HTTP concerns (status codes, request/response formatting)
+- ✅ All business logic in application service
+- ✅ Service returns standardized result object
+- ✅ Easy to test business logic without HTTP layer
+- ✅ Reusable service method across different interfaces
+- ✅ Single source of truth for deletion business rules
+
+#### API Router Responsibilities (HTTP Concerns Only)
+
+**What API routers SHOULD do:**
+- Parse and validate HTTP request parameters
+- Convert request DTOs to domain value objects
+- Call application service methods
+- Map service results to HTTP responses
+- Set appropriate HTTP status codes
+- Handle HTTP-specific errors (404, 400, 500)
+- Add background tasks for non-critical operations
+
+**What API routers should NOT do:**
+- Make business decisions (if/else based on business rules)
+- Orchestrate multiple service calls
+- Contain conditional logic based on business state
+- Construct complex domain objects
+- Implement workflows or multi-step processes
+- Duplicate logic across multiple endpoints
 
 ## Architectural Enforcement
 

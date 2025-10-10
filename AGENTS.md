@@ -40,6 +40,9 @@
 - Domain modules (`app/domain/`) must stay free of application, API, or infrastructure imports.
 - Application services can depend only on domain ports/value objects; resolve implementations via `app/infrastructure/providers/` rather than direct adapter imports.
 - Infrastructure adapters implement domain interfaces; avoid referencing application logic.
-- API controllers call application services only—never reach directly into infrastructure.
+- **API controllers call application services only—never reach directly into infrastructure.**
+  - **CRITICAL**: Business logic must NOT reside in API routers. API endpoints should be thin controllers that only handle HTTP concerns (request parsing, response formatting, status codes).
+  - All business logic, orchestration, and decision-making must be in the application service layer.
+  - API routers should call a single service method and map the result to HTTP responses.
 - Any new service should expose a port in domain/application and register its adapter in a provider to keep dependencies directional.
 - Prefer ORM/SQLModel queries over raw SQL for database access unless a provider explicitly exposes a raw command helper.
