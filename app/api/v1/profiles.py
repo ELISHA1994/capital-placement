@@ -10,8 +10,6 @@ Comprehensive CV profile management with:
 - Multi-tenant data isolation
 """
 
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
 import structlog
@@ -21,33 +19,31 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.api.dependencies import ProfileServiceDep, map_domain_exception_to_http
 from app.api.schemas.base import PaginatedResponse
 from app.api.schemas.profile_schemas import (
-    BulkOperationRequest,
     Profile as ProfileSchema,
+)
+from app.api.schemas.profile_schemas import (
     ProfileAnalyticsSummary,
     ProfileDeletionResponse,
     ProfileRestorationResponse,
     ProfileSummary,
     ProfileUpdate,
+    SimilarProfileItem,
+    SimilarProfilesResponse,
 )
 from app.core.dependencies import (
-    AuthzService,
     CurrentUserDep,
-    TenantContextDep,
-    require_permission,
 )
 from app.domain.entities.profile import ProcessingStatus
-from app.domain.exceptions import DomainException, ProfileNotFoundError
+from app.domain.exceptions import DomainException
 from app.domain.value_objects import ProfileId, TenantId
 from app.infrastructure.persistence.mappers.profile_mapper import ProfileMapper
 from app.infrastructure.persistence.models.base import PaginationModel
 from app.infrastructure.providers.tenant_provider import (
     get_tenant_service as get_tenant_manager,
 )
-from app.infrastructure.providers.usage_provider import get_usage_service
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/profiles", tags=["profiles"])
-
 
 
 @router.get("/", response_model=PaginatedResponse)
@@ -55,24 +51,39 @@ async def list_profiles(
     current_user: CurrentUserDep,
     profile_service: ProfileServiceDep,
     pagination: PaginationModel = Depends(),
-    status_filter: Optional[ProcessingStatus] = Query(None, description="Filter by processing status"),
-    skill_filter: Optional[str] = Query(None, description="Filter by skill (partial match)"),
-    experience_min: Optional[int] = Query(None, ge=0, description="Minimum years of experience"),
-    experience_max: Optional[int] = Query(None, ge=0, description="Maximum years of experience"),
-    quality_min: Optional[float] = Query(None, ge=0.0, le=1.0, description="Minimum quality score"),
-    sort_by: str = Query("last_updated", description="Sort field (last_updated, quality_score, experience)"),
+    status_filter: ProcessingStatus | None = Query(
+        None, description="Filter by processing status"
+    ),
+    skill_filter: str | None = Query(
+        None, description="Filter by skill (partial match)"
+    ),
+    experience_min: int | None = Query(
+        None, ge=0, description="Minimum years of experience"
+    ),
+    experience_max: int | None = Query(
+        None, ge=0, description="Maximum years of experience"
+    ),
+    quality_min: float | None = Query(
+        None, ge=0.0, le=1.0, description="Minimum quality score"
+    ),
+    sort_by: str = Query(
+        "last_updated",
+        description="Sort field (last_updated, quality_score, experience)",
+    ),
     sort_order: str = Query("desc", description="Sort order (asc, desc)"),
-    include_incomplete: bool = Query(False, description="Include profiles with incomplete processing")
+    include_incomplete: bool = Query(
+        False, description="Include profiles with incomplete processing"
+    ),
 ) -> PaginatedResponse:
     """
     List CV profiles with advanced filtering and sorting.
-    
+
     Supports filtering by:
     - Processing status and quality scores
-    - Skills and experience levels  
+    - Skills and experience levels
     - Custom date ranges
     - Profile completeness
-    
+
     Provides efficient pagination with:
     - Configurable page sizes
     - Multiple sort options
@@ -88,10 +99,10 @@ async def list_profiles(
                 "status": status_filter,
                 "skill": skill_filter,
                 "experience_range": f"{experience_min}-{experience_max}",
-                "quality_min": quality_min
-            }
+                "quality_min": quality_min,
+            },
         )
-        
+
         result = await profile_service.list_profiles(
             tenant_id=UUID(str(current_user.tenant_id)),
             pagination_offset=pagination.offset,
@@ -128,16 +139,13 @@ async def list_profiles(
             page=pagination.page,
             size=pagination.size,
         )
-        
+
     except DomainException as domain_exc:
         # Map domain exceptions to appropriate HTTP responses
         raise map_domain_exception_to_http(domain_exc)
     except Exception as e:
         logger.error(f"Failed to list profiles: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to retrieve profiles"
-        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve profiles")
 
 
 @router.get("/{profile_id}", response_model=ProfileSchema)
@@ -146,11 +154,11 @@ async def get_profile(
     profile_service: ProfileServiceDep,
     profile_id: str = Path(..., description="Profile identifier"),
     include_analytics: bool = Query(False, description="Include profile analytics"),
-    background_tasks: BackgroundTasks = BackgroundTasks()
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> ProfileSchema:
     """
     Get detailed CV profile by ID.
-    
+
     Returns complete profile information including:
     - All extracted structured data
     - Processing metadata and quality scores
@@ -172,26 +180,16 @@ async def get_profile(
         profile_table = ProfileMapper.to_table(domain_profile)
         profile_schema = ProfileSchema.from_table(profile_table)
 
-        background_tasks.add_task(
-            _track_profile_usage,
-            tenant_id=current_user.tenant_id,
-            operation="view",
-            profile_count=1,
-        )
-
         if not include_analytics:
             profile_schema.analytics = None
 
         return profile_schema
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to get profile: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to retrieve profile"
-        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve profile")
 
 
 @router.put("/{profile_id}", response_model=ProfileSchema)
@@ -200,8 +198,10 @@ async def update_profile(
     profile_update: ProfileUpdate,
     current_user: CurrentUserDep,
     profile_service: ProfileServiceDep,
-    regenerate_embeddings: bool = Query(False, description="Regenerate embeddings after update"),
-    background_tasks: BackgroundTasks = BackgroundTasks()
+    regenerate_embeddings: bool = Query(
+        False, description="Regenerate embeddings after update"
+    ),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> ProfileSchema:
     """
     Update the CV profile with new information.
@@ -243,18 +243,12 @@ async def update_profile(
         raise
     except ValueError as e:
         logger.warning(f"Profile update validation failed: {e}", profile_id=profile_id)
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid update data: {str(e)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Invalid update data: {str(e)}")
     except DomainException as domain_exc:
         raise map_domain_exception_to_http(domain_exc)
     except Exception as e:
         logger.error(f"Failed to update profile: {e}", profile_id=profile_id)
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to update profile"
-        )
+        raise HTTPException(status_code=500, detail="Failed to update profile")
 
 
 @router.delete("/{profile_id}")
@@ -263,8 +257,8 @@ async def delete_profile(
     current_user: CurrentUserDep,
     profile_service: ProfileServiceDep,
     permanent: bool = Query(False, description="Permanently delete (vs soft delete)"),
-    reason: Optional[str] = Query(None, description="Reason for deletion"),
-    background_tasks: BackgroundTasks = BackgroundTasks()
+    reason: str | None = Query(None, description="Reason for deletion"),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> JSONResponse:
     """
     Delete CV profile (soft delete by default).
@@ -388,7 +382,7 @@ async def restore_profile(
     profile_id: str,
     current_user: CurrentUserDep,
     profile_service: ProfileServiceDep,
-    background_tasks: BackgroundTasks = BackgroundTasks()
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> ProfileRestorationResponse:
     """
     Restore a soft-deleted profile.
@@ -436,8 +430,7 @@ async def restore_profile(
         # Map service result to HTTP response
         if not restored_profile:
             raise HTTPException(
-                status_code=404,
-                detail="Profile not found or not deleted"
+                status_code=404, detail="Profile not found or not deleted"
             )
 
         logger.info(
@@ -461,10 +454,7 @@ async def restore_profile(
             error=str(e),
             user_id=current_user.user_id,
         )
-        raise HTTPException(
-            status_code=400,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=400, detail=str(e))
 
     except DomainException as domain_exc:
         # Map domain exceptions to appropriate HTTP responses
@@ -480,8 +470,7 @@ async def restore_profile(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500,
-            detail="Internal server error during profile restoration"
+            status_code=500, detail="Internal server error during profile restoration"
         )
 
 
@@ -490,7 +479,9 @@ async def get_profile_analytics(
     profile_id: str,
     current_user: CurrentUserDep,
     profile_service: ProfileServiceDep,
-    time_range_days: int = Query(30, ge=1, le=365, description="Analytics time range in days")
+    time_range_days: int = Query(
+        30, ge=1, le=365, description="Analytics time range in days"
+    ),
 ) -> ProfileAnalyticsSummary:
     """
     Get comprehensive analytics for a profile.
@@ -507,7 +498,7 @@ async def get_profile_analytics(
             "Profile analytics requested",
             profile_id=profile_id,
             tenant_id=current_user.tenant_id,
-            time_range_days=time_range_days
+            time_range_days=time_range_days,
         )
 
         # Convert to value objects
@@ -535,7 +526,7 @@ async def get_profile_analytics(
             "Profile analytics retrieved successfully",
             profile_id=profile_id,
             view_count=analytics.view_count,
-            search_appearances=analytics.search_appearances
+            search_appearances=analytics.search_appearances,
         )
 
         return analytics
@@ -544,9 +535,7 @@ async def get_profile_analytics(
         raise
     except ValueError as e:
         logger.warning(
-            "Profile analytics validation failed",
-            profile_id=profile_id,
-            error=str(e)
+            "Profile analytics validation failed", profile_id=profile_id, error=str(e)
         )
         raise HTTPException(status_code=400, detail=str(e))
     except DomainException as domain_exc:
@@ -556,26 +545,28 @@ async def get_profile_analytics(
             "Failed to get profile analytics",
             profile_id=profile_id,
             error=str(e),
-            exc_info=True
+            exc_info=True,
         )
         raise HTTPException(
-            status_code=500,
-            detail="Failed to retrieve profile analytics"
+            status_code=500, detail="Failed to retrieve profile analytics"
         )
-
 
 
 @router.get("/export/csv")
 async def export_profiles_csv(
     current_user: CurrentUserDep,
-    status_filter: Optional[ProcessingStatus] = Query(None, description="Filter by processing status"),
-    skill_filter: Optional[str] = Query(None, description="Filter by skill"),
-    include_contact_info: bool = Query(False, description="Include contact information"),
-    include_full_text: bool = Query(False, description="Include full profile text")
+    status_filter: ProcessingStatus | None = Query(
+        None, description="Filter by processing status"
+    ),
+    skill_filter: str | None = Query(None, description="Filter by skill"),
+    include_contact_info: bool = Query(
+        False, description="Include contact information"
+    ),
+    include_full_text: bool = Query(False, description="Include full profile text"),
 ) -> StreamingResponse:
     """
     Export profiles to CSV format.
-    
+
     Features:
     - Configurable field selection
     - Privacy-compliant exports
@@ -587,54 +578,56 @@ async def export_profiles_csv(
             "CSV export requested",
             tenant_id=current_user.tenant_id,
             user_id=current_user.user_id,
-            filters={"status": status_filter, "skill": skill_filter}
+            filters={"status": status_filter, "skill": skill_filter},
         )
-        
+
         # Check export permissions
         tenant_manager = await get_tenant_manager()
         has_access = await tenant_manager.check_feature_access(
-            tenant_id=current_user.tenant_id,
-            feature_name="export"
+            tenant_id=current_user.tenant_id, feature_name="export"
         )
-        
+
         if not has_access:
             raise HTTPException(
                 status_code=403,
-                detail="Export functionality not available in your subscription tier"
+                detail="Export functionality not available in your subscription tier",
             )
-        
+
         # TODO: Implement CSV export
         def generate_csv():
             yield "profile_id,email,name,title,skills,experience_years\n"
             # Mock data - replace with actual database query
             yield "123,john@example.com,John Doe,Software Engineer,Python;JavaScript,5\n"
-        
+
         return StreamingResponse(
             generate_csv(),
             media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=profiles_export.csv"}
+            headers={"Content-Disposition": "attachment; filename=profiles_export.csv"},
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"CSV export failed: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to export profiles"
-        )
+        raise HTTPException(status_code=500, detail="Failed to export profiles")
 
 
 @router.post("/{profile_id}/similar")
 async def find_similar_profiles(
     profile_id: str,
     current_user: CurrentUserDep,
-    similarity_threshold: float = Query(0.7, ge=0.0, le=1.0, description="Minimum similarity score"),
-    max_results: int = Query(10, ge=1, le=50, description="Maximum number of similar profiles")
+    profile_service: ProfileServiceDep,
+    similarity_threshold: float = Query(
+        0.7, ge=0.0, le=1.0, description="Minimum similarity score"
+    ),
+    max_results: int = Query(
+        10, ge=1, le=50, description="Maximum number of similar profiles"
+    ),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> JSONResponse:
     """
     Find profiles similar to the given profile.
-    
+
     Uses advanced similarity matching based on:
     - Skill overlap and complementarity
     - Experience patterns and progression
@@ -645,146 +638,45 @@ async def find_similar_profiles(
         logger.debug(
             "Similar profiles search requested",
             profile_id=profile_id,
-            threshold=similarity_threshold
+            threshold=similarity_threshold,
         )
-        
-        # TODO: Implement similarity search
-        # 1. Get target profile embeddings
-        # 2. Perform vector similarity search
-        # 3. Apply business logic filtering
-        # 4. Return ranked results
-        
-        similar_profiles = []  # Mock empty results
-        
-        return JSONResponse(content={
-            "target_profile_id": profile_id,
-            "similar_profiles": similar_profiles,
-            "similarity_threshold": similarity_threshold,
-            "results_count": len(similar_profiles)
-        })
-        
+
+        # Convert to value objects
+        profile_vo = ProfileId(profile_id)
+        tenant_vo = TenantId(current_user.tenant_id)
+
+        # Call application service - it handles ALL business logic
+        similar_profiles_data = await profile_service.find_similar_profiles(
+            profile_id=profile_vo,
+            tenant_id=tenant_vo,
+            similarity_threshold=similarity_threshold,
+            max_results=max_results,
+            schedule_task=background_tasks,
+        )
+
+        # Map to API response schema
+        similar_profiles = [
+            SimilarProfileItem(**item) for item in similar_profiles_data
+        ]
+
+        response = SimilarProfilesResponse(
+            target_profile_id=profile_id,
+            similar_profiles=similar_profiles,
+            similarity_threshold=similarity_threshold,
+            results_count=len(similar_profiles),
+        )
+
+        return JSONResponse(content=response.model_dump())
+
+    except ValueError as e:
+        logger.warning(
+            "Similar profiles validation failed",
+            profile_id=profile_id,
+            error=str(e),
+        )
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Similar profiles search failed: {e}")
         raise HTTPException(
-            status_code=500,
-            detail="Failed to find similar profiles"
-        )
-
-
-# Background task functions
-
-async def _track_profile_usage(tenant_id: str, operation: str, profile_count: int = 1, **metadata) -> None:
-    """Track profile usage via usage service provider"""
-    try:
-        usage_service = await get_usage_service()
-        await usage_service.track_usage(
-            tenant_id=tenant_id,
-            resource_type="profile",
-            amount=profile_count,
-            metadata={"operation": operation, **metadata}
-        )
-        logger.debug("Profile usage tracked", operation=operation, profile_count=profile_count)
-    except Exception as e:
-        logger.warning(f"Failed to track profile usage: {e}")
-
-
-async def _track_profile_view(profile_id: str, user_id: str, tenant_id: str) -> None:
-    """Track profile view for analytics"""
-    try:
-        # TODO: Update profile view count and analytics
-        logger.debug("Profile view tracked", profile_id=profile_id, user_id=user_id)
-    except Exception as e:
-        logger.warning(f"Failed to track profile view: {e}")
-
-
-async def _update_search_index(profile_id: str, profile_data: Optional[Dict] = None) -> None:
-    """Update search index for profile"""
-    try:
-        if profile_data:
-            search_service = AzureSearchService()
-            await search_service.index_document(
-                index_name="cv-profiles",
-                document=profile_data
-            )
-        logger.debug("Search index updated", profile_id=profile_id)
-    except Exception as e:
-        logger.warning(f"Failed to update search index: {e}")
-
-
-async def _regenerate_profile_embeddings(profile_id: str, profile: Optional[ProfileSchema] = None) -> None:
-    """Regenerate embeddings for profile"""
-    try:
-        if profile:
-            embedding_generator = EmbeddingGenerator()
-            new_embedding = await embedding_generator.generate_profile_embedding(
-                profile=profile,
-                force_regenerate=True
-            )
-            
-            # Update profile with new embedding
-            # TODO: Update in database
-            
-        logger.info("Profile embeddings regenerated", profile_id=profile_id)
-    except Exception as e:
-        logger.warning(f"Failed to regenerate embeddings: {e}")
-
-
-async def _remove_from_search_index(profile_id: str) -> None:
-    """Remove profile from search index"""
-    try:
-        search_service = AzureSearchService()
-        await search_service.delete_document(
-            index_name="cv-profiles",
-            document_id=profile_id
-        )
-        logger.debug("Profile removed from search index", profile_id=profile_id)
-    except Exception as e:
-        logger.warning(f"Failed to remove from search index: {e}")
-
-
-async def _cleanup_profile_documents(profile_id: str, tenant_id: str) -> None:
-    """Clean up document storage for profile"""
-    try:
-        # TODO: Remove documents from blob storage
-        logger.debug("Profile documents cleaned up", profile_id=profile_id)
-    except Exception as e:
-        logger.warning(f"Failed to cleanup profile documents: {e}")
-
-
-async def _reindex_restored_profile(profile_id: str) -> None:
-    """Re-index restored profile for search"""
-    try:
-        # TODO: Get profile data and re-index
-        logger.debug("Restored profile re-indexed", profile_id=profile_id)
-    except Exception as e:
-        logger.warning(f"Failed to re-index restored profile: {e}")
-
-
-async def _execute_bulk_operation(
-    operation_id: str,
-    operation_type: str,
-    profile_ids: List[str],
-    parameters: Dict[str, Any],
-    tenant_id: str,
-    user_id: str
-) -> None:
-    """Execute bulk operation in background"""
-    try:
-        logger.info(
-            "Executing bulk operation",
-            operation_id=operation_id,
-            operation_type=operation_type,
-            profile_count=len(profile_ids)
-        )
-        
-        # TODO: Implement actual bulk operations
-        # - Validate all profiles belong to tenant
-        # - Execute operation based on type
-        # - Track progress and results
-        # - Send completion notification
-        
-        # Mock successful completion
-        logger.info("Bulk operation completed", operation_id=operation_id)
-        
-    except Exception as e:
-        logger.error(f"Bulk operation failed: {e}", operation_id=operation_id)
+            status_code=500, detail="Failed to find similar profiles"
+        ) from e

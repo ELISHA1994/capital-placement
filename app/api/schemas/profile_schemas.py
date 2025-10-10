@@ -27,6 +27,7 @@ from app.infrastructure.persistence.models.profile_table import (
 
 class Profile(BaseModel):
     """Backward compatibility wrapper for ProfileTable."""
+
     # System fields
     id: str = Field(default_factory=lambda: str(uuid4()))
     tenant_id: str = Field(..., description="Tenant identifier")
@@ -40,7 +41,9 @@ class Profile(BaseModel):
     embeddings: ProfileEmbeddings
     searchable_text: str = Field(..., description="Concatenated searchable content")
     keywords: List[str] = Field(default_factory=list, description="Extracted keywords")
-    normalized_skills: List[str] = Field(default_factory=list, description="Standardized skills")
+    normalized_skills: List[str] = Field(
+        default_factory=list, description="Standardized skills"
+    )
 
     # Metadata
     profile_metadata: ProfileMetadata = Field(default_factory=ProfileMetadata)
@@ -55,7 +58,9 @@ class Profile(BaseModel):
     privacy: PrivacySettings = Field(default_factory=PrivacySettings)
 
     # Analytics
-    analytics: Optional[ProfileAnalytics] = Field(None, description="Profile analytics data")
+    analytics: Optional[ProfileAnalytics] = Field(
+        None, description="Profile analytics data"
+    )
 
     @classmethod
     def from_table(cls, profile_table: ProfileTable) -> "Profile":
@@ -63,8 +68,12 @@ class Profile(BaseModel):
         return cls(
             id=str(profile_table.id),
             tenant_id=str(profile_table.tenant_id),
-            university_id=str(profile_table.university_id) if profile_table.university_id else None,
-            corporate_id=str(profile_table.corporate_id) if profile_table.corporate_id else None,
+            university_id=str(profile_table.university_id)
+            if profile_table.university_id
+            else None,
+            corporate_id=str(profile_table.corporate_id)
+            if profile_table.corporate_id
+            else None,
             profile=profile_table.get_profile_data(),
             embeddings=profile_table.get_embeddings(),
             searchable_text=profile_table.searchable_text,
@@ -74,22 +83,28 @@ class Profile(BaseModel):
                 source=profile_table.source,
                 original_filename=profile_table.original_filename,
                 file_size=profile_table.file_size,
-                processing_version=profile_table.processing_metadata.get("processing_version", "1.0"),
-                processing_time=profile_table.processing_metadata.get("processing_time"),
+                processing_version=profile_table.processing_metadata.get(
+                    "processing_version", "1.0"
+                ),
+                processing_time=profile_table.processing_metadata.get(
+                    "processing_time"
+                ),
                 last_updated=profile_table.updated_at.isoformat(),
                 update_count=profile_table.version,
                 quality=ProfileQuality(
                     score=int(profile_table.quality_score or 0),
                     missing_fields=[],
-                    warnings=[]
-                )
+                    warnings=[],
+                ),
             ),
             processing=profile_table.get_processing_metadata(),
             created_at=profile_table.created_at.isoformat(),
             updated_at=profile_table.updated_at.isoformat(),
-            last_activity_at=profile_table.last_activity_at.isoformat() if profile_table.last_activity_at else None,
+            last_activity_at=profile_table.last_activity_at.isoformat()
+            if profile_table.last_activity_at
+            else None,
             privacy=profile_table.get_privacy_settings(),
-            analytics=profile_table.get_analytics()
+            analytics=profile_table.get_analytics(),
         )
 
     def to_table(self, tenant_id: UUID) -> ProfileTable:
@@ -107,7 +122,7 @@ class Profile(BaseModel):
             normalized_skills=self.normalized_skills,
             source=self.profile_metadata.source,
             original_filename=self.profile_metadata.original_filename,
-            file_size=self.profile_metadata.file_size
+            file_size=self.profile_metadata.file_size,
         )
 
         # Set complex data
@@ -121,6 +136,7 @@ class Profile(BaseModel):
 
 class ProfileCreate(BaseModel):
     """Profile creation request"""
+
     tenant_id: str
     university_id: Optional[str] = None
     corporate_id: Optional[str] = None
@@ -134,17 +150,28 @@ class ProfileUpdate(BaseModel):
     title: Optional[str] = Field(None, description="Professional title")
     summary: Optional[str] = Field(None, description="Professional summary")
     skills: Optional[List[Dict[str, Any]]] = Field(None, description="Skills list")
-    experience_entries: Optional[List[Dict[str, Any]]] = Field(None, description="Experience entries")
-    education_entries: Optional[List[Dict[str, Any]]] = Field(None, description="Education entries")
-    certifications: Optional[List[Dict[str, Any]]] = Field(None, description="Certifications")
-    contact_info: Optional[Dict[str, Any]] = Field(None, description="Contact information")
+    experience_entries: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Experience entries"
+    )
+    education_entries: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Education entries"
+    )
+    certifications: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Certifications"
+    )
+    contact_info: Optional[Dict[str, Any]] = Field(
+        None, description="Contact information"
+    )
     location: Optional[Dict[str, Any]] = Field(None, description="Location information")
-    job_preferences: Optional[Dict[str, Any]] = Field(None, description="Job preferences")
+    job_preferences: Optional[Dict[str, Any]] = Field(
+        None, description="Job preferences"
+    )
     tags: Optional[List[str]] = Field(None, description="Profile tags")
 
 
 class ProfileResponse(BaseModel):
     """Profile response for API"""
+
     id: str
     tenant_id: str
     profile: ProfileData
@@ -155,7 +182,9 @@ class ProfileResponse(BaseModel):
     analytics: Optional[ProfileAnalytics] = None  # Only for authorized users
 
     @classmethod
-    def from_profile(cls, profile: Profile, include_analytics: bool = False) -> "ProfileResponse":
+    def from_profile(
+        cls, profile: Profile, include_analytics: bool = False
+    ) -> "ProfileResponse":
         """Create response from profile model"""
         return cls(
             id=profile.id,
@@ -165,11 +194,13 @@ class ProfileResponse(BaseModel):
             created_at=profile.created_at,
             updated_at=profile.updated_at,
             privacy=profile.privacy,
-            analytics=profile.analytics if include_analytics else None
+            analytics=profile.analytics if include_analytics else None,
         )
 
     @classmethod
-    def from_table(cls, profile_table: ProfileTable, include_analytics: bool = False) -> "ProfileResponse":
+    def from_table(
+        cls, profile_table: ProfileTable, include_analytics: bool = False
+    ) -> "ProfileResponse":
         """Create response from ProfileTable"""
         return cls(
             id=str(profile_table.id),
@@ -179,25 +210,30 @@ class ProfileResponse(BaseModel):
                 source=profile_table.source,
                 original_filename=profile_table.original_filename,
                 file_size=profile_table.file_size,
-                processing_version=profile_table.processing_metadata.get("processing_version", "1.0"),
-                processing_time=profile_table.processing_metadata.get("processing_time"),
+                processing_version=profile_table.processing_metadata.get(
+                    "processing_version", "1.0"
+                ),
+                processing_time=profile_table.processing_metadata.get(
+                    "processing_time"
+                ),
                 last_updated=profile_table.updated_at.isoformat(),
                 update_count=profile_table.version,
                 quality=ProfileQuality(
                     score=int(profile_table.quality_score or 0),
                     missing_fields=[],
-                    warnings=[]
-                )
+                    warnings=[],
+                ),
             ),
             created_at=profile_table.created_at.isoformat(),
             updated_at=profile_table.updated_at.isoformat(),
             privacy=profile_table.get_privacy_settings(),
-            analytics=profile_table.get_analytics() if include_analytics else None
+            analytics=profile_table.get_analytics() if include_analytics else None,
         )
 
 
 class ProfileListResponse(BaseModel):
     """Paginated profile list response"""
+
     profiles: List[ProfileResponse]
     total_count: int
     page: int = Field(1, ge=1)
@@ -207,6 +243,7 @@ class ProfileListResponse(BaseModel):
 
 class ProfileSearchFilters(BaseModel):
     """Profile search filters"""
+
     skills: Optional[List[str]] = None
     location: Optional[str] = None
     years_experience: Optional[int] = Field(None, ge=0)
@@ -226,7 +263,9 @@ class ProfileSummary(BaseModel):
     full_name: Optional[str] = Field(None, description="Full name")
     title: Optional[str] = Field(None, description="Professional title")
     current_company: Optional[str] = Field(None, description="Current employer")
-    total_experience_years: Optional[int] = Field(None, description="Years of experience")
+    total_experience_years: Optional[int] = Field(
+        None, description="Years of experience"
+    )
     top_skills: List[str] = Field(default_factory=list, description="Top 5 skills")
     last_updated: datetime = Field(..., description="Last update timestamp")
     processing_status: ProcessingStatus = Field(..., description="Processing status")
@@ -237,8 +276,12 @@ class BulkOperationRequest(BaseModel):
     """Request model for bulk profile operations."""
 
     profile_ids: List[str] = Field(..., description="List of profile IDs")
-    operation: str = Field(..., description="Operation to perform (update, delete, export, tag)")
-    parameters: Optional[Dict[str, Any]] = Field(None, description="Operation-specific parameters")
+    operation: str = Field(
+        ..., description="Operation to perform (update, delete, export, tag)"
+    )
+    parameters: Optional[Dict[str, Any]] = Field(
+        None, description="Operation-specific parameters"
+    )
 
 
 class ProfileAnalyticsSummary(BaseModel):
@@ -246,11 +289,21 @@ class ProfileAnalyticsSummary(BaseModel):
 
     profile_id: str = Field(..., description="Profile identifier")
     view_count: int = Field(default=0, description="Number of profile views")
-    search_appearances: int = Field(default=0, description="Times appeared in search results")
-    match_score_distribution: Dict[str, int] = Field(default_factory=dict, description="Distribution of match scores")
-    popular_searches: List[str] = Field(default_factory=list, description="Queries that found this profile")
-    skill_demand_score: Optional[float] = Field(None, description="Market demand score for skills")
-    profile_completeness: float = Field(default=0.0, description="Profile completeness percentage")
+    search_appearances: int = Field(
+        default=0, description="Times appeared in search results"
+    )
+    match_score_distribution: Dict[str, int] = Field(
+        default_factory=dict, description="Distribution of match scores"
+    )
+    popular_searches: List[str] = Field(
+        default_factory=list, description="Queries that found this profile"
+    )
+    skill_demand_score: Optional[float] = Field(
+        None, description="Market demand score for skills"
+    )
+    profile_completeness: float = Field(
+        default=0.0, description="Profile completeness percentage"
+    )
     last_viewed: Optional[datetime] = Field(None, description="Last view timestamp")
 
 
@@ -258,10 +311,14 @@ class ProfileDeletionResponse(BaseModel):
     """Response for profile deletion operation."""
 
     success: bool = Field(..., description="Whether deletion was successful")
-    deletion_type: str = Field(..., description="Type of deletion: soft_delete or permanent_delete")
+    deletion_type: str = Field(
+        ..., description="Type of deletion: soft_delete or permanent_delete"
+    )
     profile_id: str = Field(..., description="ID of deleted profile")
     message: str = Field(..., description="Human-readable deletion message")
-    can_restore: bool = Field(default=False, description="Whether profile can be restored")
+    can_restore: bool = Field(
+        default=False, description="Whether profile can be restored"
+    )
 
 
 class ProfileRestorationResponse(BaseModel):
@@ -269,4 +326,33 @@ class ProfileRestorationResponse(BaseModel):
 
     success: bool = Field(..., description="Whether restoration was successful")
     profile_id: str = Field(..., description="ID of the restored profile")
-    message: str = Field(..., description="Human-readable message about the restoration")
+    message: str = Field(
+        ..., description="Human-readable message about the restoration"
+    )
+
+
+class SimilarProfileItem(BaseModel):
+    """Single similar profile result."""
+
+    profile_id: str = Field(..., description="Profile identifier")
+    full_name: Optional[str] = Field(None, description="Full name")
+    title: Optional[str] = Field(None, description="Professional title")
+    current_company: Optional[str] = Field(None, description="Current employer")
+    top_skills: List[str] = Field(default_factory=list, description="Top 5 skills")
+    similarity_score: float = Field(
+        ..., ge=0.0, le=1.0, description="Similarity score (0.0-1.0)"
+    )
+    match_explanation: Optional[str] = Field(None, description="Brief reason for match")
+
+
+class SimilarProfilesResponse(BaseModel):
+    """Response for similar profiles endpoint."""
+
+    target_profile_id: str = Field(..., description="ID of the target profile")
+    similar_profiles: List[SimilarProfileItem] = Field(
+        default_factory=list, description="List of similar profiles"
+    )
+    similarity_threshold: float = Field(
+        ..., ge=0.0, le=1.0, description="Minimum similarity threshold used"
+    )
+    results_count: int = Field(..., ge=0, description="Number of results returned")

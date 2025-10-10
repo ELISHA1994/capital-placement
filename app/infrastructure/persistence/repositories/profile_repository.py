@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import desc
 from sqlmodel import select
@@ -31,7 +31,7 @@ class PostgresProfileRepository(IProfileRepository):
     async def save(self, profile: Profile) -> Profile:
         """Save profile to database and return updated domain entity."""
         adapter = await self._get_adapter()
-        
+
         try:
             profile_table = ProfileMapper.to_table(profile)
             db_manager = adapter.db_manager
@@ -45,14 +45,14 @@ class PostgresProfileRepository(IProfileRepository):
                     session.add(profile_table)
 
             return profile
-            
+
         except Exception as e:
             raise Exception(f"Failed to save profile: {str(e)}")
 
     async def find_by_id(self, profile_id: ProfileId) -> Optional[Profile]:
         """Find profile by ID."""
         adapter = await self._get_adapter()
-        
+
         try:
             db_manager = adapter.db_manager
             async with db_manager.get_session() as session:
@@ -62,11 +62,13 @@ class PostgresProfileRepository(IProfileRepository):
                     return None
 
                 return ProfileMapper.to_domain(table_obj)
-            
+
         except Exception as e:
             raise Exception(f"Failed to find profile by ID: {str(e)}")
 
-    async def find_by_tenant_id(self, tenant_id: TenantId, limit: int = 100, offset: int = 0) -> List[Profile]:
+    async def find_by_tenant_id(
+        self, tenant_id: TenantId, limit: int = 100, offset: int = 0
+    ) -> List[Profile]:
         """Find profiles by tenant ID with pagination."""
         adapter = await self._get_adapter()
 
@@ -89,127 +91,99 @@ class PostgresProfileRepository(IProfileRepository):
         except Exception as e:
             raise Exception(f"Failed to find profiles by tenant ID: {str(e)}")
 
-    async def search_by_skills(self, tenant_id: TenantId, skills: List[str], limit: int = 50) -> List[Profile]:
-        """Search profiles by skills within a tenant."""
-        adapter = await self._get_adapter()
-        
-        try:
-            # Simple skill search using JSONB contains
-            skill_conditions = []
-            params = [tenant_id.value]
-            
-            for i, skill in enumerate(skills, 2):
-                skill_conditions.append(f"normalized_skills @> $${i}")
-                params.append([skill.lower()])
-            
-            where_clause = " AND ".join(skill_conditions)
-            
-            query = f"""
-                SELECT * FROM profiles 
-                WHERE tenant_id = $1 
-                AND ({where_clause})
-                ORDER BY quality_score DESC NULLS LAST, created_at DESC 
-                LIMIT ${len(params) + 1}
-            """
-            params.append(limit)
-            
-            records = await adapter.fetch_all(query, *params)
-            
-            profiles = []
-            for record in records:
-                profile_table = ProfileTable(**dict(record))
-                profiles.append(ProfileMapper.to_domain(profile_table))
-            
-            return profiles
-            
-        except Exception as e:
-            raise Exception(f"Failed to search profiles by skills: {str(e)}")
-
-    async def search_by_text(self, tenant_id: TenantId, query_text: str, limit: int = 50) -> List[Profile]:
+    async def search_by_text(
+        self,
+        tenant_id: TenantId,
+        query: str,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: int = 50,
+    ) -> List[Profile]:
         """Search profiles by text content within a tenant."""
         adapter = await self._get_adapter()
-        
+
         try:
             # Full-text search using PostgreSQL's to_tsvector
             records = await adapter.fetch_all(
                 """
                 SELECT *, ts_rank(to_tsvector('english', searchable_text), plainto_tsquery('english', $2)) as rank
-                FROM profiles 
-                WHERE tenant_id = $1 
+                FROM profiles
+                WHERE tenant_id = $1
                 AND to_tsvector('english', searchable_text) @@ plainto_tsquery('english', $2)
                 ORDER BY rank DESC, quality_score DESC NULLS LAST
                 LIMIT $3
                 """,
-                tenant_id.value, query_text, limit
+                tenant_id.value,
+                query,
+                limit,
             )
-            
+
             profiles = []
             for record in records:
                 # Remove the rank field before creating ProfileTable
                 profile_data = dict(record)
-                profile_data.pop('rank', None)
+                profile_data.pop("rank", None)
                 profile_table = ProfileTable(**profile_data)
                 profiles.append(ProfileMapper.to_domain(profile_table))
-            
+
             return profiles
-            
+
         except Exception as e:
             raise Exception(f"Failed to search profiles by text: {str(e)}")
 
     async def delete_by_id(self, profile_id: ProfileId) -> bool:
         """Delete profile by ID."""
         adapter = await self._get_adapter()
-        
+
         try:
             result = await adapter.execute(
-                "DELETE FROM profiles WHERE id = $1",
-                profile_id.value
+                "DELETE FROM profiles WHERE id = $1", profile_id.value
             )
-            
+
             # Check if any rows were affected
-            return result and result.split()[-1] != '0'
-            
+            return result and result.split()[-1] != "0"
+
         except Exception as e:
             raise Exception(f"Failed to delete profile: {str(e)}")
 
     async def count_by_tenant_id(self, tenant_id: TenantId) -> int:
         """Count profiles by tenant ID."""
         adapter = await self._get_adapter()
-        
+
         try:
             record = await adapter.fetch_one(
                 "SELECT COUNT(*) as count FROM profiles WHERE tenant_id = $1",
-                tenant_id.value
+                tenant_id.value,
             )
-            
-            return record['count'] if record else 0
-            
+
+            return record["count"] if record else 0
+
         except Exception as e:
             raise Exception(f"Failed to count profiles: {str(e)}")
 
     async def find_by_email(self, tenant_id: TenantId, email: str) -> Optional[Profile]:
         """Find profile by email within a tenant."""
         adapter = await self._get_adapter()
-        
+
         try:
             record = await adapter.fetch_one(
                 "SELECT * FROM profiles WHERE tenant_id = $1 AND email = $2",
-                tenant_id.value, email
+                tenant_id.value,
+                email,
             )
-            
+
             if not record:
                 return None
-            
+
             profile_table = ProfileTable(**dict(record))
             return ProfileMapper.to_domain(profile_table)
-            
+
         except Exception as e:
             raise Exception(f"Failed to find profile by email: {str(e)}")
 
     async def update_view_count(self, profile_id: ProfileId) -> None:
         """Increment profile view count."""
         adapter = await self._get_adapter()
-        
+
         try:
             await adapter.execute(
                 """
@@ -219,9 +193,9 @@ class PostgresProfileRepository(IProfileRepository):
                     updated_at = NOW()
                 WHERE id = $1
                 """,
-                profile_id.value
+                profile_id.value,
             )
-            
+
         except Exception as e:
             raise Exception(f"Failed to update view count: {str(e)}")
 
@@ -237,14 +211,16 @@ class PostgresProfileRepository(IProfileRepository):
                     updated_at = NOW()
                 WHERE id = $1
                 """,
-                profile_id.value
+                profile_id.value,
             )
 
         except Exception as e:
             raise Exception(f"Failed to update search appearances: {str(e)}")
 
     # Interface method implementations
-    async def get_by_id(self, profile_id: ProfileId, tenant_id: TenantId) -> Optional[Profile]:
+    async def get_by_id(
+        self, profile_id: ProfileId, tenant_id: TenantId
+    ) -> Optional[Profile]:
         """Load a profile aggregate by identifier within tenant scope."""
         adapter = await self._get_adapter()
 
@@ -276,7 +252,7 @@ class PostgresProfileRepository(IProfileRepository):
         tenant_id: TenantId,
         status: Optional[ProfileStatus] = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
     ) -> List[Profile]:
         """List profiles for a tenant with optional filtering."""
         adapter = await self._get_adapter()
@@ -284,10 +260,16 @@ class PostgresProfileRepository(IProfileRepository):
         try:
             db_manager = adapter.db_manager
             async with db_manager.get_session() as session:
-                stmt = select(ProfileTable).where(ProfileTable.tenant_id == tenant_id.value)
+                stmt = select(ProfileTable).where(
+                    ProfileTable.tenant_id == tenant_id.value
+                )
                 if status:
                     stmt = stmt.where(ProfileTable.status == status.value)
-                stmt = stmt.order_by(desc(ProfileTable.created_at)).offset(offset).limit(limit)
+                stmt = (
+                    stmt.order_by(desc(ProfileTable.created_at))
+                    .offset(offset)
+                    .limit(limit)
+                )
 
                 result = await session.execute(stmt)
                 rows = result.scalars().all()
@@ -305,31 +287,61 @@ class PostgresProfileRepository(IProfileRepository):
         limit: int = 20,
         threshold: float = 0.7,
     ) -> List[Tuple[Profile, MatchScore]]:
-        """Run vector similarity search for candidate discovery."""
+        """Run vector similarity search for candidate discovery.
+
+        Uses raw SQL with positional parameters for reliable pgvector integration.
+        The vector is cast to pgvector type using PostgreSQL's ::vector syntax.
+        """
         adapter = await self._get_adapter()
 
         try:
-            # Use pgvector cosine similarity search
+            # Format vector for pgvector query (as string for PostgreSQL cast)
             vector_str = f"[{','.join(map(str, query_vector))}]"
 
-            records = await adapter.fetch_all(
-                """
-                SELECT *, 1 - (overall_embedding <=> $2::vector) as similarity
+            # Use raw SQL with positional parameters ($1, $2, etc.)
+            # This avoids parameter binding issues with pgvector type casting
+            query = """
+                SELECT profiles.*, 1 - (overall_embedding <=> $1::vector) as similarity
                 FROM profiles
-                WHERE tenant_id = $1
+                WHERE tenant_id = $2
                 AND overall_embedding IS NOT NULL
-                AND 1 - (overall_embedding <=> $2::vector) >= $3
+                AND 1 - (overall_embedding <=> $1::vector) >= $3
                 ORDER BY similarity DESC
                 LIMIT $4
-                """,
-                tenant_id.value, vector_str, threshold, limit
+            """
+
+            # Execute with positional parameters in order
+            records = await adapter.fetch_all(
+                query,
+                vector_str,      # $1 - query vector
+                tenant_id.value, # $2 - tenant_id
+                threshold,       # $3 - similarity threshold
+                limit,           # $4 - result limit
             )
 
+            # Convert records to domain entities
             results = []
             for record in records:
-                profile_data = dict(record)
-                similarity = profile_data.pop('similarity', 0.0)
+                # Extract similarity score
+                similarity = record.get("similarity", 0.0)
+
+                # Create ProfileTable from record data (excluding similarity)
+                profile_data = {k: v for k, v in dict(record).items() if k != "similarity"}
+
+                # Parse overall_embedding from string to list if needed
+                # pgvector returns vectors as strings when using raw SQL
+                if "overall_embedding" in profile_data and isinstance(profile_data["overall_embedding"], str):
+                    embedding_str = profile_data["overall_embedding"]
+                    # Remove brackets and split by comma
+                    embedding_str = embedding_str.strip("[]")
+                    if embedding_str:
+                        profile_data["overall_embedding"] = [float(x.strip()) for x in embedding_str.split(",")]
+                    else:
+                        profile_data["overall_embedding"] = None
+
                 profile_table = ProfileTable(**profile_data)
+
+                # Convert to domain entity
                 profile = ProfileMapper.to_domain(profile_table)
                 match_score = MatchScore(float(similarity))
                 results.append((profile, match_score))
@@ -344,7 +356,7 @@ class PostgresProfileRepository(IProfileRepository):
         tenant_id: TenantId,
         skills: List[str],
         experience_level: Optional[ExperienceLevel] = None,
-        limit: int = 50
+        limit: int = 50,
     ) -> List[Tuple[Profile, MatchScore]]:
         """Search profiles by required skills."""
         adapter = await self._get_adapter()
@@ -400,18 +412,17 @@ class PostgresProfileRepository(IProfileRepository):
         try:
             result = await adapter.execute(
                 "DELETE FROM profiles WHERE id = $1 AND tenant_id = $2",
-                profile_id.value, tenant_id.value
+                profile_id.value,
+                tenant_id.value,
             )
 
-            return result and result.split()[-1] != '0'
+            return result and result.split()[-1] != "0"
 
         except Exception as e:
             raise Exception(f"Failed to delete profile: {str(e)}")
 
     async def count_by_tenant(
-        self,
-        tenant_id: TenantId,
-        status: Optional[ProfileStatus] = None
+        self, tenant_id: TenantId, status: Optional[ProfileStatus] = None
     ) -> int:
         """Count profiles for a tenant."""
         adapter = await self._get_adapter()
@@ -420,23 +431,22 @@ class PostgresProfileRepository(IProfileRepository):
             if status:
                 record = await adapter.fetch_one(
                     "SELECT COUNT(*) as count FROM profiles WHERE tenant_id = $1 AND status = $2",
-                    tenant_id.value, status.value
+                    tenant_id.value,
+                    status.value,
                 )
             else:
                 record = await adapter.fetch_one(
                     "SELECT COUNT(*) as count FROM profiles WHERE tenant_id = $1",
-                    tenant_id.value
+                    tenant_id.value,
                 )
 
-            return record['count'] if record else 0
+            return record["count"] if record else 0
 
         except Exception as e:
             raise Exception(f"Failed to count profiles by tenant: {str(e)}")
 
     async def get_by_ids(
-        self,
-        profile_ids: List[ProfileId],
-        tenant_id: TenantId
+        self, profile_ids: List[ProfileId], tenant_id: TenantId
     ) -> List[Profile]:
         """Get multiple profiles by IDs."""
         adapter = await self._get_adapter()
@@ -450,7 +460,8 @@ class PostgresProfileRepository(IProfileRepository):
 
             records = await adapter.fetch_all(
                 "SELECT * FROM profiles WHERE id = ANY($1) AND tenant_id = $2",
-                id_values, tenant_id.value
+                id_values,
+                tenant_id.value,
             )
 
             profiles = []
@@ -468,7 +479,7 @@ class PostgresProfileRepository(IProfileRepository):
         profile_id: ProfileId,
         tenant_id: TenantId,
         view_increment: int = 0,
-        search_appearance_increment: int = 0
+        search_appearance_increment: int = 0,
     ) -> bool:
         """Update profile analytics counters."""
         adapter = await self._get_adapter()
@@ -479,7 +490,9 @@ class PostgresProfileRepository(IProfileRepository):
                 updates.append(f"view_count = view_count + {view_increment}")
                 updates.append("last_viewed_at = NOW()")
             if search_appearance_increment > 0:
-                updates.append(f"search_appearances = search_appearances + {search_appearance_increment}")
+                updates.append(
+                    f"search_appearances = search_appearances + {search_appearance_increment}"
+                )
 
             if not updates:
                 return True  # No updates needed
@@ -489,18 +502,17 @@ class PostgresProfileRepository(IProfileRepository):
 
             result = await adapter.execute(
                 f"UPDATE profiles SET {update_clause} WHERE id = $1 AND tenant_id = $2",
-                profile_id.value, tenant_id.value
+                profile_id.value,
+                tenant_id.value,
             )
 
-            return result and result.split()[-1] != '0'
+            return result and result.split()[-1] != "0"
 
         except Exception as e:
             raise Exception(f"Failed to update analytics: {str(e)}")
 
     async def list_pending_processing(
-        self,
-        tenant_id: Optional[TenantId] = None,
-        limit: int = 100
+        self, tenant_id: Optional[TenantId] = None, limit: int = 100
     ) -> List[Profile]:
         """List profiles pending processing."""
         adapter = await self._get_adapter()
@@ -514,7 +526,8 @@ class PostgresProfileRepository(IProfileRepository):
                     ORDER BY created_at ASC
                     LIMIT $2
                     """,
-                    tenant_id.value, limit
+                    tenant_id.value,
+                    limit,
                 )
             else:
                 records = await adapter.fetch_all(
@@ -524,7 +537,7 @@ class PostgresProfileRepository(IProfileRepository):
                     ORDER BY created_at ASC
                     LIMIT $1
                     """,
-                    limit
+                    limit,
                 )
 
             profiles = []
@@ -538,9 +551,7 @@ class PostgresProfileRepository(IProfileRepository):
             raise Exception(f"Failed to list pending processing profiles: {str(e)}")
 
     async def list_for_archival(
-        self,
-        tenant_id: TenantId,
-        days_inactive: int = 90
+        self, tenant_id: TenantId, days_inactive: int = 90
     ) -> List[Profile]:
         """List profiles eligible for archival."""
         adapter = await self._get_adapter()
@@ -556,7 +567,8 @@ class PostgresProfileRepository(IProfileRepository):
                 AND status != 'archived'
                 ORDER BY last_activity_at ASC
                 """,
-                tenant_id.value, cutoff_date
+                tenant_id.value,
+                cutoff_date,
             )
 
             profiles = []
@@ -569,10 +581,7 @@ class PostgresProfileRepository(IProfileRepository):
         except Exception as e:
             raise Exception(f"Failed to list profiles for archival: {str(e)}")
 
-    async def get_statistics(
-        self,
-        tenant_id: TenantId
-    ) -> Dict[str, Any]:
+    async def get_statistics(self, tenant_id: TenantId) -> Dict[str, Any]:
         """Get profile statistics for a tenant."""
         adapter = await self._get_adapter()
 
@@ -582,38 +591,49 @@ class PostgresProfileRepository(IProfileRepository):
             # Total count
             total_record = await adapter.fetch_one(
                 "SELECT COUNT(*) as count FROM profiles WHERE tenant_id = $1",
-                tenant_id.value
+                tenant_id.value,
             )
-            stats['total_profiles'] = total_record['count'] if total_record else 0
+            stats["total_profiles"] = total_record["count"] if total_record else 0
 
             # Count by status
             status_records = await adapter.fetch_all(
                 "SELECT status, COUNT(*) as count FROM profiles WHERE tenant_id = $1 GROUP BY status",
-                tenant_id.value
+                tenant_id.value,
             )
-            stats['by_status'] = {record['status']: record['count'] for record in status_records}
+            stats["by_status"] = {
+                record["status"]: record["count"] for record in status_records
+            }
 
             # Average quality score
             quality_record = await adapter.fetch_one(
                 "SELECT AVG(quality_score) as avg_quality FROM profiles WHERE tenant_id = $1 AND quality_score IS NOT NULL",
-                tenant_id.value
+                tenant_id.value,
             )
-            stats['average_quality_score'] = float(quality_record['avg_quality']) if quality_record and quality_record['avg_quality'] else 0.0
+            stats["average_quality_score"] = (
+                float(quality_record["avg_quality"])
+                if quality_record and quality_record["avg_quality"]
+                else 0.0
+            )
 
             # Profiles with embeddings
             embedding_record = await adapter.fetch_one(
                 "SELECT COUNT(*) as count FROM profiles WHERE tenant_id = $1 AND overall_embedding IS NOT NULL",
-                tenant_id.value
+                tenant_id.value,
             )
-            stats['profiles_with_embeddings'] = embedding_record['count'] if embedding_record else 0
+            stats["profiles_with_embeddings"] = (
+                embedding_record["count"] if embedding_record else 0
+            )
 
             # Recent activity (last 7 days)
             recent_cutoff = datetime.utcnow() - timedelta(days=7)
             recent_record = await adapter.fetch_one(
                 "SELECT COUNT(*) as count FROM profiles WHERE tenant_id = $1 AND last_activity_at >= $2",
-                tenant_id.value, recent_cutoff
+                tenant_id.value,
+                recent_cutoff,
             )
-            stats['recent_activity_count'] = recent_record['count'] if recent_record else 0
+            stats["recent_activity_count"] = (
+                recent_record["count"] if recent_record else 0
+            )
 
             return stats
 

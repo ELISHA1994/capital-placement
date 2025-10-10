@@ -453,7 +453,9 @@ class ProfileApplicationService:
             summary = str(update_data["summary"]).strip() or None
 
         # Update contact info
-        if "contact_info" in update_data and isinstance(update_data["contact_info"], dict):
+        if "contact_info" in update_data and isinstance(
+            update_data["contact_info"], dict
+        ):
             contact_info = update_data["contact_info"]
 
             # Update email if provided
@@ -485,12 +487,20 @@ class ProfileApplicationService:
             skills = self._convert_skills_from_dict(update_data["skills"])
 
         # Update experience entries
-        if "experience_entries" in update_data and isinstance(update_data["experience_entries"], list):
-            experience = self._convert_experience_from_dict(update_data["experience_entries"])
+        if "experience_entries" in update_data and isinstance(
+            update_data["experience_entries"], list
+        ):
+            experience = self._convert_experience_from_dict(
+                update_data["experience_entries"]
+            )
 
         # Update education entries
-        if "education_entries" in update_data and isinstance(update_data["education_entries"], list):
-            education = self._convert_education_from_dict(update_data["education_entries"])
+        if "education_entries" in update_data and isinstance(
+            update_data["education_entries"], list
+        ):
+            education = self._convert_education_from_dict(
+                update_data["education_entries"]
+            )
 
         # Build new ProfileData with merged values
         return ProfileData(
@@ -576,15 +586,20 @@ class ProfileApplicationService:
             )
 
             if not profile:
-                logger.warning("Profile not found for embedding regeneration", profile_id=profile_id)
+                logger.warning(
+                    "Profile not found for embedding regeneration",
+                    profile_id=profile_id,
+                )
                 return
 
             # Generate new embeddings from searchable text
             searchable_text = profile.searchable_text
             if searchable_text:
-                embedding_vector = await self._deps.embedding_service.generate_embedding(
-                    text=searchable_text,
-                    model="text-embedding-3-large",
+                embedding_vector = (
+                    await self._deps.embedding_service.generate_embedding(
+                        text=searchable_text,
+                        model="text-embedding-3-large",
+                    )
                 )
 
                 # Update profile with new embeddings
@@ -592,7 +607,9 @@ class ProfileApplicationService:
                 from app.domain.value_objects import EmbeddingVector
 
                 profile.embeddings = ProfileEmbeddings(
-                    overall=EmbeddingVector(dimensions=len(embedding_vector), values=embedding_vector)
+                    overall=EmbeddingVector(
+                        dimensions=len(embedding_vector), values=embedding_vector
+                    )
                 )
 
                 # Save updated profile
@@ -625,7 +642,9 @@ class ProfileApplicationService:
         """
         try:
             if not self._deps.search_index_service:
-                logger.debug("Search index service not available", profile_id=profile_id)
+                logger.debug(
+                    "Search index service not available", profile_id=profile_id
+                )
                 return
 
             logger.info(
@@ -644,7 +663,9 @@ class ProfileApplicationService:
                 "summary": profile.profile_data.summary,
                 "skills": profile.normalized_skills,
                 "searchable_text": profile.searchable_text,
-                "experience_level": profile.experience_level.value if profile.experience_level else None,
+                "experience_level": profile.experience_level.value
+                if profile.experience_level
+                else None,
                 "status": profile.status.value,
                 "updated_at": profile.updated_at.isoformat(),
             }
@@ -1013,6 +1034,143 @@ class ProfileApplicationService:
             )
             raise
 
+    async def find_similar_profiles(
+        self,
+        *,
+        profile_id: ProfileId,
+        tenant_id: TenantId,
+        similarity_threshold: float = 0.7,
+        max_results: int = 10,
+        schedule_task: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        """Find profiles similar to the target profile using vector similarity.
+
+        Args:
+            profile_id: Target profile to find similarities for
+            tenant_id: Tenant identifier for multi-tenant isolation
+            similarity_threshold: Minimum similarity score (0.0-1.0)
+            max_results: Maximum number of results to return
+            schedule_task: Optional task scheduler for analytics tracking
+
+        Returns:
+            List of similar profile dictionaries with similarity scores
+
+        Raises:
+            ValueError: If target profile not found
+        """
+        logger.info(
+            "find_similar_profiles_requested",
+            profile_id=str(profile_id),
+            tenant_id=str(tenant_id),
+            threshold=similarity_threshold,
+            max_results=max_results,
+        )
+
+        # 1. Fetch target profile
+        repository = self._deps.profile_repository
+        target_profile = await repository.get_by_id(profile_id, tenant_id)
+
+        if not target_profile:
+            logger.warning(
+                "find_similar_profiles_target_not_found",
+                profile_id=str(profile_id),
+                tenant_id=str(tenant_id),
+            )
+            raise ValueError(f"Target profile {profile_id} not found")
+
+        # 2. Get target profile's embedding vector
+        query_vector = None
+        if target_profile.embeddings and target_profile.embeddings.overall:
+            query_vector = target_profile.embeddings.overall.values
+
+        # If no pre-computed embedding, generate on-the-fly
+        if not query_vector and self._deps.embedding_service:
+            searchable_text = target_profile.searchable_text
+            if searchable_text:
+                logger.info(
+                    "Generating embedding for target profile",
+                    profile_id=str(profile_id),
+                )
+                query_vector = await self._deps.embedding_service.generate_embedding(
+                    text=searchable_text,
+                    model="text-embedding-3-large",
+                )
+
+        if not query_vector:
+            logger.warning(
+                "find_similar_profiles_no_embedding",
+                profile_id=str(profile_id),
+            )
+            return []
+
+        # 3. Perform vector similarity search
+        similar_profiles = await repository.search_by_vector(
+            tenant_id=tenant_id,
+            query_vector=query_vector,
+            limit=max_results + 1,  # +1 to account for filtering out target profile
+            threshold=similarity_threshold,
+        )
+
+        # 4. Filter out the target profile from results
+        filtered_results = [
+            (profile, score)
+            for profile, score in similar_profiles
+            if profile.id != profile_id
+        ][:max_results]
+
+        # 5. Build response data
+        results = []
+        for profile, match_score in filtered_results:
+            # Get current company
+            current_company = None
+            for exp in profile.profile_data.experience:
+                if exp.is_current_role():
+                    current_company = exp.company
+                    break
+            if not current_company and profile.profile_data.experience:
+                current_company = profile.profile_data.experience[0].company
+
+            # Get top skills
+            top_skills = [skill.name.value for skill in profile.profile_data.skills[:5]]
+
+            # Build match explanation (simple version)
+            match_explanation = self._build_match_explanation(
+                target_skills=target_profile.normalized_skills or [],
+                similar_skills=profile.normalized_skills or [],
+                similarity_score=match_score.value,
+            )
+
+            results.append(
+                {
+                    "profile_id": str(profile.id.value),
+                    "full_name": profile.profile_data.name,
+                    "title": profile.profile_data.headline,
+                    "current_company": current_company,
+                    "top_skills": top_skills,
+                    "similarity_score": match_score.value,
+                    "match_explanation": match_explanation,
+                }
+            )
+
+        # 6. Track analytics in background (non-blocking)
+        if results:
+            await self._enqueue_background(
+                schedule_task,
+                self._track_similarity_search_usage,
+                str(tenant_id.value),
+                str(profile_id.value),
+                len(results),
+            )
+
+        logger.info(
+            "find_similar_profiles_completed",
+            profile_id=str(profile_id),
+            results_count=len(results),
+            threshold=similarity_threshold,
+        )
+
+        return results
+
     async def permanently_delete_profile(
         self,
         *,
@@ -1283,7 +1441,9 @@ class ProfileApplicationService:
                     "Profile view recorded",
                     profile_id=profile_id,
                     view_count=profile.analytics.view_count,
-                    last_viewed_at=profile.analytics.last_viewed_at.isoformat() if profile.analytics.last_viewed_at else None,
+                    last_viewed_at=profile.analytics.last_viewed_at.isoformat()
+                    if profile.analytics.last_viewed_at
+                    else None,
                 )
         except Exception as exc:
             logger.warning(
@@ -1301,7 +1461,9 @@ class ProfileApplicationService:
         """Remove profile from search index."""
         try:
             if not self._deps.search_index_service:
-                logger.debug("Search index service not available", profile_id=profile_id)
+                logger.debug(
+                    "Search index service not available", profile_id=profile_id
+                )
                 return
 
             logger.info(
@@ -1324,6 +1486,72 @@ class ProfileApplicationService:
                 profile_id=profile_id,
                 error=str(exc),
             )
+
+    async def _track_similarity_search_usage(
+        self,
+        tenant_id: str,
+        profile_id: str,
+        results_count: int,
+    ) -> None:
+        """Track similarity search usage metrics."""
+        try:
+            if self._deps.usage_service:
+                await self._deps.usage_service.track_usage(
+                    tenant_id=tenant_id,
+                    resource_type="profile",
+                    amount=1,
+                    metadata={
+                        "operation": "similarity_search",
+                        "profile_id": profile_id,
+                        "results_count": results_count,
+                    },
+                )
+                logger.debug(
+                    "Similarity search usage tracked",
+                    tenant_id=tenant_id,
+                    profile_id=profile_id,
+                    results_count=results_count,
+                )
+        except Exception as exc:
+            logger.warning(
+                "Failed to track similarity search usage",
+                tenant_id=tenant_id,
+                error=str(exc),
+            )
+
+    @staticmethod
+    def _build_match_explanation(
+        target_skills: list[str],
+        similar_skills: list[str],
+        similarity_score: float,
+    ) -> str:
+        """Build a brief explanation for why profiles match.
+
+        Args:
+            target_skills: Normalized skills from target profile
+            similar_skills: Normalized skills from similar profile
+            similarity_score: Similarity score (0.0-1.0)
+
+        Returns:
+            Human-readable match explanation
+        """
+        # Find overlapping skills
+        target_set = set(s.lower() for s in target_skills)
+        similar_set = set(s.lower() for s in similar_skills)
+        overlap = target_set & similar_set
+
+        if not overlap:
+            return f"{int(similarity_score * 100)}% overall similarity"
+
+        overlap_count = len(overlap)
+        if overlap_count == 1:
+            skill_name = list(overlap)[0]
+            return f"Shared expertise in {skill_name}"
+        elif overlap_count <= 3:
+            skills_str = ", ".join(sorted(overlap)[:3])
+            return f"Shared expertise in {skills_str}"
+        else:
+            return f"{overlap_count} shared skills ({int(similarity_score * 100)}% similarity)"
 
     @staticmethod
     def _convert_skills_from_dict(skills_data: list[dict[str, Any]]) -> list[Skill]:
@@ -1363,7 +1591,9 @@ class ProfileApplicationService:
         return skills
 
     @staticmethod
-    def _convert_experience_from_dict(experience_data: list[dict[str, Any]]) -> list[Experience]:
+    def _convert_experience_from_dict(
+        experience_data: list[dict[str, Any]],
+    ) -> list[Experience]:
         """Convert experience dictionaries to Experience domain objects.
 
         Args:
@@ -1416,7 +1646,9 @@ class ProfileApplicationService:
         return experience_entries
 
     @staticmethod
-    def _convert_education_from_dict(education_data: list[dict[str, Any]]) -> list[Education]:
+    def _convert_education_from_dict(
+        education_data: list[dict[str, Any]],
+    ) -> list[Education]:
         """Convert education dictionaries to Education domain objects.
 
         Args:
@@ -1482,33 +1714,38 @@ class ProfileApplicationService:
                     try:
                         coordinates = (float(lat), float(lng))
                     except (TypeError, ValueError):
-                        logger.warning("invalid_coordinates", coordinates=coordinates_data)
-            elif isinstance(coordinates_data, (list, tuple)) and len(coordinates_data) == 2:
+                        logger.warning(
+                            "invalid_coordinates", coordinates=coordinates_data
+                        )
+            elif (
+                isinstance(coordinates_data, (list, tuple))
+                and len(coordinates_data) == 2
+            ):
                 try:
-                    coordinates = (float(coordinates_data[0]), float(coordinates_data[1]))
+                    coordinates = (
+                        float(coordinates_data[0]),
+                        float(coordinates_data[1]),
+                    )
                 except (TypeError, ValueError):
                     logger.warning("invalid_coordinates", coordinates=coordinates_data)
 
         # Only create Location if at least one field has a value
         if city or state or country or coordinates:
             return Location(
-                city=city,
-                state=state,
-                country=country,
-                coordinates=coordinates
+                city=city, state=state, country=country, coordinates=coordinates
             )
         return None
 
     @staticmethod
     def _build_summaries(
-            profiles: Iterable[Profile],
-            *,
-            quality_min: float | None,
-            experience_min: int | None,
-            experience_max: int | None,
-            skill_filter: str,
-            status_filter: DomainProcessingStatus | None,
-            include_incomplete: bool,
+        profiles: Iterable[Profile],
+        *,
+        quality_min: float | None,
+        experience_min: int | None,
+        experience_max: int | None,
+        skill_filter: str,
+        status_filter: DomainProcessingStatus | None,
+        include_incomplete: bool,
     ) -> list[ProfileListItem]:
         summaries: list[ProfileListItem] = []
 
@@ -1516,7 +1753,10 @@ class ProfileApplicationService:
             if status_filter and profile.processing.status != status_filter:
                 continue
 
-            if not include_incomplete and profile.processing.status != DomainProcessingStatus.COMPLETED:
+            if (
+                not include_incomplete
+                and profile.processing.status != DomainProcessingStatus.COMPLETED
+            ):
                 continue
 
             quality_score = profile.processing.quality_score
@@ -1529,8 +1769,12 @@ class ProfileApplicationService:
             if experience_max is not None and experience_years > experience_max:
                 continue
 
-            normalized_skills = [str(skill) for skill in (profile.normalized_skills or [])]
-            if skill_filter and not any(skill_filter in skill for skill in normalized_skills):
+            normalized_skills = [
+                str(skill) for skill in (profile.normalized_skills or [])
+            ]
+            if skill_filter and not any(
+                skill_filter in skill for skill in normalized_skills
+            ):
                 continue
 
             top_skills = [skill.name.value for skill in profile.profile_data.skills[:5]]
@@ -1550,7 +1794,9 @@ class ProfileApplicationService:
                     full_name=profile.profile_data.name,
                     title=profile.profile_data.headline,
                     current_company=current_company,
-                    total_experience_years=int(round(experience_years)) if experience_years else None,
+                    total_experience_years=int(round(experience_years))
+                    if experience_years
+                    else None,
                     top_skills=top_skills,
                     last_updated=profile.updated_at,
                     processing_status=profile.processing.status,
@@ -1590,7 +1836,7 @@ class ProfileApplicationService:
                 asyncio.create_task(result)
         else:
             # Use the provided scheduler (FastAPI BackgroundTasks)
-            if hasattr(scheduler, 'add_task'):
+            if hasattr(scheduler, "add_task"):
                 scheduler.add_task(func, *args, **kwargs)
             else:
                 # Fallback to creating task
