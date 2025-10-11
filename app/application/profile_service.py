@@ -17,11 +17,13 @@ from app.domain.entities.profile import (
     Location,
     Profile,
     ProfileData,
+    ProfileEmbeddings,
     Skill,
 )
 from app.domain.entities.profile import ProcessingStatus as DomainProcessingStatus
 from app.domain.value_objects import (
     EmailAddress,
+    EmbeddingVector,
     PhoneNumber,
     ProfileId,
     SkillName,
@@ -563,6 +565,10 @@ class ProfileApplicationService:
     ) -> None:
         """Regenerate embeddings for a profile in background.
 
+        Generates all four embedding types (overall, skills, experience, summary)
+        using batch processing for efficiency. Uses a single API call to generate
+        all embeddings, reducing latency and maintaining data consistency.
+
         Args:
             profile_id: Profile identifier
             tenant_id: Tenant identifier
@@ -592,34 +598,64 @@ class ProfileApplicationService:
                 )
                 return
 
-            # Generate new embeddings from searchable text
-            searchable_text = profile.searchable_text
-            if searchable_text:
-                embedding_vector = (
-                    await self._deps.embedding_service.generate_embedding(
-                        text=searchable_text,
-                        model="text-embedding-3-large",
-                    )
-                )
+            # Extract text for all embedding types
+            embedding_texts = self._extract_embedding_texts(profile)
 
-                # Update profile with new embeddings
-                from app.domain.entities.profile import ProfileEmbeddings
-                from app.domain.value_objects import EmbeddingVector
-
-                profile.embeddings = ProfileEmbeddings(
-                    overall=EmbeddingVector(
-                        dimensions=len(embedding_vector), values=embedding_vector
-                    )
-                )
-
-                # Save updated profile
-                await self._deps.profile_repository.save(profile)
-
-                logger.info(
-                    "Profile embeddings regenerated successfully",
+            # Check if we have at least the overall text
+            if not embedding_texts["overall"]:
+                logger.warning(
+                    "No content available for embedding generation",
                     profile_id=profile_id,
-                    embedding_dimensions=len(embedding_vector),
                 )
+                return
+
+            # Generate all embeddings in batch (single API call)
+            embedding_vectors = await self._generate_profile_embeddings_batch(
+                embedding_texts,
+                model="text-embedding-3-large",
+            )
+
+            # Create complete ProfileEmbeddings with all fields
+            profile.embeddings = ProfileEmbeddings(
+                overall=EmbeddingVector(
+                    dimensions=len(embedding_vectors["overall"]),
+                    values=embedding_vectors["overall"],
+                )
+                if embedding_vectors["overall"]
+                else None,
+                skills=EmbeddingVector(
+                    dimensions=len(embedding_vectors["skills"]),
+                    values=embedding_vectors["skills"],
+                )
+                if embedding_vectors["skills"]
+                else None,
+                experience=EmbeddingVector(
+                    dimensions=len(embedding_vectors["experience"]),
+                    values=embedding_vectors["experience"],
+                )
+                if embedding_vectors["experience"]
+                else None,
+                summary=EmbeddingVector(
+                    dimensions=len(embedding_vectors["summary"]),
+                    values=embedding_vectors["summary"],
+                )
+                if embedding_vectors["summary"]
+                else None,
+            )
+
+            # Save updated profile
+            await self._deps.profile_repository.save(profile)
+
+            logger.info(
+                "Profile embeddings regenerated successfully",
+                profile_id=profile_id,
+                embeddings_generated={
+                    "overall": embedding_vectors["overall"] is not None,
+                    "skills": embedding_vectors["skills"] is not None,
+                    "experience": embedding_vectors["experience"] is not None,
+                    "summary": embedding_vectors["summary"] is not None,
+                },
+            )
         except Exception as exc:
             logger.error(
                 "Failed to regenerate profile embeddings",
@@ -1843,6 +1879,208 @@ class ProfileApplicationService:
                 result = func(*args, **kwargs)
                 if asyncio.iscoroutine(result):
                     asyncio.create_task(result)
+
+    async def _generate_profile_embeddings_batch(
+        self,
+        embedding_texts: dict[str, str | None],
+        model: str,
+    ) -> dict[str, list[float] | None]:
+        """Generate embeddings for multiple text sections using batch processing.
+
+        This method uses the OpenAI batch API to generate all embeddings in a single
+        API call, improving efficiency and reducing latency.
+
+        Args:
+            embedding_texts: Dictionary mapping embedding type to text content
+            model: OpenAI embedding model to use
+
+        Returns:
+            Dictionary mapping embedding type to embedding vector (or None if no text)
+
+        Raises:
+            RuntimeError: If embedding generation fails
+        """
+        # Prepare texts for batch processing
+        # Order matters - we'll use indices to map back to types
+        text_types = []  # Track which type each text belongs to
+        texts_to_embed = []  # Only non-None texts
+
+        for embedding_type in ["overall", "skills", "experience", "summary"]:
+            text = embedding_texts.get(embedding_type)
+            if text and text.strip():  # Only include non-empty texts
+                text_types.append(embedding_type)
+                texts_to_embed.append(text)
+
+        # If no texts to embed, return all None
+        if not texts_to_embed:
+            logger.warning("No texts available for embedding generation")
+            return {
+                "overall": None,
+                "skills": None,
+                "experience": None,
+                "summary": None,
+            }
+
+        try:
+            # Generate all embeddings in batch (single API call)
+            # This uses OpenAIService.generate_embeddings_batch() which is optimized for batch processing
+            embedding_vectors = await self._deps.embedding_service.openai_service.generate_embeddings_batch(
+                texts=texts_to_embed,
+                model=model,
+            )
+
+            # Map results back to embedding types
+            results = {
+                "overall": None,
+                "skills": None,
+                "experience": None,
+                "summary": None,
+            }
+
+            for i, embedding_type in enumerate(text_types):
+                results[embedding_type] = embedding_vectors[i]
+
+            logger.debug(
+                "Batch embeddings generated",
+                count=len(embedding_vectors),
+                types=text_types,
+                dimensions=len(embedding_vectors[0]) if embedding_vectors else 0,
+            )
+
+            return results
+
+        except Exception as exc:
+            logger.error(
+                "Failed to generate batch embeddings",
+                error=str(exc),
+                texts_count=len(texts_to_embed),
+            )
+            raise
+
+    @staticmethod
+    def _extract_embedding_texts(profile: Profile) -> dict[str, str | None]:
+        """Extract text content for each embedding type.
+
+        Args:
+            profile: Profile domain entity
+
+        Returns:
+            Dictionary mapping embedding type to extracted text
+
+        Example:
+            {
+                "overall": "John Doe john@example.com Python Developer...",
+                "skills": "Python, JavaScript, React, Node.js, Docker...",
+                "experience": "Senior Engineer at TechCorp (2020-2024)...",
+                "summary": "Experienced software engineer with 10+ years..."
+            }
+        """
+        # Overall: Use existing searchable_text (combines all content)
+        overall_text = profile.searchable_text if profile.searchable_text else None
+
+        # Skills: Extract from profile_data.skills
+        skills_text = None
+        if profile.profile_data.skills:
+            skill_parts = []
+            for skill in profile.profile_data.skills:
+                # Build skill description with context
+                skill_desc = skill.name.value
+
+                # Add proficiency context if available
+                if skill.proficiency:
+                    proficiency_labels = {
+                        1: "beginner",
+                        2: "intermediate",
+                        3: "proficient",
+                        4: "advanced",
+                        5: "expert",
+                    }
+                    proficiency_label = proficiency_labels.get(
+                        skill.proficiency, "skilled"
+                    )
+                    skill_desc = f"{proficiency_label} in {skill_desc}"
+
+                # Add experience context if available
+                if skill.years_of_experience:
+                    skill_desc += f" ({skill.years_of_experience} years)"
+
+                # Add category context
+                if skill.category:
+                    skill_desc += f" [{skill.category}]"
+
+                # Add last used if available
+                if skill.last_used:
+                    skill_desc += f" (last used: {skill.last_used})"
+
+                skill_parts.append(skill_desc)
+
+            if skill_parts:
+                skills_text = " | ".join(skill_parts)
+
+        # Experience: Extract from profile_data.experience
+        experience_text = None
+        if profile.profile_data.experience:
+            experience_parts = []
+            for exp in profile.profile_data.experience:
+                # Build experience description
+                exp_desc_parts = [
+                    f"{exp.title} at {exp.company}",
+                    f"({exp.start_date} - {exp.end_date or 'Present'})",
+                ]
+
+                # Add location if available
+                if exp.location:
+                    exp_desc_parts.append(f"Location: {exp.location}")
+
+                # Add description
+                if exp.description:
+                    exp_desc_parts.append(exp.description)
+
+                # Add achievements
+                if exp.achievements:
+                    achievements_text = "; ".join(exp.achievements)
+                    exp_desc_parts.append(f"Achievements: {achievements_text}")
+
+                # Add skills used in this role
+                if exp.skills:
+                    skills_used = ", ".join(skill.value for skill in exp.skills)
+                    exp_desc_parts.append(f"Skills: {skills_used}")
+
+                experience_parts.append(" | ".join(exp_desc_parts))
+
+            if experience_parts:
+                experience_text = "\n\n".join(experience_parts)
+
+        # Summary: Extract from profile_data.summary and headline
+        summary_text = None
+        summary_parts = []
+
+        # Add headline if available
+        if profile.profile_data.headline:
+            summary_parts.append(profile.profile_data.headline)
+
+        # Add summary if available
+        if profile.profile_data.summary:
+            summary_parts.append(profile.profile_data.summary)
+
+        # Add experience level context
+        if profile.experience_level:
+            summary_parts.append(f"Experience Level: {profile.experience_level.value}")
+
+        # Add total years of experience
+        total_years = profile.profile_data.total_experience_years()
+        if total_years > 0:
+            summary_parts.append(f"Total Experience: {int(total_years)} years")
+
+        if summary_parts:
+            summary_text = "\n".join(summary_parts)
+
+        return {
+            "overall": overall_text,
+            "skills": skills_text,
+            "experience": experience_text,
+            "summary": summary_text,
+        }
 
     @staticmethod
     async def _cleanup_profile_documents(

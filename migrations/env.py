@@ -16,6 +16,7 @@ from app.infrastructure.persistence.models.tenant_table import TenantTable
 from app.infrastructure.persistence.models.audit_table import AuditLogTable
 from app.infrastructure.persistence.models.retry_table import RetryStateModel, RetryAttemptModel, DeadLetterModel
 from app.infrastructure.persistence.models.webhook_table import WebhookEndpointTable, WebhookDeliveryTable
+from app.infrastructure.persistence.models.query_expansion_table import QueryExpansionTable
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

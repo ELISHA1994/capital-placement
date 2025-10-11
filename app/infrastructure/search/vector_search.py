@@ -467,10 +467,21 @@ class VectorSearchService(IHealthCheck):
                     where_conditions.append(f"e.entity_id != ALL(${param_count})")
                     params.append(search_filter.exclude_entity_ids)
                 
-                if search_filter.metadata_filters:
+                if include_metadata and search_filter.metadata_filters:
+                    metadata_column_map = {
+                        "status": "p.status",
+                        "experience_level": "p.experience_level",
+                        "location_city": "p.location_city",
+                        "location_state": "p.location_state",
+                        "location_country": "p.location_country",
+                        "email": "p.email",
+                    }
                     for key, value in search_filter.metadata_filters.items():
+                        column_ref = metadata_column_map.get(key)
+                        if not column_ref:
+                            continue
                         param_count += 1
-                        where_conditions.append(f"metadata->>{key} = ${param_count}")
+                        where_conditions.append(f"{column_ref} = ${param_count}")
                         params.append(str(value))
             
             where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""

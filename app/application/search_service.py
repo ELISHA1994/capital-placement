@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from datetime import date, datetime
+from typing import TYPE_CHECKING, Any, Dict, List
 
 import structlog
 
 from app.api.schemas.search_schemas import (
+    MatchScore,
     SearchAnalytics,
     SearchMode,
     SearchRequest,
@@ -28,6 +30,22 @@ from app.core.config import get_settings
 
 if TYPE_CHECKING:
     from app.application.dependencies.search_dependencies import SearchDependencies
+
+
+logger = structlog.get_logger(__name__)
+
+
+@dataclass
+class HybridSearchFilter:
+    """Search filter payload passed to the hybrid search service."""
+
+    entity_types: list[str] | None = None
+    tenant_ids: list[str] | None = None
+    embedding_models: list[str] | None = None
+    created_after: datetime | None = None
+    created_before: datetime | None = None
+    metadata_filters: dict[str, Any] | None = None
+    exclude_entity_ids: list[str] | None = None
 
 
 # NOTE: CurrentUser is an API-layer DTO passed from FastAPI dependencies.
@@ -307,13 +325,21 @@ class SearchApplicationService:
         Returns:
             Configured search filter or None
         """
-        # TODO: SearchFilter should be defined in domain layer or passed via dependency
-        # For now, return None to avoid importing from infrastructure
-        if not search_request.has_filters:
-            return None
+        tenant_id = self._resolve_tenant_id(search_request, current_user)
+        metadata_filters = self._build_metadata_filters(search_request)
+        created_after, created_before = self._extract_date_bounds(
+            search_request.range_filters
+        )
+        exclude_ids = self._extract_excluded_profile_ids(search_request)
 
-        # Filters will be applied by the search service based on tenant_id passed separately
-        return None
+        return HybridSearchFilter(
+            entity_types=["profile"],
+            tenant_ids=[tenant_id] if tenant_id else None,
+            created_after=created_after,
+            created_before=created_before,
+            metadata_filters=metadata_filters or None,
+            exclude_entity_ids=exclude_ids or None,
+        )
 
     def _create_search_config(self) -> HybridSearchConfig:
         """Create search configuration with optimized parameters.
@@ -396,8 +422,9 @@ class SearchApplicationService:
         total_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
 
         # Import SearchResult model for proper result construction
-        from app.api.schemas.search_schemas import SearchResult, MatchScore
         from uuid import UUID
+
+        from app.api.schemas.search_schemas import SearchResult
 
         # Convert hybrid search results to API SearchResult models
         search_results = []
@@ -419,13 +446,19 @@ class SearchApplicationService:
                 reranker_score=float(score) if reranking_time_ms > 0 else None,
             )
 
+            match_score = self._enrich_match_score(
+                match_score,
+                metadata,
+                search_request,
+            )
+
             # Convert result to SearchResult model
             search_result = SearchResult(
                 profile_id=str(result.entity_id),  # ✅ FIX P0-A: Convert UUID to string
                 email=metadata.get("email", ""),
                 tenant_id=UUID(str(search_request.tenant_id)),
-                full_name=metadata.get("title", metadata.get("name", "Unknown")),
-                title=metadata.get("title", ""),
+                full_name=self._resolve_full_name(metadata),
+                title=self._resolve_title(metadata),
                 summary=getattr(result, "content_preview", metadata.get("summary", "No preview available")),
                 current_company=metadata.get("current_company"),
                 current_location=metadata.get("location"),
@@ -444,7 +477,7 @@ class SearchApplicationService:
 
         analytics = SearchAnalytics(
             total_search_time_ms=total_time_ms,
-            vector_search_time_ms=hybrid_response.search_time_ms - hybrid_response.fusion_time_ms if hybrid_response.search_time_ms and hybrid_response.fusion_time_ms else 0,
+            vector_search_time_ms=self._calculate_vector_search_time(hybrid_response),
             keyword_search_time_ms=0,
             reranking_time_ms=reranking_time_ms,
             total_candidates=len(hybrid_response.results) if hybrid_response.results else 0,
@@ -678,5 +711,262 @@ class SearchApplicationService:
         )
 
 
-__all__ = ["SearchApplicationService"]
+    # === STATIC HELPER METHODS ===
 
+    def _enrich_match_score(
+        self,
+        match_score: MatchScore,
+        metadata: dict[str, Any],
+        search_request: SearchRequest,
+    ) -> MatchScore:
+        """Enrich base match score with request-specific scoring."""
+
+        if not search_request.skill_requirements:
+            return match_score
+
+        candidate_skills = self._collect_candidate_skills(metadata)
+        candidate_skills_lower = [skill.lower() for skill in candidate_skills]
+
+        matched_skills: List[str] = []
+        missing_skills: List[str] = []
+        skill_gaps: Dict[str, str] = {}
+        total_weight = 0.0
+        matched_weight = 0.0
+
+        for requirement in search_request.skill_requirements:
+            weight = requirement.weight or 1.0
+            total_weight += weight
+
+            skill_name = requirement.name.lower()
+            alternatives = [alt.lower() for alt in requirement.alternatives]
+
+            found = any(
+                self._skill_matches(candidate_skill, skill_name, alternatives)
+                for candidate_skill in candidate_skills_lower
+            )
+
+            if found:
+                matched_skills.append(requirement.name)
+                matched_weight += weight
+            else:
+                missing_skills.append(requirement.name)
+                if requirement.required:
+                    skill_gaps[requirement.name] = "Required skill missing"
+
+        if total_weight > 0:
+            skill_score = matched_weight / total_weight
+        else:
+            skill_score = 0.0
+
+        match_score.skill_match_score = skill_score
+        match_score.matched_skills = matched_skills
+        match_score.missing_skills = missing_skills
+        match_score.skill_gaps = skill_gaps
+
+        return match_score
+
+    @staticmethod
+    def _resolve_tenant_id(
+        search_request: SearchRequest,
+        current_user: Any,
+    ) -> str | None:
+        """Resolve an authoritative tenant ID for downstream queries."""
+        request_tenant = (
+            str(search_request.tenant_id) if getattr(search_request, "tenant_id", None) else None
+        )
+        user_tenant = getattr(current_user, "tenant_id", None)
+
+        if user_tenant and request_tenant and str(user_tenant) != request_tenant:
+            logger.warning(
+                "Search request tenant mismatch detected",
+                request_tenant=request_tenant,
+                user_tenant=str(user_tenant),
+            )
+
+        if user_tenant:
+            return str(user_tenant)
+        return request_tenant
+
+    @staticmethod
+    def _build_metadata_filters(search_request: SearchRequest) -> dict[str, str]:
+        """Map API search filters to metadata filters used by hybrid search."""
+        metadata_filters: dict[str, str] = {}
+
+        for basic_filter in getattr(search_request, "basic_filters", []) or []:
+            mapped_key = SearchApplicationService._map_basic_filter_field(
+                getattr(basic_filter, "field", "")
+            )
+            if not mapped_key:
+                continue
+
+            value = getattr(basic_filter, "value", None)
+            if value is None:
+                continue
+
+            if isinstance(value, list):
+                if not value:
+                    continue
+                metadata_filters[mapped_key] = str(value[0])
+            else:
+                metadata_filters[mapped_key] = str(value)
+
+        if not getattr(search_request, "include_inactive", False):
+            metadata_filters.setdefault("status", "active")
+
+        location_filter = getattr(search_request, "location_filter", None)
+        if location_filter:
+            preferred_locations = getattr(location_filter, "preferred_locations", None) or []
+            center_location = getattr(location_filter, "center_location", None)
+            location_value = preferred_locations[0] if preferred_locations else center_location
+            if location_value:
+                metadata_filters.setdefault("location_city", str(location_value))
+
+        return metadata_filters
+
+    @staticmethod
+    def _extract_date_bounds(
+        range_filters: list[Any] | None,
+    ) -> tuple[datetime | None, datetime | None]:
+        """Extract created/updated bounds from range filters."""
+        created_after: datetime | None = None
+        created_before: datetime | None = None
+
+        for range_filter in range_filters or []:
+            field_name = getattr(range_filter, "field", "")
+            if field_name not in {"created_at", "profile_created_at", "last_updated"}:
+                continue
+
+            min_value = getattr(range_filter, "min_value", None)
+            max_value = getattr(range_filter, "max_value", None)
+
+            if min_value and not created_after:
+                created_after = SearchApplicationService._coerce_datetime(min_value)
+            if max_value and not created_before:
+                created_before = SearchApplicationService._coerce_datetime(max_value)
+
+        return created_after, created_before
+
+    @staticmethod
+    def _extract_excluded_profile_ids(search_request: SearchRequest) -> list[str]:
+        """Extract profile IDs that should be excluded from results."""
+        preferences = getattr(search_request, "user_preferences", {}) or {}
+        raw_ids = preferences.get("exclude_profile_ids", [])
+        if not isinstance(raw_ids, list):
+            return []
+
+        return [str(profile_id) for profile_id in raw_ids if profile_id]
+
+    @staticmethod
+    def _map_basic_filter_field(field_name: str) -> str | None:
+        """Resolve metadata key for a given basic filter field."""
+        mapping = {
+            "status": "status",
+            "experience_level": "experience_level",
+            "current_location": "location_city",
+            "location_country": "location_country",
+            "email": "email",
+        }
+        return mapping.get(field_name)
+
+    @staticmethod
+    def _coerce_datetime(value: Any) -> datetime | None:
+        """Convert date-like values into datetime."""
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, date):
+            return datetime.combine(value, datetime.min.time())
+        return None
+
+    @staticmethod
+    def _calculate_vector_search_time(hybrid_response: Any) -> int:
+        """Calculate vector search time from hybrid response metrics."""
+        search_time = getattr(hybrid_response, "search_time_ms", None)
+        if search_time is None:
+            return 0
+
+        fusion_time = getattr(hybrid_response, "fusion_time_ms", 0) or 0
+        return max(int(search_time) - int(fusion_time), 0)
+
+    @staticmethod
+    def _resolve_full_name(metadata: dict[str, Any]) -> str:
+        """Determine best full name for result."""
+        if not metadata:
+            return "Unknown"
+        name = metadata.get("name")
+        if name:
+            return str(name)
+        title = metadata.get("title")
+        if title:
+            return str(title)
+        return "Unknown"
+
+    @staticmethod
+    def _resolve_title(metadata: dict[str, Any]) -> str:
+        """Determine best title/headline for result."""
+        if not metadata:
+            return ""
+        if metadata.get("title"):
+            return str(metadata["title"])
+        headline = metadata.get("headline")
+        if headline:
+            return str(headline)
+        # As a final fallback, avoid duplicating "Unknown" if name exists
+        name = metadata.get("name")
+        return str(name) if name else ""
+
+    @staticmethod
+    def _collect_candidate_skills(metadata: dict[str, Any]) -> List[str]:
+        """Gather candidate skills from metadata payload."""
+
+        candidate_skills: List[str] = []
+
+        if not metadata:
+            return candidate_skills
+
+        for key in ("skills", "top_skills", "matched_skills"):
+            value = metadata.get(key)
+            if not value:
+                continue
+
+            if isinstance(value, str):
+                candidate_skills.extend(
+                    [item.strip() for item in value.split(",") if item and item.strip()]
+                )
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str) and item.strip():
+                        candidate_skills.append(item.strip())
+                    elif isinstance(item, dict) and item.get("name"):
+                        name = str(item["name"]).strip()
+                        if name:
+                            candidate_skills.append(name)
+
+        # Remove duplicates preserving order
+        seen = set()
+        unique_skills: List[str] = []
+        for skill in candidate_skills:
+            skill_lower = skill.lower()
+            if skill_lower not in seen:
+                seen.add(skill_lower)
+                unique_skills.append(skill)
+
+        return unique_skills
+
+    @staticmethod
+    def _skill_matches(candidate_skill: str, target_skill: str, alternatives: List[str]) -> bool:
+        """Check if candidate skill satisfies requirement."""
+
+        if not candidate_skill:
+            return False
+
+        if target_skill in candidate_skill or candidate_skill in target_skill:
+            return True
+
+        for alternative in alternatives:
+            if alternative in candidate_skill or candidate_skill in alternative:
+                return True
+
+        return False
+
+
+__all__ = ["SearchApplicationService"]

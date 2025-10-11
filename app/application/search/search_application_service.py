@@ -478,10 +478,7 @@ class SearchApplicationService:
     ) -> Dict[str, Any]:
         """Calculate skill matching score and details"""
 
-        profile_skills = result.get("skills", [])
-        if isinstance(profile_skills, str):
-            profile_skills = [s.strip() for s in profile_skills.split(",")]
-
+        profile_skills = self._extract_profile_skills(result)
         profile_skills_lower = [skill.lower() for skill in profile_skills]
 
         matched_skills = []
@@ -1001,3 +998,49 @@ class SearchApplicationService:
             "skill_synonyms_count": len(self._skill_synonyms),
             "industry_terms_count": len(self._industry_terms)
         }
+
+    @staticmethod
+    def _extract_profile_skills(result: Dict[str, Any]) -> List[str]:
+        """Collect skills from various result sources."""
+
+        potential_sources = []
+        potential_sources.append(result.get("skills"))
+        potential_sources.append(result.get("top_skills"))
+
+        metadata = result.get("metadata")
+        if isinstance(metadata, dict):
+            potential_sources.append(metadata.get("skills"))
+            potential_sources.append(metadata.get("top_skills"))
+            potential_sources.append(metadata.get("matched_skills"))
+
+        collected: List[str] = []
+
+        for source in potential_sources:
+            if not source:
+                continue
+
+            if isinstance(source, str):
+                collected.extend(
+                    [item.strip() for item in source.split(",") if item and item.strip()]
+                )
+            elif isinstance(source, list):
+                for item in source:
+                    if isinstance(item, str):
+                        cleaned = item.strip()
+                        if cleaned:
+                            collected.append(cleaned)
+                    elif isinstance(item, dict) and item.get("name"):
+                        cleaned = str(item["name"]).strip()
+                        if cleaned:
+                            collected.append(cleaned)
+
+        # Preserve order while removing duplicates
+        unique_skills = []
+        seen = set()
+        for skill in collected:
+            key = skill.lower()
+            if key not in seen:
+                seen.add(key)
+                unique_skills.append(skill)
+
+        return unique_skills

@@ -59,6 +59,9 @@ from app.infrastructure.persistence.models.webhook_table import (
     WebhookDeliveryTable,
     WebhookEndpointTable,
 )
+from app.infrastructure.persistence.models.query_expansion_table import (
+    QueryExpansionTable,
+)
 
 __all__ = [
     # Audit
@@ -107,4 +110,6 @@ __all__ = [
     # Webhook
     "WebhookDeliveryTable",
     "WebhookEndpointTable",
+    # Query expansions
+    "QueryExpansionTable",
 ]

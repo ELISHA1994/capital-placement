@@ -402,6 +402,22 @@ class HybridSearchService(IHealthCheck):
                     param_count += 1
                     where_conditions.append(f"created_at <= ${param_count}")
                     params.append(search_filter.created_before)
+
+                if search_filter.metadata_filters:
+                    metadata_column_map = {
+                        "status": "status",
+                        "experience_level": "experience_level",
+                        "location_city": "location_city",
+                        "location_country": "location_country",
+                        "email": "email",
+                    }
+                    for key, value in search_filter.metadata_filters.items():
+                        column_ref = metadata_column_map.get(key)
+                        if not column_ref:
+                            continue
+                        param_count += 1
+                        where_conditions.append(f"{column_ref} = ${param_count}")
+                        params.append(str(value))
             
             where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
             
@@ -431,6 +447,12 @@ class HybridSearchService(IHealthCheck):
                             'location_city', location_city,
                             'location_country', location_country
                         ) as metadata,
+                        status,
+                        experience_level,
+                        location_city,
+                        location_country,
+                        email,
+                        'profile' as entity_type,
                         tenant_id,
                         created_at
                     FROM profiles
