@@ -571,6 +571,17 @@ class VectorSearchService(IHealthCheck):
                                 if isinstance(profile_data, dict):
                                     metadata["title"] = profile_data.get("headline") or profile_data.get("title")
                                     metadata["summary"] = profile_data.get("summary")
+                                    if profile_data.get("highest_degree"):
+                                        metadata["highest_degree"] = profile_data.get("highest_degree")
+                                    education = profile_data.get("education")
+                                    if education:
+                                        metadata["education"] = education
+                                    compensation = profile_data.get("compensation")
+                                    if isinstance(compensation, dict):
+                                        metadata["expected_salary"] = compensation.get("expected_salary")
+                                    total_exp = profile_data.get("total_experience_years")
+                                    if total_exp is not None:
+                                        metadata["total_experience_years"] = total_exp
 
                             # Set content preview from searchable_text
                             if row.get('searchable_text'):

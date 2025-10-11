@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import structlog
 
@@ -433,6 +433,9 @@ class SearchApplicationService:
             metadata = getattr(result, "metadata", {}) or {}
 
             # Build match score from result data
+            vector_attr = getattr(result, "vector_score", None)
+            text_attr = getattr(result, "text_score", None)
+
             match_score = MatchScore(
                 overall_score=float(score),
                 relevance_score=float(getattr(result, "final_score", score)),
@@ -441,8 +444,8 @@ class SearchApplicationService:
                 education_match_score=0.0,
                 location_match_score=0.0,
                 salary_match_score=0.0,
-                vector_similarity=float(getattr(result, "vector_score", 0)) if hasattr(result, "vector_score") else None,
-                keyword_relevance=float(getattr(result, "text_score", 0)) if hasattr(result, "text_score") else None,
+                vector_similarity=float(vector_attr) if vector_attr is not None else None,
+                keyword_relevance=float(text_attr) if text_attr is not None else None,
                 reranker_score=float(score) if reranking_time_ms > 0 else None,
             )
 
@@ -450,6 +453,9 @@ class SearchApplicationService:
                 match_score,
                 metadata,
                 search_request,
+                vector_score=getattr(result, "vector_score", None),
+                text_score=getattr(result, "text_score", None),
+                semantic_score=getattr(result, "semantic_score", None),
             )
 
             # Convert result to SearchResult model
@@ -463,9 +469,9 @@ class SearchApplicationService:
                 current_company=metadata.get("current_company"),
                 current_location=metadata.get("location"),
                 total_experience_years=metadata.get("total_experience_years"),
-                top_skills=metadata.get("skills", [])[:5] if isinstance(metadata.get("skills"), list) else [],
+                top_skills=self._resolve_top_skills(metadata),
                 key_achievements=[],
-                highest_degree=metadata.get("education"),
+                highest_degree=self._resolve_highest_degree(metadata),
                 match_score=match_score,
                 search_highlights={},
                 last_updated=datetime.utcnow(),
@@ -718,50 +724,117 @@ class SearchApplicationService:
         match_score: MatchScore,
         metadata: dict[str, Any],
         search_request: SearchRequest,
+        vector_score: Optional[float] = None,
+        text_score: Optional[float] = None,
+        semantic_score: Optional[float] = None,
     ) -> MatchScore:
         """Enrich base match score with request-specific scoring."""
 
-        if not search_request.skill_requirements:
-            return match_score
+        if search_request.skill_requirements:
+            candidate_skills = self._collect_candidate_skills(metadata)
+            candidate_skills_lower = [skill.lower() for skill in candidate_skills]
 
-        candidate_skills = self._collect_candidate_skills(metadata)
-        candidate_skills_lower = [skill.lower() for skill in candidate_skills]
+            matched_skills: List[str] = []
+            missing_skills: List[str] = []
+            skill_gaps: Dict[str, str] = {}
+            total_weight = 0.0
+            matched_weight = 0.0
 
-        matched_skills: List[str] = []
-        missing_skills: List[str] = []
-        skill_gaps: Dict[str, str] = {}
-        total_weight = 0.0
-        matched_weight = 0.0
+            for requirement in search_request.skill_requirements:
+                weight = requirement.weight or 1.0
+                total_weight += weight
 
-        for requirement in search_request.skill_requirements:
-            weight = requirement.weight or 1.0
-            total_weight += weight
+                skill_name = requirement.name.lower()
+                alternatives = [alt.lower() for alt in requirement.alternatives]
 
-            skill_name = requirement.name.lower()
-            alternatives = [alt.lower() for alt in requirement.alternatives]
+                found = any(
+                    self._skill_matches(candidate_skill, skill_name, alternatives)
+                    for candidate_skill in candidate_skills_lower
+                )
 
-            found = any(
-                self._skill_matches(candidate_skill, skill_name, alternatives)
-                for candidate_skill in candidate_skills_lower
+                if found:
+                    matched_skills.append(requirement.name)
+                    matched_weight += weight
+                else:
+                    missing_skills.append(requirement.name)
+                    if requirement.required:
+                        skill_gaps[requirement.name] = "Required skill missing"
+
+            if total_weight > 0:
+                skill_score = matched_weight / total_weight
+            else:
+                skill_score = 0.0
+
+            match_score.skill_match_score = skill_score
+            match_score.matched_skills = matched_skills
+            match_score.missing_skills = missing_skills
+            match_score.skill_gaps = skill_gaps
+
+        if search_request.experience_requirements:
+            experience_years = self._extract_experience_years(metadata)
+            match_score.experience_match_score = self._score_experience_years(
+                experience_years,
+                search_request.experience_requirements,
             )
 
-            if found:
-                matched_skills.append(requirement.name)
-                matched_weight += weight
-            else:
-                missing_skills.append(requirement.name)
-                if requirement.required:
-                    skill_gaps[requirement.name] = "Required skill missing"
+        if search_request.education_requirements:
+            match_score.education_match_score = self._score_education(
+                metadata,
+                search_request.education_requirements,
+            )
 
-        if total_weight > 0:
-            skill_score = matched_weight / total_weight
-        else:
-            skill_score = 0.0
+        if search_request.location_filter:
+            match_score.location_match_score = self._score_location(
+                metadata,
+                search_request.location_filter,
+            )
 
-        match_score.skill_match_score = skill_score
-        match_score.matched_skills = matched_skills
-        match_score.missing_skills = missing_skills
-        match_score.skill_gaps = skill_gaps
+        if search_request.salary_filter:
+            match_score.salary_match_score = self._score_salary(
+                metadata,
+                search_request.salary_filter,
+            )
+
+        if vector_score is not None:
+            match_score.vector_similarity = vector_score
+        if text_score is not None:
+            match_score.keyword_relevance = text_score
+        if semantic_score is not None:
+            match_score.semantic_relevance = semantic_score
+
+        weights = search_request.custom_scoring or {
+            "relevance": 0.3,
+            "skills": 0.4,
+            "experience": 0.2,
+            "education": 0.05,
+            "location": 0.03,
+            "salary": 0.02,
+        }
+
+        contributions: Dict[str, float] = {}
+        explanations: List[str] = []
+
+        def record_contribution(label: str, weight_key: str, score: Optional[float]) -> None:
+            if score is None:
+                return
+            weight = weights.get(weight_key, 0.0)
+            contribution = round(weight * score, 4)
+            contributions[weight_key] = contribution
+            explanations.append(
+                f"{label}: score {score:.2f} × weight {weight:.2f} = {contribution:.2f}"
+            )
+
+        record_contribution("Relevance", "relevance", match_score.relevance_score)
+        record_contribution("Skills", "skills", match_score.skill_match_score)
+        record_contribution("Experience", "experience", match_score.experience_match_score)
+        record_contribution("Education", "education", match_score.education_match_score)
+        record_contribution("Location", "location", match_score.location_match_score)
+        record_contribution("Salary", "salary", match_score.salary_match_score)
+
+        if contributions:
+            match_score.score_breakdown = contributions
+        if explanations:
+            match_score.match_explanation = explanations
 
         return match_score
 
@@ -953,6 +1026,57 @@ class SearchApplicationService:
         return unique_skills
 
     @staticmethod
+    def _resolve_top_skills(metadata: dict[str, Any]) -> List[str]:
+        """Extract top skills suitable for response schema."""
+
+        raw_skills = metadata.get("skills")
+
+        if isinstance(raw_skills, list):
+            cleaned: List[str] = []
+            for item in raw_skills:
+                if isinstance(item, str) and item.strip():
+                    cleaned.append(item.strip())
+                elif isinstance(item, dict):
+                    name = item.get("name") or item.get("skill") or item.get("value")
+                    if isinstance(name, str) and name.strip():
+                        cleaned.append(name.strip())
+            return cleaned[:5]
+
+        if isinstance(raw_skills, str) and raw_skills.strip():
+            return [part.strip() for part in raw_skills.split(",") if part.strip()][:5]
+
+        return []
+
+    @staticmethod
+    def _resolve_highest_degree(metadata: dict[str, Any]) -> Optional[str]:
+        """Return a string suitable for the highest_degree field."""
+
+        def extract_degree(value: Any) -> Optional[str]:
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if isinstance(value, dict):
+                for key in ("degree", "name", "title", "level"):
+                    candidate = value.get(key)
+                    if isinstance(candidate, str) and candidate.strip():
+                        return candidate.strip()
+            if isinstance(value, list):
+                for item in value:
+                    extracted = extract_degree(item)
+                    if extracted:
+                        return extracted
+            return None
+
+        degree = extract_degree(metadata.get("highest_degree"))
+        if degree:
+            return degree
+
+        degree = extract_degree(metadata.get("education"))
+        if degree:
+            return degree
+
+        return None
+
+    @staticmethod
     def _skill_matches(candidate_skill: str, target_skill: str, alternatives: List[str]) -> bool:
         """Check if candidate skill satisfies requirement."""
 
@@ -967,6 +1091,263 @@ class SearchApplicationService:
                 return True
 
         return False
+
+    @staticmethod
+    def _extract_experience_years(metadata: dict[str, Any]) -> float:
+        """Infer total experience in years from metadata payload."""
+
+        if not metadata:
+            return 0.0
+
+        raw_value = metadata.get("total_experience_years")
+        if isinstance(raw_value, (int, float)):
+            return float(raw_value)
+        if isinstance(raw_value, str):
+            try:
+                return float(raw_value)
+            except ValueError:
+                pass
+
+        level = metadata.get("experience_level")
+        if isinstance(level, str) and level.strip():
+            return SearchApplicationService._map_experience_level_to_years(level)
+        if isinstance(level, list):
+            for item in level:
+                if isinstance(item, str) and item.strip():
+                    return SearchApplicationService._map_experience_level_to_years(item)
+                if isinstance(item, dict):
+                    label = item.get("level") or item.get("name") or item.get("title")
+                    if isinstance(label, str) and label.strip():
+                        return SearchApplicationService._map_experience_level_to_years(label)
+        if isinstance(level, dict):
+            label = (
+                level.get("level")
+                or level.get("name")
+                or level.get("title")
+            )
+            if isinstance(label, str) and label.strip():
+                return SearchApplicationService._map_experience_level_to_years(label)
+
+        return 0.0
+
+    @staticmethod
+    def _map_experience_level_to_years(level: str) -> float:
+        """Convert experience level label to approximate experience years."""
+
+        mapping = {
+            "entry": 0.5,
+            "intern": 0.5,
+            "junior": 2.0,
+            "associate": 3.0,
+            "mid": 5.0,
+            "intermediate": 5.0,
+            "senior": 8.0,
+            "lead": 10.0,
+            "principal": 12.0,
+            "staff": 12.0,
+            "executive": 15.0,
+            "manager": 9.0,
+        }
+
+        if not isinstance(level, str):
+            return 0.0
+
+        return mapping.get(level.lower(), 0.0)
+
+    @staticmethod
+    def _score_experience_years(experience_years: float, requirements: Any) -> float:
+        """Score experience years against requirement thresholds."""
+
+        score = 1.0
+        min_years = getattr(requirements, "min_total_years", None)
+        max_years = getattr(requirements, "max_total_years", None)
+
+        if min_years is not None:
+            if experience_years >= min_years:
+                excess = experience_years - min_years
+                score = min(1.0, 0.8 + (excess * 0.02))
+            else:
+                shortfall = min_years - experience_years
+                score = max(0.0, 0.8 - (shortfall * 0.1))
+
+        if max_years is not None and experience_years > max_years:
+            over_qualified = experience_years - max_years
+            if over_qualified > 5:
+                score *= 0.9
+
+        return max(0.0, min(score, 1.0))
+
+    @staticmethod
+    def _score_education(metadata: dict[str, Any], requirements: Any) -> float:
+        """Score candidate education against requirements."""
+
+        metadata_safe = metadata or {}
+        candidate_degrees: List[str] = []
+
+        def collect(value: Any) -> None:
+            if isinstance(value, str) and value.strip():
+                candidate_degrees.append(value)
+            elif isinstance(value, dict):
+                for key in ("degree", "name", "title", "level"):
+                    label = value.get(key)
+                    if isinstance(label, str) and label.strip():
+                        candidate_degrees.append(label)
+            elif isinstance(value, list):
+                for item in value:
+                    collect(item)
+
+        collect(metadata_safe.get("highest_degree"))
+        collect(metadata_safe.get("education"))
+
+        if not candidate_degrees:
+            return 0.0
+
+        required_levels = getattr(requirements, "required_degree_levels", None) or []
+        if not required_levels:
+            return 1.0
+
+        candidate_level = max(
+            SearchApplicationService._map_degree_level(degree)
+            for degree in candidate_degrees
+        )
+        required_level = max(
+            SearchApplicationService._map_degree_level(level)
+            for level in required_levels
+        )
+
+        if candidate_level >= required_level:
+            return 1.0
+        if candidate_level == 0:
+            return 0.0
+
+        return max(0.0, candidate_level / required_level)
+
+    @staticmethod
+    def _map_degree_level(degree: str) -> int:
+        """Map degree labels to hierarchy values."""
+
+        hierarchy = {
+            "doctoral": 6,
+            "phd": 6,
+            "doctorate": 6,
+            "master": 5,
+            "masters": 5,
+            "msc": 5,
+            "mba": 5,
+            "bachelor": 4,
+            "bachelors": 4,
+            "bsc": 4,
+            "ba": 4,
+            "associate": 3,
+            "diploma": 2,
+            "certificate": 1,
+        }
+
+        if not isinstance(degree, str):
+            return 0
+
+        degree_lower = degree.lower()
+        for label, level in hierarchy.items():
+            if label in degree_lower:
+                return level
+        return 0
+
+    @staticmethod
+    def _score_location(metadata: dict[str, Any], location_filter: Any) -> float:
+        """Score candidate location against location filter."""
+
+        metadata_safe = metadata or {}
+        candidate_location = metadata_safe.get("location")
+        candidate_city = metadata_safe.get("location_city")
+        candidate_country = metadata_safe.get("location_country")
+
+        preferred_locations = getattr(location_filter, "preferred_locations", None) or []
+        center_location = getattr(location_filter, "center_location", None)
+
+        def normalize(value: Optional[str]) -> str:
+            return value.lower().strip() if isinstance(value, str) else ""
+
+        candidate_tokens: set[str] = set()
+
+        def add_token(value: Any) -> None:
+            if isinstance(value, str):
+                token = normalize(value)
+                if token:
+                    candidate_tokens.add(token)
+            elif isinstance(value, list):
+                for item in value:
+                    add_token(item)
+            elif isinstance(value, dict):
+                for key in ("city", "country", "state", "name"):
+                    if key in value:
+                        add_token(value[key])
+
+        add_token(candidate_location)
+        add_token(candidate_city)
+        add_token(candidate_country)
+        add_token(metadata_safe.get("location_state"))
+
+        preferred_tokens = {normalize(loc) for loc in preferred_locations}
+        preferred_tokens.discard("")
+
+        center_token = normalize(center_location)
+
+        if preferred_tokens and candidate_tokens & preferred_tokens:
+            return 1.0
+
+        if center_token and center_token in candidate_tokens:
+            return 0.9
+
+        return 0.0
+
+    @staticmethod
+    def _score_salary(metadata: dict[str, Any], salary_filter: Any) -> float:
+        """Score salary alignment."""
+
+        metadata_safe = metadata or {}
+        expected_salary = metadata_safe.get("expected_salary")
+        if expected_salary is None:
+            return 0.0
+
+        def parse_salary(value: Any) -> Optional[float]:
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                digits = "".join(
+                    ch for ch in value if ch.isdigit() or ch in {".", "-", "+"}
+                )
+                if not digits:
+                    return None
+                try:
+                    return float(digits)
+                except ValueError:
+                    return None
+            if isinstance(value, dict):
+                for key in ("amount", "value", "expected_salary", "min", "max"):
+                    parsed = parse_salary(value.get(key))
+                    if parsed is not None:
+                        return parsed
+            if isinstance(value, list):
+                for item in value:
+                    parsed = parse_salary(item)
+                    if parsed is not None:
+                        return parsed
+            return None
+
+        expected_value = parse_salary(expected_salary)
+        if expected_value is None:
+            return 0.0
+
+        min_salary = getattr(salary_filter, "min_salary", None)
+        max_salary = getattr(salary_filter, "max_salary", None)
+
+        if min_salary is not None and expected_value < float(min_salary):
+            return 0.0
+
+        if max_salary is not None and expected_value > float(max_salary):
+            return 0.0
+
+        return 1.0
 
 
 __all__ = ["SearchApplicationService"]

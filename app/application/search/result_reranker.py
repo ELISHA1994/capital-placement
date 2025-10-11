@@ -80,6 +80,9 @@ class RerankingResult:
     ai_explanation: Optional[str] = None
     confidence: float = 0.8
     metadata: Dict[str, Any] = None
+    vector_score: Optional[float] = None
+    text_score: Optional[float] = None
+    semantic_score: Optional[float] = None
 
 
 @dataclass
@@ -317,7 +320,9 @@ class ResultRerankerService(IHealthCheck):
                     ranking_criteria=[],
                     ai_explanation=f"Error occurred: {str(e)}",
                     confidence=0.0,
-                    metadata=result.metadata
+                    metadata=result.metadata,
+                    vector_score=getattr(result, "vector_score", None),
+                    text_score=getattr(result, "text_score", None),
                 )
                 fallback_results.append(fallback_result)
             
@@ -516,7 +521,10 @@ class ResultRerankerService(IHealthCheck):
                     ranking_criteria=criteria_scores,
                     ai_explanation=explanation,
                     confidence=0.9,  # High confidence for business logic
-                    metadata=result.metadata
+                    metadata=result.metadata,
+                    vector_score=getattr(result, "vector_score", None),
+                    text_score=getattr(result, "text_score", None),
+                    semantic_score=result.final_score,
                 )
                 
                 reranked_results.append(reranked_result)
@@ -558,7 +566,7 @@ class ResultRerankerService(IHealthCheck):
                 )
                 if original_result:
                     hybrid_results_for_ai.append(original_result)
-            
+
             # Apply AI semantic reranking to top results
             ai_config = RerankingConfig(
                 strategy=RankingStrategy.SEMANTIC_RELEVANCE,
@@ -611,7 +619,10 @@ class ResultRerankerService(IHealthCheck):
                         ranking_criteria=combined_criteria,
                         ai_explanation=f"Hybrid: {business_result.ai_explanation} + AI: {ai_result.ai_explanation}",
                         confidence=0.95,
-                        metadata=ai_result.metadata
+                        metadata=ai_result.metadata,
+                        vector_score=ai_result.vector_score,
+                        text_score=ai_result.text_score,
+                        semantic_score=ai_result.reranked_score,
                     )
                     
                     final_results.append(final_result)
@@ -896,7 +907,10 @@ class ResultRerankerService(IHealthCheck):
                                 ],
                                 ai_explanation=item.get("explanation", "AI semantic ranking"),
                                 confidence=float(item.get("confidence", 0.8)),
-                                metadata=original_result.metadata
+                                metadata=original_result.metadata,
+                                vector_score=getattr(original_result, "vector_score", None),
+                                text_score=getattr(original_result, "text_score", None),
+                                semantic_score=float(item.get("score", original_result.final_score)),
                             )
                             reranked_results.append(reranked_result)
                 
@@ -917,24 +931,26 @@ class ResultRerankerService(IHealthCheck):
         
         fallback_results = []
         for result in results:
-            fallback_result = RerankingResult(
-                entity_id=result.entity_id,
-                entity_type=result.entity_type,
-                original_score=result.final_score,
-                reranked_score=result.final_score,
-                ranking_criteria=[
-                    RankingCriterion(
-                        name=RankingCriteria.SEMANTIC_MATCH,
-                        score=result.final_score,
-                        weight=1.0,
-                        explanation="Original search score (fallback)"
-                    )
-                ],
-                ai_explanation="Used original search ranking (AI processing unavailable)",
-                confidence=0.6,
-                metadata=result.metadata
-            )
-            fallback_results.append(fallback_result)
+                fallback_result = RerankingResult(
+                    entity_id=result.entity_id,
+                    entity_type=result.entity_type,
+                    original_score=result.final_score,
+                    reranked_score=result.final_score,
+                    ranking_criteria=[
+                        RankingCriterion(
+                            name=RankingCriteria.SEMANTIC_MATCH,
+                            score=result.final_score,
+                            weight=1.0,
+                            explanation="Original search score (fallback)"
+                        )
+                    ],
+                    ai_explanation="Used original search ranking (AI processing unavailable)",
+                    confidence=0.6,
+                    metadata=result.metadata,
+                    vector_score=getattr(result, "vector_score", None),
+                    text_score=getattr(result, "text_score", None),
+                )
+                fallback_results.append(fallback_result)
         
         return fallback_results
     

@@ -444,8 +444,14 @@ class HybridSearchService(IHealthCheck):
                             'name', name,
                             'email', email,
                             'skills', normalized_skills,
+                            'status', status,
+                            'experience_level', experience_level,
                             'location_city', location_city,
-                            'location_country', location_country
+                            'location_country', location_country,
+                            'highest_degree', profile_data->>'highest_degree',
+                            'education', profile_data->'education',
+                            'expected_salary', profile_data->'compensation'->>'expected_salary',
+                            'total_experience_years', profile_data->>'total_experience_years'
                         ) as metadata,
                         status,
                         experience_level,
