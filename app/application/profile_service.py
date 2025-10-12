@@ -445,6 +445,8 @@ class ProfileApplicationService:
         education = current_data.education
         skills = current_data.skills
         languages = current_data.languages
+        compensation = getattr(current_data, "compensation", None)
+        total_experience_override = getattr(current_data, "total_experience_years_override", None)
 
         # Update title (maps to headline)
         if "title" in update_data and update_data["title"] is not None:
@@ -504,6 +506,29 @@ class ProfileApplicationService:
                 update_data["education_entries"]
             )
 
+        if "compensation" in update_data:
+            compensation_value = update_data["compensation"]
+            if compensation_value is None or isinstance(compensation_value, dict):
+                compensation = compensation_value
+            else:
+                raise ValueError("compensation must be a dictionary or null")
+
+        job_preferences = update_data.get("job_preferences")
+        if isinstance(job_preferences, dict) and not compensation:
+            salary_expectation = job_preferences.get("salary_expectation")
+            if isinstance(salary_expectation, dict):
+                compensation = salary_expectation
+
+        if "total_experience_years" in update_data:
+            exp_value = update_data["total_experience_years"]
+            if exp_value is None:
+                total_experience_override = None
+            else:
+                try:
+                    total_experience_override = float(exp_value)
+                except (TypeError, ValueError):
+                    raise ValueError("total_experience_years must be a number")
+
         # Build new ProfileData with merged values
         return ProfileData(
             name=name,
@@ -516,6 +541,8 @@ class ProfileApplicationService:
             education=education,
             skills=skills,
             languages=languages,
+            compensation=compensation,
+            total_experience_years_override=total_experience_override,
         )
 
     async def _track_profile_update_usage(

@@ -167,6 +167,12 @@ class ProfileUpdate(BaseModel):
         None, description="Job preferences"
     )
     tags: Optional[List[str]] = Field(None, description="Profile tags")
+    compensation: Optional[Dict[str, Any]] = Field(
+        None, description="Compensation expectation information"
+    )
+    total_experience_years: Optional[float] = Field(
+        None, ge=0, description="Override for total years of experience"
+    )
 
 
 class ProfileResponse(BaseModel):

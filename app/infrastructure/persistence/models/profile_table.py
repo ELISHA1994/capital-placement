@@ -187,6 +187,8 @@ class ProfileData(BaseModel):
     skills: List[Skill] = Field(default_factory=list)
     certifications: List[Certification] = Field(default_factory=list)
     languages: List[Language] = Field(default_factory=list)
+    compensation: Optional[Dict[str, Any]] = Field(default=None, description="Compensation information")
+    total_experience_years: Optional[float] = Field(default=None, ge=0, description="Total years of experience override")
 
     # Additional Information
     publications: List[Publication] = Field(default_factory=list)

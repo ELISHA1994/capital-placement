@@ -318,6 +318,18 @@ class ProfileMapper:
                     coordinates=coordinates
                 )
 
+        compensation = data.get('compensation') if isinstance(data.get('compensation'), dict) else None
+
+        total_experience_override = None
+        total_exp_value = data.get('total_experience_years')
+        if isinstance(total_exp_value, (int, float)):
+            total_experience_override = float(total_exp_value)
+        elif isinstance(total_exp_value, str):
+            try:
+                total_experience_override = float(total_exp_value)
+            except ValueError:
+                total_experience_override = None
+
         # Map experience entries
         experience = []
         for exp_data in data.get('experience', []):
@@ -394,7 +406,9 @@ class ProfileMapper:
             experience=experience,
             education=education,
             skills=skills,
-            languages=data.get('languages', [])
+            languages=data.get('languages', []),
+            compensation=compensation,
+            total_experience_years_override=total_experience_override
         )
 
     @staticmethod
@@ -491,7 +505,7 @@ class ProfileMapper:
                 'last_used': skill.last_used
             })
 
-        return {
+        data: Dict[str, Any] = {
             'name': profile_data.name,
             'email': str(profile_data.email),  # Convert EmailAddress to string
             'phone': str(profile_data.phone) if profile_data.phone else None,  # Convert PhoneNumber to string
@@ -503,6 +517,14 @@ class ProfileMapper:
             'skills': skills_list,
             'languages': profile_data.languages
         }
+
+        if profile_data.compensation:
+            data['compensation'] = profile_data.compensation
+
+        if profile_data.total_experience_years_override is not None:
+            data['total_experience_years'] = profile_data.total_experience_years_override
+
+        return data
 
     @staticmethod
     def _map_embeddings_to_domain(

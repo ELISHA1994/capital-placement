@@ -238,9 +238,13 @@ class ProfileData:
     education: List[Education] = field(default_factory=list)
     skills: List[Skill] = field(default_factory=list)
     languages: List[str] = field(default_factory=list)
+    compensation: Optional[Dict[str, Any]] = None
+    total_experience_years_override: Optional[float] = None
 
     def total_experience_years(self) -> float:
         """Calculate total years of professional experience."""
+        if self.total_experience_years_override is not None:
+            return float(self.total_experience_years_override)
         total = 0.0
         for exp in self.experience:
             duration = exp.duration_years()
