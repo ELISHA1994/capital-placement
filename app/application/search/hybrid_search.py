@@ -392,17 +392,16 @@ class HybridSearchService(IHealthCheck):
                     param_count += 1
                     where_conditions.append(f"entity_type = ANY(${param_count})")
                     params.append(search_filter.entity_types)
-                
+
                 if search_filter.created_after:
                     param_count += 1
                     where_conditions.append(f"created_at >= ${param_count}")
                     params.append(search_filter.created_after)
-                
+
                 if search_filter.created_before:
                     param_count += 1
                     where_conditions.append(f"created_at <= ${param_count}")
                     params.append(search_filter.created_before)
-
                 if search_filter.metadata_filters:
                     metadata_column_map = {
                         "status": "status",
@@ -411,13 +410,51 @@ class HybridSearchService(IHealthCheck):
                         "location_country": "location_country",
                         "email": "email",
                     }
-                    for key, value in search_filter.metadata_filters.items():
-                        column_ref = metadata_column_map.get(key)
+                    for condition in search_filter.metadata_filters or []:
+                        column_key = condition.get("column")
+                        column_ref = metadata_column_map.get(column_key)
                         if not column_ref:
                             continue
-                        param_count += 1
-                        where_conditions.append(f"{column_ref} = ${param_count}")
-                        params.append(str(value))
+
+                        operator = str(condition.get("operator", "eq")).lower()
+                        value = condition.get("value")
+
+                        if operator == "eq":
+                            if isinstance(value, list):
+                                value = value[0] if value else None
+                            if value is None:
+                                continue
+                            param_count += 1
+                            where_conditions.append(f"{column_ref} = ${param_count}")
+                            params.append(value)
+                        elif operator == "ne":
+                            if isinstance(value, list):
+                                value = value[0] if value else None
+                            if value is None:
+                                continue
+                            param_count += 1
+                            where_conditions.append(f"{column_ref} <> ${param_count}")
+                            params.append(value)
+                        elif operator == "in":
+                            if not isinstance(value, list) or not value:
+                                continue
+                            param_count += 1
+                            where_conditions.append(f"{column_ref} = ANY(${param_count})")
+                            params.append(value)
+                        elif operator == "nin":
+                            if not isinstance(value, list) or not value:
+                                continue
+                            param_count += 1
+                            where_conditions.append(f"NOT ({column_ref} = ANY(${param_count}))")
+                            params.append(value)
+                        else:
+                            if isinstance(value, list):
+                                value = value[0] if value else None
+                            if value is None:
+                                continue
+                            param_count += 1
+                            where_conditions.append(f"{column_ref} = ${param_count}")
+                            params.append(value)
             
             where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
             

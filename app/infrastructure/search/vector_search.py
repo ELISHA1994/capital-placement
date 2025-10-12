@@ -64,7 +64,7 @@ class SearchFilter:
     embedding_models: Optional[List[str]] = None
     created_after: Optional[datetime] = None
     created_before: Optional[datetime] = None
-    metadata_filters: Optional[Dict[str, Any]] = None
+    metadata_filters: Optional[List[Dict[str, Any]]] = None
     exclude_entity_ids: Optional[List[str]] = None
 
 
@@ -467,22 +467,71 @@ class VectorSearchService(IHealthCheck):
                     where_conditions.append(f"e.entity_id != ALL(${param_count})")
                     params.append(search_filter.exclude_entity_ids)
                 
-                if include_metadata and search_filter.metadata_filters:
-                    metadata_column_map = {
-                        "status": "p.status",
-                        "experience_level": "p.experience_level",
-                        "location_city": "p.location_city",
-                        "location_state": "p.location_state",
-                        "location_country": "p.location_country",
-                        "email": "p.email",
-                    }
-                    for key, value in search_filter.metadata_filters.items():
-                        column_ref = metadata_column_map.get(key)
+                metadata_filters = search_filter.metadata_filters or []
+                if metadata_filters:
+                    if include_metadata:
+                        metadata_column_map = {
+                            "status": "p.status",
+                            "experience_level": "p.experience_level",
+                            "location_city": "p.location_city",
+                            "location_state": "p.location_state",
+                            "location_country": "p.location_country",
+                            "email": "p.email",
+                        }
+                    else:
+                        metadata_column_map = {
+                            "status": "metadata->>'status'",
+                            "experience_level": "metadata->>'experience_level'",
+                            "location_city": "metadata->>'location_city'",
+                            "location_state": "metadata->>'location_state'",
+                            "location_country": "metadata->>'location_country'",
+                            "email": "metadata->>'email'",
+                        }
+                    for condition in metadata_filters:
+                        column_key = condition.get("column")
+                        column_ref = metadata_column_map.get(column_key)
                         if not column_ref:
                             continue
-                        param_count += 1
-                        where_conditions.append(f"{column_ref} = ${param_count}")
-                        params.append(str(value))
+
+                        operator = str(condition.get("operator", "eq")).lower()
+                        value = condition.get("value")
+
+                        if operator == "eq":
+                            if isinstance(value, list):
+                                value = value[0] if value else None
+                            if value is None:
+                                continue
+                            param_count += 1
+                            where_conditions.append(f"{column_ref} = ${param_count}")
+                            params.append(value)
+                        elif operator == "ne":
+                            if isinstance(value, list):
+                                value = value[0] if value else None
+                            if value is None:
+                                continue
+                            param_count += 1
+                            where_conditions.append(f"{column_ref} <> ${param_count}")
+                            params.append(value)
+                        elif operator == "in":
+                            if not isinstance(value, list) or not value:
+                                continue
+                            param_count += 1
+                            where_conditions.append(f"{column_ref} = ANY(${param_count})")
+                            params.append(value)
+                        elif operator == "nin":
+                            if not isinstance(value, list) or not value:
+                                continue
+                            param_count += 1
+                            where_conditions.append(f"NOT ({column_ref} = ANY(${param_count}))")
+                            params.append(value)
+                        else:
+                            if isinstance(value, list):
+                                value = value[0] if value else None
+                            if value is None:
+                                continue
+                            param_count += 1
+                            where_conditions.append(f"{column_ref} = ${param_count}")
+                            params.append(value)
             
             where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
 

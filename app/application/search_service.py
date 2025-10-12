@@ -44,7 +44,7 @@ class HybridSearchFilter:
     embedding_models: list[str] | None = None
     created_after: datetime | None = None
     created_before: datetime | None = None
-    metadata_filters: dict[str, Any] | None = None
+    metadata_filters: list[dict[str, Any]] | None = None
     exclude_entity_ids: list[str] | None = None
 
 
@@ -861,9 +861,11 @@ class SearchApplicationService:
         return request_tenant
 
     @staticmethod
-    def _build_metadata_filters(search_request: SearchRequest) -> dict[str, str]:
+    def _build_metadata_filters(search_request: SearchRequest) -> list[dict[str, Any]]:
         """Map API search filters to metadata filters used by hybrid search."""
-        metadata_filters: dict[str, str] = {}
+
+        filters: list[dict[str, Any]] = []
+        provided_columns: set[str] = set()
 
         for basic_filter in getattr(search_request, "basic_filters", []) or []:
             mapped_key = SearchApplicationService._map_basic_filter_field(
@@ -872,29 +874,57 @@ class SearchApplicationService:
             if not mapped_key:
                 continue
 
+            operator = getattr(basic_filter, "operator", None)
+            operator_value = operator.value if hasattr(operator, "value") else str(operator or "eq")
+            operator_value = operator_value.lower()
+
             value = getattr(basic_filter, "value", None)
             if value is None:
                 continue
 
-            if isinstance(value, list):
+            if operator_value in {"in", "nin"}:
+                if not isinstance(value, list):
+                    value = [value]
                 if not value:
                     continue
-                metadata_filters[mapped_key] = str(value[0])
             else:
-                metadata_filters[mapped_key] = str(value)
+                if isinstance(value, list):
+                    if not value:
+                        continue
+                    value = value[0]
 
-        if not getattr(search_request, "include_inactive", False):
-            metadata_filters.setdefault("status", "active")
+            filters.append({
+                "column": mapped_key,
+                "operator": operator_value,
+                "value": value,
+            })
+            provided_columns.add(mapped_key)
+
+        if not getattr(search_request, "include_inactive", False) and "status" not in provided_columns:
+            filters.append({
+                "column": "status",
+                "operator": "eq",
+                "value": "active",
+            })
 
         location_filter = getattr(search_request, "location_filter", None)
         if location_filter:
+            locations: list[str] = []
             preferred_locations = getattr(location_filter, "preferred_locations", None) or []
             center_location = getattr(location_filter, "center_location", None)
-            location_value = preferred_locations[0] if preferred_locations else center_location
-            if location_value:
-                metadata_filters.setdefault("location_city", str(location_value))
+            for loc in preferred_locations:
+                if isinstance(loc, str) and loc.strip():
+                    locations.append(loc.strip())
+            if center_location and isinstance(center_location, str):
+                locations.append(center_location.strip())
+            if locations:
+                filters.append({
+                    "column": "location_city",
+                    "operator": "in",
+                    "value": locations,
+                })
 
-        return metadata_filters
+        return filters
 
     @staticmethod
     def _extract_date_bounds(
