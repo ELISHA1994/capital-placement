@@ -813,10 +813,9 @@ class VectorSearchService(IHealthCheck):
                             COUNT(*) as total_embeddings,
                             COUNT(DISTINCT entity_type) as entity_types,
                             COUNT(DISTINCT embedding_model) as models_used,
-                            AVG(CASE WHEN content_hash IS NOT NULL THEN 1.0 ELSE 0.0 END) as dedup_rate
+                            NULL::float8 as dedup_rate
                         FROM embeddings
-                        WHERE tenant_id = $1 
-                        OR tenant_id IS NULL
+                        WHERE tenant_id = $1
                     """, tenant_id)
                     
                     analytics["embedding_stats"] = dict(embedding_stats) if embedding_stats else {}
@@ -840,7 +839,7 @@ class VectorSearchService(IHealthCheck):
                 # Get current index usage statistics
                 index_stats = await conn.fetch("""
                     SELECT 
-                        indexname,
+                        indexrelname AS index_name,
                         idx_tup_read,
                         idx_tup_fetch
                     FROM pg_stat_user_indexes 
