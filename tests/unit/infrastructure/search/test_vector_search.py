@@ -36,6 +36,7 @@ def mock_embedding_service():
     """Mock embedding service."""
     service = AsyncMock()
     service.generate_embedding = AsyncMock(return_value=[0.1] * 1536)
+    service.model_name = "test-model"
     return service
 
 
@@ -72,10 +73,21 @@ class TestVectorSearchBasic:
                 'entity_id': str(uuid4()),
                 'entity_type': 'profile',
                 'distance': 0.2,
-                'metadata': {'title': 'Senior Python Developer'},
                 'tenant_id': str(uuid4()),
                 'embedding_model': 'text-embedding-3-large',
-                'created_at': datetime.now()
+                'created_at': datetime.now(),
+                'updated_at': datetime.now(),
+                'name': 'Senior Python Developer',
+                'email': 'candidate@example.com',
+                'phone': None,
+                'location_city': 'San Francisco',
+                'location_state': 'CA',
+                'location_country': 'USA',
+                'normalized_skills': ['Python', 'FastAPI'],
+                'searchable_text': 'Senior Python Developer with FastAPI experience',
+                'status': 'active',
+                'experience_level': 'senior',
+                'profile_data': {'summary': 'Experienced engineer'},
             }
         ])
         mock_postgres_adapter.get_connection.return_value.__aenter__.return_value = mock_conn
@@ -121,9 +133,15 @@ class TestVectorSearchBasic:
         mock_conn = AsyncMock()
         mock_conn.fetch = AsyncMock(return_value=[
             {'entity_id': '1', 'entity_type': 'profile', 'distance': 0.1,  # similarity 0.9
-             'metadata': {}, 'tenant_id': None, 'embedding_model': 'test', 'created_at': datetime.now()},
+             'tenant_id': None, 'embedding_model': 'test', 'created_at': datetime.now(),
+             'updated_at': datetime.now(), 'name': 'Candidate One', 'email': 'one@example.com',
+             'searchable_text': '', 'normalized_skills': [], 'status': 'active', 'experience_level': 'senior',
+             'location_city': None, 'location_state': None, 'location_country': None, 'profile_data': {}},
             {'entity_id': '2', 'entity_type': 'profile', 'distance': 0.5,  # similarity 0.5
-             'metadata': {}, 'tenant_id': None, 'embedding_model': 'test', 'created_at': datetime.now()},
+             'tenant_id': None, 'embedding_model': 'test', 'created_at': datetime.now(),
+             'updated_at': datetime.now(), 'name': 'Candidate Two', 'email': 'two@example.com',
+             'searchable_text': '', 'normalized_skills': [], 'status': 'active', 'experience_level': 'senior',
+             'location_city': None, 'location_state': None, 'location_country': None, 'profile_data': {}},
         ])
         mock_postgres_adapter.get_connection.return_value.__aenter__.return_value = mock_conn
 
@@ -137,6 +155,67 @@ class TestVectorSearchBasic:
         # Should only get high similarity results
         assert len(response.results) == 1
         assert response.results[0].similarity_score >= 0.8
+
+    @pytest.mark.asyncio
+    async def test_similarity_search_with_multiple_embedding_fields(self, vector_search_service, mock_postgres_adapter):
+        """Vector search should combine results across multiple profile embedding sections."""
+        now = datetime.now()
+        mock_conn = AsyncMock()
+        mock_conn.fetch = AsyncMock(side_effect=[
+            [
+                {
+                    'entity_id': '1',
+                    'distance': 0.3,
+                    'tenant_id': None,
+                    'created_at': now,
+                    'updated_at': now,
+                    'name': 'Candidate One',
+                    'email': 'one@example.com',
+                    'phone': None,
+                    'location_city': None,
+                    'location_state': None,
+                    'location_country': None,
+                    'normalized_skills': [],
+                    'searchable_text': 'Experienced engineer',
+                    'status': 'active',
+                    'experience_level': 'senior',
+                    'profile_data': {}
+                }
+            ],
+            [
+                {
+                    'entity_id': '1',
+                    'distance': 0.1,
+                    'tenant_id': None,
+                    'created_at': now,
+                    'updated_at': now,
+                    'name': 'Candidate One',
+                    'email': 'one@example.com',
+                    'phone': None,
+                    'location_city': None,
+                    'location_state': None,
+                    'location_country': None,
+                    'normalized_skills': [],
+                    'searchable_text': 'Experienced engineer',
+                    'status': 'active',
+                    'experience_level': 'senior',
+                    'profile_data': {}
+                }
+            ]
+        ])
+        mock_postgres_adapter.get_connection.return_value.__aenter__.return_value = mock_conn
+
+        search_filter = SearchFilter(embedding_fields=["skills", "experience"])
+
+        response = await vector_search_service.similarity_search(
+            query_embedding=[0.1] * 1536,
+            search_filter=search_filter,
+            limit=5
+        )
+
+        assert len(response.results) == 1
+        assert response.search_metadata.get("embedding_fields") == ["skills", "experience"]
+        assert response.results[0].metadata.get("embedding_field") == "experience"
 
 
 class TestVectorSearchTenantIsolation:
@@ -301,7 +380,7 @@ class TestVectorSearchHealth:
     async def test_health_check_healthy(self, vector_search_service, mock_postgres_adapter, mock_cache_manager):
         """Test health check when all services are healthy."""
         mock_conn = AsyncMock()
-        mock_conn.fetchval = AsyncMock(return_value=100)
+        mock_conn.fetchval = AsyncMock(side_effect=[1, 42])
         mock_postgres_adapter.get_connection.return_value.__aenter__.return_value = mock_conn
 
         health = await vector_search_service.check_health()

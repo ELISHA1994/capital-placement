@@ -780,26 +780,11 @@ class UploadApplicationService:
                     )
 
                     if embedding_vector:
-                        embedding_id = str(uuid4())
-                        current_time = datetime.now()
-                        await self._deps.database_adapter.execute(
-                            """
-                            INSERT INTO embeddings (id, created_at, updated_at, entity_id, entity_type, tenant_id, embedding_model, embedding)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                            ON CONFLICT (entity_id, entity_type, tenant_id) DO UPDATE SET
-                                embedding = EXCLUDED.embedding,
-                                updated_at = NOW()
-                            """,
-                            embedding_id,
-                            current_time,
-                            current_time,
-                            profile_id,
-                            "profile",  # Fixed: Changed from 'cv_profile' to match search expectations
-                            tenant_id,
-                            settings.OPENAI_EMBEDDING_MODEL,
-                            f"[{','.join(map(str, embedding_vector))}]",
+                        logger.info(
+                            "Generated profile embedding vector",
+                            upload_id=upload_id,
+                            profile_id=profile_id,
                         )
-                        logger.info("Embeddings stored successfully", upload_id=upload_id)
                 except Exception as exc:  # pragma: no cover - embeddings optional
                     logger.warning("Failed to generate embeddings", upload_id=upload_id, error=str(exc))
 

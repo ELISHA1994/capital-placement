@@ -42,6 +42,7 @@ class HybridSearchFilter:
     entity_types: list[str] | None = None
     tenant_ids: list[str] | None = None
     embedding_models: list[str] | None = None
+    embedding_fields: list[str] | None = None
     created_after: datetime | None = None
     created_before: datetime | None = None
     metadata_filters: list[dict[str, Any]] | None = None
@@ -337,9 +338,35 @@ class SearchApplicationService:
             tenant_ids=[tenant_id] if tenant_id else None,
             created_after=created_after,
             created_before=created_before,
+            embedding_fields=self._resolve_embedding_fields(search_request),
             metadata_filters=metadata_filters or None,
             exclude_entity_ids=exclude_ids or None,
         )
+
+    def _resolve_embedding_fields(self, search_request: SearchRequest) -> list[str] | None:
+        """Determine which profile embedding sections should participate in vector search."""
+        fields: set[str] = {"overall"}
+
+        if search_request.skill_requirements:
+            fields.add("skills")
+
+        for basic_filter in search_request.basic_filters:
+            if basic_filter.field == "skills":
+                fields.add("skills")
+            if basic_filter.field in {"experience", "experience_level"}:
+                fields.add("experience")
+
+        if search_request.experience_requirements:
+            fields.add("experience")
+
+        if search_request.education_requirements:
+            fields.add("summary")
+
+        if search_request.query and len(search_request.query) > 120:
+            fields.add("summary")
+
+        priority = ["overall", "skills", "experience", "summary"]
+        return [name for name in priority if name in fields]
 
     def _create_search_config(self) -> HybridSearchConfig:
         """Create search configuration with optimized parameters.

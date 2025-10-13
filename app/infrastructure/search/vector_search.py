@@ -14,7 +14,7 @@ High-performance semantic similarity search using pgvector for PostgreSQL:
 import json
 import hashlib
 import asyncio
-from typing import Dict, List, Optional, Any, Tuple, Union
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 import structlog
@@ -58,10 +58,15 @@ class VectorSearchResponse:
 
 @dataclass
 class SearchFilter:
-    """Search filters for vector queries"""
+    """Search filters for vector queries.
+
+    embedding_fields allows callers to target specific profile embedding columns
+    (e.g. overall, skills, experience, summary) when searching the profiles table.
+    """
     entity_types: Optional[List[str]] = None
     tenant_ids: Optional[List[str]] = None
     embedding_models: Optional[List[str]] = None
+    embedding_fields: Optional[List[str]] = None
     created_after: Optional[datetime] = None
     created_before: Optional[datetime] = None
     metadata_filters: Optional[List[Dict[str, Any]]] = None
@@ -80,8 +85,42 @@ class VectorSearchService(IHealthCheck):
     - Batch search operations for efficiency
     - Real-time performance monitoring
     - Configurable similarity thresholds
-    - Advanced filtering and metadata search
+        - Advanced filtering and metadata search
     """
+    
+    _PROFILE_ENTITY_TYPES = {
+        "profile",
+        "profile_overall",
+        "profile_skills",
+        "profile_experience",
+        "profile_summary",
+    }
+
+    _PROFILE_ENTITY_TYPE_TO_FIELD = {
+        "profile": "overall_embedding",
+        "profile_overall": "overall_embedding",
+        "profile_skills": "skills_embedding",
+        "profile_experience": "experience_embedding",
+        "profile_summary": "summary_embedding",
+    }
+
+    _PROFILE_EMBEDDING_ALIASES = {
+        "overall": "overall_embedding",
+        "overall_embedding": "overall_embedding",
+        "skills": "skills_embedding",
+        "skills_embedding": "skills_embedding",
+        "experience": "experience_embedding",
+        "experience_embedding": "experience_embedding",
+        "summary": "summary_embedding",
+        "summary_embedding": "summary_embedding",
+    }
+
+    _PROFILE_EMBEDDING_LABELS = {
+        "overall_embedding": "overall",
+        "skills_embedding": "skills",
+        "experience_embedding": "experience",
+        "summary_embedding": "summary",
+    }
     
     def __init__(
         self,
@@ -170,7 +209,7 @@ class VectorSearchService(IHealthCheck):
                     return cached_results
             
             # Perform vector search
-            raw_results = await self._perform_vector_search(
+            raw_results, backend_metadata = await self._perform_vector_search(
                 query_embedding=query_embedding,
                 tenant_id=tenant_id,
                 limit=limit,
@@ -184,19 +223,29 @@ class VectorSearchService(IHealthCheck):
             search_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
             
             # Create response
+            embedding_model_name = getattr(
+                self.embedding_service,
+                "model_name",
+                getattr(self.settings, "OPENAI_EMBEDDING_MODEL", "unknown")
+            )
+
+            search_metadata = {
+                "similarity_metric": similarity_metric,
+                "query_text": query_text[:100] if query_text else None,
+                "tenant_id": tenant_id,
+                "filters_applied": search_filter is not None,
+                "embedding_model": embedding_model_name
+            }
+            if backend_metadata:
+                search_metadata.update(backend_metadata)
+
             response = VectorSearchResponse(
                 results=raw_results,
                 query_id=query_id,
                 total_candidates=len(raw_results),
                 search_time_ms=search_time_ms,
                 similarity_threshold=similarity_threshold,
-                search_metadata={
-                    "similarity_metric": similarity_metric,
-                    "query_text": query_text[:100] if query_text else None,
-                    "tenant_id": tenant_id,
-                    "filters_applied": search_filter is not None,
-                    "embedding_model": self.embedding_service.model_name if hasattr(self.embedding_service, 'model_name') else "unknown"
-                },
+                search_metadata=search_metadata,
                 cache_hit=False
             )
             
@@ -349,16 +398,44 @@ class VectorSearchService(IHealthCheck):
         """
         try:
             # Get the reference entity's embedding
-            async with self.db_adapter.get_connection() as conn:
-                embedding_row = await conn.fetchrow("""
+            use_profile_embeddings = entity_type in self._PROFILE_ENTITY_TYPES or entity_type == "profile"
+
+            if use_profile_embeddings:
+                column_name = self._PROFILE_ENTITY_TYPE_TO_FIELD.get(entity_type, "overall_embedding")
+                query = f"""
+                    SELECT {column_name} AS embedding
+                    FROM profiles p
+                    WHERE p.id = $1::uuid
+                      AND p.{column_name} IS NOT NULL
+                      AND p.is_deleted = false
+                      {'AND p.tenant_id = $2' if tenant_id else ''}
+                    ORDER BY p.updated_at DESC
+                    LIMIT 1
+                """
+                params: List[Any] = [entity_id]
+                if tenant_id:
+                    params.append(tenant_id)
+
+                async with self.db_adapter.get_connection() as conn:
+                    embedding_row = await conn.fetchrow(query, *params)
+            else:
+                base_query = """
                     SELECT embedding, embedding_model
                     FROM embeddings
                     WHERE entity_id = $1
-                    AND entity_type = $2
-                    AND (tenant_id = $3 OR tenant_id IS NULL)
+                      AND entity_type = $2
+                      {tenant_filter}
                     ORDER BY created_at DESC
                     LIMIT 1
-                """, entity_id, entity_type, tenant_id)
+                """
+                tenant_filter = "AND tenant_id = $3" if tenant_id else ""
+                query = base_query.format(tenant_filter=tenant_filter)
+                params: List[Any] = [entity_id, entity_type]
+                if tenant_id:
+                    params.append(tenant_id)
+
+                async with self.db_adapter.get_connection() as conn:
+                    embedding_row = await conn.fetchrow(query, *params)
 
                 if not embedding_row:
                     logger.warning(f"No embedding found for entity {entity_id}")
@@ -374,7 +451,7 @@ class VectorSearchService(IHealthCheck):
 
             # Create search filter to exclude self if needed
             search_filter = SearchFilter(
-                entity_types=[entity_type],
+                entity_types=[entity_type] if entity_type else None,
                 exclude_entity_ids=[entity_id] if exclude_self else None
             )
 
@@ -410,66 +487,139 @@ class VectorSearchService(IHealthCheck):
         similarity_metric: str,
         search_filter: Optional[SearchFilter],
         include_metadata: bool
-    ) -> List[VectorSearchResult]:
-        """Perform the actual vector search in the database"""
-        
+    ) -> tuple[List[VectorSearchResult], Dict[str, Any]]:
+        """Perform the actual vector search in the database."""
+
         try:
-            # Build the SQL query based on similarity metric
             if similarity_metric == "cosine":
                 distance_op = "<=>"
-                # For cosine similarity, smaller distances mean higher similarity
-                # Convert threshold to distance (1 - similarity)
-                distance_threshold = 1 - similarity_threshold
             elif similarity_metric == "l2":
                 distance_op = "<->"
-                # For L2 distance, we'll use a reasonable distance threshold
-                distance_threshold = 2.0 * (1 - similarity_threshold)
             else:
                 raise ValueError(f"Unsupported similarity metric: {similarity_metric}")
-            
-            # Build base query
-            where_conditions = []
-            # Convert embedding list to JSON string for pgvector compatibility
-            embedding_str = json.dumps(query_embedding)
-            params = [embedding_str, limit]
-            param_count = 2
-            
-            # Add tenant filtering
-            if tenant_id:
-                param_count += 1
-                where_conditions.append(f"e.tenant_id = ${param_count}")
-                params.append(tenant_id)
-            
-            # Apply search filters
-            if search_filter:
-                if search_filter.entity_types:
-                    param_count += 1
-                    where_conditions.append(f"e.entity_type = ANY(${param_count})")
-                    params.append(search_filter.entity_types)
 
-                if search_filter.embedding_models:
-                    param_count += 1
-                    where_conditions.append(f"e.embedding_model = ANY(${param_count})")
-                    params.append(search_filter.embedding_models)
-                
-                if search_filter.created_after:
-                    param_count += 1
-                    where_conditions.append(f"e.created_at >= ${param_count}")
-                    params.append(search_filter.created_after)
+            embedding_columns = self._resolve_profile_embedding_fields(search_filter)
 
-                if search_filter.created_before:
+            if embedding_columns:
+                return await self._perform_profile_vector_search(
+                    query_embedding=query_embedding,
+                    tenant_id=tenant_id,
+                    limit=limit,
+                    similarity_threshold=similarity_threshold,
+                    distance_op=distance_op,
+                    similarity_metric=similarity_metric,
+                    search_filter=search_filter,
+                    include_metadata=include_metadata,
+                    embedding_columns=embedding_columns,
+                )
+
+            return await self._perform_embeddings_table_search(
+                query_embedding=query_embedding,
+                tenant_id=tenant_id,
+                limit=limit,
+                similarity_threshold=similarity_threshold,
+                distance_op=distance_op,
+                similarity_metric=similarity_metric,
+                search_filter=search_filter,
+                include_metadata=include_metadata,
+            )
+
+        except Exception as e:
+            logger.error(f"Vector search database query failed: {e}")
+            raise
+
+    def _resolve_profile_embedding_fields(
+        self,
+        search_filter: Optional[SearchFilter]
+    ) -> List[tuple[str, str]]:
+        """Resolve all profile embedding columns and friendly labels to use."""
+
+        resolved: List[tuple[str, str]] = []
+        seen: set[str] = set()
+
+        def add_column(column: Optional[str]) -> None:
+            if not column or column in seen:
+                return
+            seen.add(column)
+            resolved.append((column, self._PROFILE_EMBEDDING_LABELS.get(column, column)))
+
+        if search_filter:
+            if search_filter.embedding_fields:
+                for field in search_filter.embedding_fields:
+                    add_column(self._PROFILE_EMBEDDING_ALIASES.get(field))
+
+            if not resolved and search_filter.entity_types:
+                for entity_type in search_filter.entity_types:
+                    add_column(self._PROFILE_ENTITY_TYPE_TO_FIELD.get(entity_type))
+
+            if not resolved and not search_filter.embedding_fields and not search_filter.entity_types:
+                add_column("overall_embedding")
+        else:
+            add_column("overall_embedding")
+
+        return resolved
+
+    async def _perform_profile_vector_search(
+        self,
+        query_embedding: List[float],
+        tenant_id: Optional[str],
+        limit: int,
+        similarity_threshold: float,
+        distance_op: str,
+        similarity_metric: str,
+        search_filter: Optional[SearchFilter],
+        include_metadata: bool,
+        embedding_columns: Optional[List[tuple[str, str]]] = None,
+    ) -> tuple[List[VectorSearchResult], Dict[str, Any]]:
+        """Execute vector search against profile embedding columns."""
+
+        embedding_columns = embedding_columns or self._resolve_profile_embedding_fields(search_filter)
+        embedding_str = json.dumps(query_embedding)
+        embedding_model_name = getattr(
+            self.embedding_service,
+            "model_name",
+            getattr(self.settings, "OPENAI_EMBEDDING_MODEL", None)
+        )
+
+        results_map: Dict[str, VectorSearchResult] = {}
+        similarity_map: Dict[str, float] = {}
+
+        async with self.db_adapter.get_connection() as conn:
+            for embedding_column, embedding_label in embedding_columns:
+                params: List[Any] = [embedding_str, limit]
+                param_count = 2
+                where_conditions = [
+                    f"p.{embedding_column} IS NOT NULL",
+                    "p.is_deleted = false"
+                ]
+
+                if tenant_id:
                     param_count += 1
-                    where_conditions.append(f"e.created_at <= ${param_count}")
-                    params.append(search_filter.created_before)
-                
-                if search_filter.exclude_entity_ids:
+                    where_conditions.append(f"p.tenant_id = ${param_count}")
+                    params.append(tenant_id)
+                elif search_filter and search_filter.tenant_ids:
                     param_count += 1
-                    where_conditions.append(f"e.entity_id != ALL(${param_count})")
-                    params.append(search_filter.exclude_entity_ids)
-                
-                metadata_filters = search_filter.metadata_filters or []
-                if metadata_filters:
-                    if include_metadata:
+                    where_conditions.append(f"p.tenant_id = ANY(${param_count})")
+                    params.append(search_filter.tenant_ids)
+
+                if search_filter:
+                    if search_filter.created_after:
+                        param_count += 1
+                        where_conditions.append(f"p.created_at >= ${param_count}")
+                        params.append(search_filter.created_after)
+
+                    if search_filter.created_before:
+                        param_count += 1
+                        where_conditions.append(f"p.created_at <= ${param_count}")
+                        params.append(search_filter.created_before)
+
+                    if search_filter.exclude_entity_ids:
+                        param_count += 1
+                        where_conditions.append(f"NOT (p.id = ANY(${param_count}::uuid[]))")
+                        params.append(search_filter.exclude_entity_ids)
+
+                    metadata_filters = search_filter.metadata_filters or []
+                    if metadata_filters:
                         metadata_column_map = {
                             "status": "p.status",
                             "experience_level": "p.experience_level",
@@ -478,182 +628,404 @@ class VectorSearchService(IHealthCheck):
                             "location_country": "p.location_country",
                             "email": "p.email",
                         }
-                    else:
-                        metadata_column_map = {
-                            "status": "metadata->>'status'",
-                            "experience_level": "metadata->>'experience_level'",
-                            "location_city": "metadata->>'location_city'",
-                            "location_state": "metadata->>'location_state'",
-                            "location_country": "metadata->>'location_country'",
-                            "email": "metadata->>'email'",
-                        }
-                    for condition in metadata_filters:
-                        column_key = condition.get("column")
-                        column_ref = metadata_column_map.get(column_key)
-                        if not column_ref:
-                            continue
 
-                        operator = str(condition.get("operator", "eq")).lower()
-                        value = condition.get("value")
+                        for condition in metadata_filters:
+                            column_key = condition.get("column")
+                            column_ref = metadata_column_map.get(column_key)
+                            if not column_ref:
+                                continue
 
-                        if operator == "eq":
-                            if isinstance(value, list):
-                                value = value[0] if value else None
-                            if value is None:
-                                continue
-                            param_count += 1
-                            where_conditions.append(f"{column_ref} = ${param_count}")
-                            params.append(value)
-                        elif operator == "ne":
-                            if isinstance(value, list):
-                                value = value[0] if value else None
-                            if value is None:
-                                continue
-                            param_count += 1
-                            where_conditions.append(f"{column_ref} <> ${param_count}")
-                            params.append(value)
-                        elif operator == "in":
-                            if not isinstance(value, list) or not value:
-                                continue
-                            param_count += 1
-                            where_conditions.append(f"{column_ref} = ANY(${param_count})")
-                            params.append(value)
-                        elif operator == "nin":
-                            if not isinstance(value, list) or not value:
-                                continue
-                            param_count += 1
-                            where_conditions.append(f"NOT ({column_ref} = ANY(${param_count}))")
-                            params.append(value)
-                        else:
-                            if isinstance(value, list):
-                                value = value[0] if value else None
-                            if value is None:
-                                continue
-                            param_count += 1
-                            where_conditions.append(f"{column_ref} = ${param_count}")
-                            params.append(value)
-            
-            where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+                            operator = str(condition.get("operator", "eq")).lower()
+                            value = condition.get("value")
 
-            # Construct the full query with JOIN to profiles table for metadata
-            if include_metadata:
-                # Query with LEFT JOIN to fetch profile data
-                query = f"""
-                    SELECT
-                        e.entity_id,
-                        e.entity_type,
-                        e.embedding {distance_op} $1 AS distance,
-                        e.tenant_id,
-                        e.embedding_model,
-                        e.created_at,
-                        -- Profile metadata from profiles table
-                        p.name,
-                        p.email,
-                        p.phone,
-                        p.location_city,
-                        p.location_state,
-                        p.location_country,
-                        p.normalized_skills,
-                        p.searchable_text,
-                        p.status,
-                        p.experience_level,
-                        p.profile_data
-                    FROM embeddings e
-                    LEFT JOIN profiles p ON e.entity_id::uuid = p.id AND e.entity_type = 'profile'
-                    {where_clause}
-                    ORDER BY e.embedding {distance_op} $1
-                    LIMIT $2
-                """
-            else:
-                # Minimal query without metadata
-                query = f"""
-                    SELECT
-                        entity_id,
-                        entity_type,
-                        embedding {distance_op} $1 AS distance,
-                        tenant_id,
-                        embedding_model,
-                        created_at
-                    FROM embeddings
-                    {where_clause}
-                    ORDER BY embedding {distance_op} $1
-                    LIMIT $2
-                """
+                            if operator == "eq":
+                                if isinstance(value, list):
+                                    value = value[0] if value else None
+                                if value is None:
+                                    continue
+                                param_count += 1
+                                where_conditions.append(f"{column_ref} = ${param_count}")
+                                params.append(value)
+                            elif operator == "ne":
+                                if isinstance(value, list):
+                                    value = value[0] if value else None
+                                if value is None:
+                                    continue
+                                param_count += 1
+                                where_conditions.append(f"{column_ref} <> ${param_count}")
+                                params.append(value)
+                            elif operator == "in":
+                                if not isinstance(value, list) or not value:
+                                    continue
+                                param_count += 1
+                                where_conditions.append(f"{column_ref} = ANY(${param_count})")
+                                params.append(value)
+                            elif operator == "nin":
+                                if not isinstance(value, list) or not value:
+                                    continue
+                                param_count += 1
+                                where_conditions.append(f"NOT ({column_ref} = ANY(${param_count}))")
+                                params.append(value)
 
-            async with self.db_adapter.get_connection() as conn:
+                where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+
+                if include_metadata:
+                    query = f"""
+                        SELECT
+                            p.id::text AS entity_id,
+                            p.{embedding_column} {distance_op} $1::vector AS distance,
+                            p.tenant_id,
+                            p.created_at,
+                            p.updated_at,
+                            p.name,
+                            p.email,
+                            p.phone,
+                            p.location_city,
+                            p.location_state,
+                            p.location_country,
+                            p.normalized_skills,
+                            p.searchable_text,
+                            p.status,
+                            p.experience_level,
+                            p.profile_data
+                        FROM profiles p
+                        {where_clause}
+                        ORDER BY p.{embedding_column} {distance_op} $1::vector
+                        LIMIT $2
+                    """
+                else:
+                    query = f"""
+                        SELECT
+                            p.id::text AS entity_id,
+                            p.{embedding_column} {distance_op} $1::vector AS distance,
+                            p.tenant_id,
+                            p.created_at,
+                            p.updated_at
+                        FROM profiles p
+                        {where_clause}
+                        ORDER BY p.{embedding_column} {distance_op} $1::vector
+                        LIMIT $2
+                    """
+
                 rows = await conn.fetch(query, *params)
 
-                # Convert results to VectorSearchResult objects
-                results = []
                 for row in rows:
-                    # Calculate similarity from distance based on metric
+                    distance = float(row["distance"])
                     if similarity_metric == "cosine":
-                        similarity_score = 1 - row['distance']
-                    else:  # L2
-                        # Convert L2 distance to similarity (0-1 scale)
-                        similarity_score = max(0, 1 - (row['distance'] / 4.0))
+                        similarity_score = 1 - distance
+                    else:
+                        similarity_score = max(0.0, 1 - (distance / 4.0))
 
-                    # Apply similarity threshold
-                    if similarity_score >= similarity_threshold:
-                        # Build metadata from joined profile data
-                        metadata = {}
-                        content_preview = None
+                    if similarity_score < similarity_threshold:
+                        continue
 
-                        if include_metadata and row.get('name'):
-                            # Extract profile data from joined columns
-                            metadata = {
-                                "name": row['name'],
-                                "email": row['email'],
-                                "phone": row.get('phone'),
-                                "location": f"{row['location_city']}, {row['location_country']}" if row.get('location_city') and row.get('location_country') else row.get('location_city') or row.get('location_country'),
-                                "location_city": row.get('location_city'),
-                                "location_state": row.get('location_state'),
-                                "location_country": row.get('location_country'),
-                                "skills": row.get('normalized_skills') or [],
-                                "status": row.get('status'),
-                                "experience_level": row.get('experience_level')
-                            }
+                    entity_id = row["entity_id"]
 
-                            # Extract title and summary from profile_data JSONB
-                            if row.get('profile_data'):
-                                profile_data = row['profile_data']
-                                if isinstance(profile_data, dict):
-                                    metadata["title"] = profile_data.get("headline") or profile_data.get("title")
-                                    metadata["summary"] = profile_data.get("summary")
-                                    if profile_data.get("highest_degree"):
-                                        metadata["highest_degree"] = profile_data.get("highest_degree")
-                                    education = profile_data.get("education")
-                                    if education:
-                                        metadata["education"] = education
-                                    compensation = profile_data.get("compensation")
-                                    if isinstance(compensation, dict):
-                                        metadata["expected_salary"] = compensation.get("expected_salary")
-                                    total_exp = profile_data.get("total_experience_years")
-                                    if total_exp is not None:
-                                        metadata["total_experience_years"] = total_exp
+                    metadata: Dict[str, Any] = {}
+                    content_preview: Optional[str] = None
 
-                            # Set content preview from searchable_text
-                            if row.get('searchable_text'):
-                                content_preview = row['searchable_text'][:500]
+                    if include_metadata:
+                        metadata = {
+                            "name": row.get("name"),
+                            "email": row.get("email"),
+                            "phone": row.get("phone"),
+                            "location": (
+                                f"{row.get('location_city')}, {row.get('location_country')}"
+                                if row.get("location_city") and row.get("location_country")
+                                else row.get("location_city") or row.get("location_country")
+                            ),
+                            "location_city": row.get("location_city"),
+                            "location_state": row.get("location_state"),
+                            "location_country": row.get("location_country"),
+                            "skills": row.get("normalized_skills") or [],
+                            "status": row.get("status"),
+                            "experience_level": row.get("experience_level"),
+                            "embedding_field": embedding_label,
+                        }
 
-                        result = VectorSearchResult(
-                            entity_id=row['entity_id'],
-                            entity_type=row['entity_type'],
+                        profile_data = row.get("profile_data")
+                        if isinstance(profile_data, dict):
+                            metadata["title"] = profile_data.get("headline") or profile_data.get("title")
+                            metadata["summary"] = profile_data.get("summary")
+                            if profile_data.get("highest_degree"):
+                                metadata["highest_degree"] = profile_data.get("highest_degree")
+                            education = profile_data.get("education")
+                            if education:
+                                metadata["education"] = education
+                            compensation = profile_data.get("compensation")
+                            if isinstance(compensation, dict):
+                                metadata["expected_salary"] = compensation.get("expected_salary")
+                            total_exp = profile_data.get("total_experience_years")
+                            if total_exp is not None:
+                                metadata["total_experience_years"] = total_exp
+
+                        searchable_text = row.get("searchable_text")
+                        if searchable_text:
+                            content_preview = searchable_text[:500]
+                    else:
+                        metadata = {"embedding_field": embedding_label}
+
+                    existing_result = results_map.get(entity_id)
+                    if not existing_result or similarity_score > similarity_map.get(entity_id, -1.0):
+                        results_map[entity_id] = VectorSearchResult(
+                            entity_id=entity_id,
+                            entity_type="profile",
                             similarity_score=float(similarity_score),
-                            distance=float(row['distance']),
+                            distance=distance,
                             metadata=metadata,
                             content_preview=content_preview,
-                            tenant_id=str(row['tenant_id']) if row['tenant_id'] else None,
-                            embedding_model=row.get('embedding_model'),
-                            created_at=row.get('created_at')
+                            tenant_id=str(row["tenant_id"]) if row.get("tenant_id") else None,
+                            embedding_model=embedding_model_name,
+                            created_at=row.get("updated_at") or row.get("created_at"),
                         )
-                        results.append(result)
+                        similarity_map[entity_id] = float(similarity_score)
+                    else:
+                        current_metadata = existing_result.metadata or {}
+                        field_entry = current_metadata.get("embedding_field")
+                        if field_entry is None:
+                            current_metadata["embedding_field"] = embedding_label
+                        elif isinstance(field_entry, list):
+                            if embedding_label not in field_entry:
+                                field_entry.append(embedding_label)
+                        elif isinstance(field_entry, str) and field_entry != embedding_label:
+                            current_metadata["embedding_field"] = [field_entry, embedding_label]
 
-                return results
-                
-        except Exception as e:
-            logger.error(f"Vector search database query failed: {e}")
-            raise
+        results = sorted(
+            results_map.values(),
+            key=lambda res: res.similarity_score,
+            reverse=True
+        )
+
+        trimmed_results = results[:limit]
+        return trimmed_results, {
+            "embedding_fields": [label for _, label in embedding_columns],
+            "source": "profiles",
+        }
+
+    async def _perform_embeddings_table_search(
+        self,
+        query_embedding: List[float],
+        tenant_id: Optional[str],
+        limit: int,
+        similarity_threshold: float,
+        distance_op: str,
+        similarity_metric: str,
+        search_filter: Optional[SearchFilter],
+        include_metadata: bool,
+    ) -> tuple[List[VectorSearchResult], Dict[str, Any]]:
+        """Execute vector search against the legacy embeddings table."""
+
+        embedding_str = json.dumps(query_embedding)
+        params: List[Any] = [embedding_str, limit]
+        param_count = 2
+        where_conditions: List[str] = []
+
+        if tenant_id:
+            param_count += 1
+            where_conditions.append(f"e.tenant_id = ${param_count}")
+            params.append(tenant_id)
+        elif search_filter and search_filter.tenant_ids:
+            param_count += 1
+            where_conditions.append(f"e.tenant_id = ANY(${param_count})")
+            params.append(search_filter.tenant_ids)
+
+        if search_filter:
+            if search_filter.entity_types:
+                param_count += 1
+                where_conditions.append(f"e.entity_type = ANY(${param_count})")
+                params.append(search_filter.entity_types)
+
+            if search_filter.embedding_models:
+                param_count += 1
+                where_conditions.append(f"e.embedding_model = ANY(${param_count})")
+                params.append(search_filter.embedding_models)
+
+            if search_filter.created_after:
+                param_count += 1
+                where_conditions.append(f"e.created_at >= ${param_count}")
+                params.append(search_filter.created_after)
+
+            if search_filter.created_before:
+                param_count += 1
+                where_conditions.append(f"e.created_at <= ${param_count}")
+                params.append(search_filter.created_before)
+
+            if search_filter.exclude_entity_ids:
+                param_count += 1
+                where_conditions.append(f"e.entity_id != ALL(${param_count})")
+                params.append(search_filter.exclude_entity_ids)
+
+        if search_filter and search_filter.metadata_filters:
+            if include_metadata:
+                metadata_column_map = {
+                    "status": "p.status",
+                    "experience_level": "p.experience_level",
+                    "location_city": "p.location_city",
+                    "location_state": "p.location_state",
+                    "location_country": "p.location_country",
+                    "email": "p.email",
+                }
+            else:
+                metadata_column_map = {
+                    "status": "metadata->>'status'",
+                    "experience_level": "metadata->>'experience_level'",
+                    "location_city": "metadata->>'location_city'",
+                    "location_state": "metadata->>'location_state'",
+                    "location_country": "metadata->>'location_country'",
+                    "email": "metadata->>'email'",
+                }
+
+            for condition in search_filter.metadata_filters:
+                column_key = condition.get("column")
+                column_ref = metadata_column_map.get(column_key)
+                if not column_ref:
+                    continue
+
+                operator = str(condition.get("operator", "eq")).lower()
+                value = condition.get("value")
+
+                if operator == "eq":
+                    if isinstance(value, list):
+                        value = value[0] if value else None
+                    if value is None:
+                        continue
+                    param_count += 1
+                    where_conditions.append(f"{column_ref} = ${param_count}")
+                    params.append(value)
+                elif operator == "ne":
+                    if isinstance(value, list):
+                        value = value[0] if value else None
+                    if value is None:
+                        continue
+                    param_count += 1
+                    where_conditions.append(f"{column_ref} <> ${param_count}")
+                    params.append(value)
+                elif operator == "in":
+                    if not isinstance(value, list) or not value:
+                        continue
+                    param_count += 1
+                    where_conditions.append(f"{column_ref} = ANY(${param_count})")
+                    params.append(value)
+                elif operator == "nin":
+                    if not isinstance(value, list) or not value:
+                        continue
+                    param_count += 1
+                    where_conditions.append(f"NOT ({column_ref} = ANY(${param_count}))")
+                    params.append(value)
+
+        where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+
+        if include_metadata:
+            query = f"""
+                SELECT
+                    e.entity_id,
+                    e.entity_type,
+                    e.embedding {distance_op} $1 AS distance,
+                    e.tenant_id,
+                    e.embedding_model,
+                    e.created_at,
+                    p.name,
+                    p.email,
+                    p.phone,
+                    p.location_city,
+                    p.location_state,
+                    p.location_country,
+                    p.normalized_skills,
+                    p.searchable_text,
+                    p.status,
+                    p.experience_level,
+                    p.profile_data
+                FROM embeddings e
+                LEFT JOIN profiles p ON e.entity_id::uuid = p.id AND e.entity_type = 'profile'
+                {where_clause}
+                ORDER BY e.embedding {distance_op} $1
+                LIMIT $2
+            """
+        else:
+            query = f"""
+                SELECT
+                    e.entity_id,
+                    e.entity_type,
+                    e.embedding {distance_op} $1 AS distance,
+                    e.tenant_id,
+                    e.embedding_model,
+                    e.created_at
+                FROM embeddings e
+                {where_clause}
+                ORDER BY e.embedding {distance_op} $1
+                LIMIT $2
+            """
+
+        async with self.db_adapter.get_connection() as conn:
+            rows = await conn.fetch(query, *params)
+
+        results: List[VectorSearchResult] = []
+
+        for row in rows:
+            distance = float(row["distance"])
+            if similarity_metric == "cosine":
+                similarity_score = 1 - distance
+            else:
+                similarity_score = max(0.0, 1 - (distance / 4.0))
+
+            if similarity_score < similarity_threshold:
+                continue
+
+            metadata: Dict[str, Any] = {}
+            content_preview: Optional[str] = None
+
+            if include_metadata and row.get("name"):
+                metadata = {
+                    "name": row["name"],
+                    "email": row["email"],
+                    "phone": row.get("phone"),
+                    "location": (
+                        f"{row['location_city']}, {row['location_country']}"
+                        if row.get("location_city") and row.get("location_country")
+                        else row.get("location_city") or row.get("location_country")
+                    ),
+                    "location_city": row.get("location_city"),
+                    "location_state": row.get("location_state"),
+                    "location_country": row.get("location_country"),
+                    "skills": row.get("normalized_skills") or [],
+                    "status": row.get("status"),
+                    "experience_level": row.get("experience_level"),
+                }
+
+                profile_data = row.get("profile_data")
+                if isinstance(profile_data, dict):
+                    metadata["title"] = profile_data.get("headline") or profile_data.get("title")
+                    metadata["summary"] = profile_data.get("summary")
+                    if profile_data.get("highest_degree"):
+                        metadata["highest_degree"] = profile_data.get("highest_degree")
+                    education = profile_data.get("education")
+                    if education:
+                        metadata["education"] = education
+                    compensation = profile_data.get("compensation")
+                    if isinstance(compensation, dict):
+                        metadata["expected_salary"] = compensation.get("expected_salary")
+                    total_exp = profile_data.get("total_experience_years")
+                    if total_exp is not None:
+                        metadata["total_experience_years"] = total_exp
+
+                if row.get("searchable_text"):
+                    content_preview = row["searchable_text"][:500]
+
+            results.append(
+                VectorSearchResult(
+                    entity_id=row["entity_id"],
+                    entity_type=row["entity_type"],
+                    similarity_score=float(similarity_score),
+                    distance=distance,
+                    metadata=metadata,
+                    content_preview=content_preview,
+                    tenant_id=str(row["tenant_id"]) if row.get("tenant_id") else None,
+                    embedding_model=row.get("embedding_model"),
+                    created_at=row.get("created_at"),
+                )
+            )
+
+        return results, {"source": "embeddings"}
     
     async def _get_or_generate_embedding(
         self,
@@ -807,18 +1179,29 @@ class VectorSearchService(IHealthCheck):
             # Get database-level analytics if available
             if tenant_id:
                 async with self.db_adapter.get_connection() as conn:
-                    # Embedding statistics
+                    # Embedding statistics from profiles table
                     embedding_stats = await conn.fetchrow("""
-                        SELECT 
-                            COUNT(*) as total_embeddings,
-                            COUNT(DISTINCT entity_type) as entity_types,
-                            COUNT(DISTINCT embedding_model) as models_used,
-                            NULL::float8 as dedup_rate
-                        FROM embeddings
+                        SELECT
+                            COUNT(*) AS total_profiles,
+                            COUNT(*) FILTER (WHERE overall_embedding IS NOT NULL) AS profiles_with_overall_embedding,
+                            COUNT(*) FILTER (WHERE skills_embedding IS NOT NULL) AS profiles_with_skills_embedding,
+                            COUNT(*) FILTER (WHERE experience_embedding IS NOT NULL) AS profiles_with_experience_embedding,
+                            COUNT(*) FILTER (WHERE summary_embedding IS NOT NULL) AS profiles_with_summary_embedding
+                        FROM profiles
                         WHERE tenant_id = $1
+                          AND is_deleted = false
                     """, tenant_id)
                     
-                    analytics["embedding_stats"] = dict(embedding_stats) if embedding_stats else {}
+                    if embedding_stats:
+                        stats_dict = dict(embedding_stats)
+                        total = stats_dict.get("total_profiles") or 0
+                        with_overall = stats_dict.get("profiles_with_overall_embedding") or 0
+                        stats_dict["overall_embedding_coverage"] = (
+                            float(with_overall) / float(total) if total else 0.0
+                        )
+                        analytics["embedding_stats"] = stats_dict
+                    else:
+                        analytics["embedding_stats"] = {}
             
             return analytics
             
@@ -834,7 +1217,7 @@ class VectorSearchService(IHealthCheck):
             
             async with self.db_adapter.get_connection() as conn:
                 # Update index statistics
-                await conn.execute("ANALYZE embeddings")
+                await conn.execute("ANALYZE profiles")
                 
                 # Get current index usage statistics
                 index_stats = await conn.fetch("""
@@ -843,7 +1226,7 @@ class VectorSearchService(IHealthCheck):
                         idx_tup_read,
                         idx_tup_fetch
                     FROM pg_stat_user_indexes 
-                    WHERE relname = 'embeddings'
+                    WHERE relname = 'profiles'
                 """)
                 
                 optimization_results["index_stats"] = [dict(row) for row in index_stats]
@@ -869,7 +1252,7 @@ class VectorSearchService(IHealthCheck):
                 
                 # Test embedding table access
                 embedding_count = await conn.fetchval(
-                    "SELECT COUNT(*) FROM embeddings LIMIT 1"
+                    "SELECT COUNT(*) FROM profiles WHERE overall_embedding IS NOT NULL"
                 )
                 
             # Test embedding service
