@@ -2331,6 +2331,63 @@ class ITaskManager(IHealthCheck, ABC):
         pass
 
 
+class IFacetService(IHealthCheck, ABC):
+    """
+    Facet generation service interface.
+
+    Defines contract for extracting and building facet metadata
+    from candidate profiles using database aggregations.
+    """
+
+    @abstractmethod
+    async def generate_facets(
+        self,
+        tenant_id: Any,  # TenantId from value_objects
+        include_fields: Optional[List[str]] = None,
+        force_refresh: bool = False
+    ) -> Any:  # Returns FacetMetadata from domain.entities.facet
+        """
+        Generate complete facet metadata for a tenant.
+
+        Args:
+            tenant_id: Tenant to generate facets for
+            include_fields: Optional list of specific fields to include
+            force_refresh: Bypass cache and regenerate
+
+        Returns:
+            Complete facet metadata with all fields and values
+        """
+        pass
+
+    @abstractmethod
+    async def get_facet_values(
+        self,
+        tenant_id: Any,
+        field_name: str,
+        search_query: Optional[str] = None,
+        limit: int = 100
+    ) -> List[Any]:  # Returns List[FacetValue]
+        """
+        Get values for a specific facet field with optional search.
+
+        Useful for typeahead/autocomplete in facet filters.
+        """
+        pass
+
+    @abstractmethod
+    async def refresh_facets(self, tenant_id: Any) -> Any:
+        """Force refresh of facet metadata for tenant."""
+        pass
+
+    @abstractmethod
+    async def get_facet_statistics(
+        self,
+        tenant_id: Any
+    ) -> Dict[str, Any]:
+        """Get statistics about facet usage and performance."""
+        pass
+
+
 __all__ = [
     "IHealthCheck",
     "ICacheService",
@@ -2374,4 +2431,70 @@ __all__ = [
     "IWebhookDeadLetterService",
     "IWebhookStatsService",
     "ITaskManager",
+    "IFacetService",
+    "ISuggestionSourceRepository",
+    "ISuggestionCache",
 ]
+
+
+# Search Suggestions Interfaces
+
+
+class ISuggestionSourceRepository(ABC):
+    """
+    Repository interface for retrieving raw suggestion data.
+
+    Each implementation provides suggestions from a specific source
+    (search history, dictionaries, popular searches, etc.)
+    """
+
+    @abstractmethod
+    async def get_suggestions(
+        self,
+        prefix: str,
+        tenant_id: Any,  # TenantId
+        user_id: Optional[str] = None,
+        limit: int = 10
+    ) -> List[Any]:  # List[SearchSuggestion]
+        """
+        Retrieve suggestions matching the prefix.
+
+        Args:
+            prefix: Query prefix (min 2 chars)
+            tenant_id: Tenant context for isolation
+            user_id: Optional user for personalization
+            limit: Maximum suggestions to return
+
+        Returns:
+            List of SearchSuggestion objects
+        """
+        pass
+
+
+class ISuggestionCache(ABC):
+    """Cache interface for fast suggestion retrieval"""
+
+    @abstractmethod
+    async def get_suggestions(
+        self,
+        cache_key: str,
+        tenant_id: Any  # TenantId
+    ) -> Optional[List[Any]]:  # Optional[List[SearchSuggestion]]
+        """Get cached suggestions for a query prefix"""
+        pass
+
+    @abstractmethod
+    async def set_suggestions(
+        self,
+        cache_key: str,
+        suggestions: List[Any],  # List[SearchSuggestion]
+        tenant_id: Any,  # TenantId
+        ttl_seconds: int = 3600
+    ) -> bool:
+        """Cache suggestions for a query prefix"""
+        pass
+
+    @abstractmethod
+    async def invalidate_tenant(self, tenant_id: Any) -> bool:  # TenantId
+        """Invalidate all cached suggestions for a tenant"""
+        pass

@@ -62,6 +62,15 @@ from app.infrastructure.persistence.models.webhook_table import (
 from app.infrastructure.persistence.models.query_expansion_table import (
     QueryExpansionTable,
 )
+from app.infrastructure.persistence.models.saved_search_table import (
+    SavedSearchTable,
+)
+from app.infrastructure.persistence.models.search_history_table import (
+    SearchHistoryTable,
+)
+from app.infrastructure.persistence.models.search_click_table import (
+    SearchClickTable,
+)
 
 __all__ = [
     # Audit
@@ -112,4 +121,10 @@ __all__ = [
     "WebhookEndpointTable",
     # Query expansions
     "QueryExpansionTable",
+    # Saved searches
+    "SavedSearchTable",
+    # Search history
+    "SearchHistoryTable",
+    # Search clicks
+    "SearchClickTable",
 ]

@@ -507,6 +507,67 @@ class AlertRule(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ClickTrackRequest(BaseModel):
+    """Request to track a search result click."""
+
+    search_id: str = Field(..., description="Search execution identifier")
+    profile_id: str = Field(..., description="Profile that was clicked")
+    position: int = Field(..., ge=0, description="Position in results (0-based)")
+
+    # Optional enrichment
+    relevance_score: Optional[float] = Field(None, ge=0.0, le=1.0, description="Relevance score")
+    context: Optional[Dict[str, Any]] = Field(None, description="Click context data")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "search_id": "search_20251013_142530_abc123de",
+                "profile_id": "550e8400-e29b-41d4-a716-446655440000",
+                "position": 2,
+                "relevance_score": 0.87,
+                "context": {
+                    "session_id": "sess_xyz789",
+                    "device_type": "desktop",
+                    "time_to_click_ms": 3500,
+                    "previous_clicks": 1
+                }
+            }
+        }
+
+
+class ClickAnalyticsResponse(BaseModel):
+    """Analytics summary for clicks."""
+
+    search_id: str
+    total_clicks: int
+    unique_profiles: int
+    avg_position: float
+    top_3_clicks: int
+    position_distribution: Dict[int, int]
+    engagement_signals: Dict[str, int]
+
+
+class CTRReportItem(BaseModel):
+    """Single time bucket in CTR report."""
+
+    time_bucket: datetime
+    click_count: int
+    search_count: int
+    ctr: float
+    user_count: int
+    avg_position: float
+
+
+class PositionPerformance(BaseModel):
+    """Click performance for a specific position."""
+
+    position: int
+    click_count: int
+    avg_time_to_click_ms: Optional[float]
+    avg_rank_quality: float
+    ctr: float
+
+
 __all__ = [
     "MetricType",
     "AggregationType",
@@ -521,4 +582,8 @@ __all__ = [
     "ReportResponse",
     "Dashboard",
     "AlertRule",
+    "ClickTrackRequest",
+    "ClickAnalyticsResponse",
+    "CTRReportItem",
+    "PositionPerformance",
 ]

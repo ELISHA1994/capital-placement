@@ -10,7 +10,10 @@ from typing import Annotated
 import structlog
 from fastapi import Depends, HTTPException
 
+from app.application.click_tracking_service import ClickTrackingApplicationService
 from app.application.profile_service import ProfileApplicationService
+from app.application.saved_search_service import SavedSearchApplicationService
+from app.application.search_history_service import SearchHistoryApplicationService
 from app.application.search_service import SearchApplicationService
 from app.application.upload_service import UploadApplicationService
 from app.domain.exceptions import (
@@ -33,9 +36,24 @@ from app.domain.exceptions import (
     ValidationError,
     WebhookValidationError,
 )
-from app.infrastructure.factories.profile_dependency_factory import get_profile_dependencies
-from app.infrastructure.factories.search_dependency_factory import get_search_dependencies
-from app.infrastructure.factories.upload_dependency_factory import get_upload_dependencies
+from app.infrastructure.factories.click_tracking_dependency_factory import (
+    get_click_tracking_dependencies,
+)
+from app.infrastructure.factories.profile_dependency_factory import (
+    get_profile_dependencies,
+)
+from app.infrastructure.factories.saved_search_dependency_factory import (
+    get_saved_search_dependencies,
+)
+from app.infrastructure.factories.search_dependency_factory import (
+    get_search_dependencies,
+)
+from app.infrastructure.factories.search_history_dependency_factory import (
+    get_search_history_dependencies,
+)
+from app.infrastructure.factories.upload_dependency_factory import (
+    get_upload_dependencies,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -80,10 +98,52 @@ async def get_profile_service() -> ProfileApplicationService:
         ) from e
 
 
+async def get_saved_search_service() -> SavedSearchApplicationService:
+    """Create SavedSearchApplicationService with injected dependencies."""
+    try:
+        dependencies = await get_saved_search_dependencies()
+        return SavedSearchApplicationService(dependencies)
+    except Exception as e:
+        logger.error("Failed to create saved search service", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Saved search service unavailable"
+        ) from e
+
+
+async def get_search_history_service() -> SearchHistoryApplicationService:
+    """Create SearchHistoryApplicationService with injected dependencies."""
+    try:
+        dependencies = await get_search_history_dependencies()
+        return SearchHistoryApplicationService(dependencies)
+    except Exception as e:
+        logger.error("Failed to create search history service", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Search history service unavailable"
+        ) from e
+
+
+async def get_click_tracking_service() -> ClickTrackingApplicationService:
+    """Create ClickTrackingApplicationService with injected dependencies."""
+    try:
+        dependencies = await get_click_tracking_dependencies()
+        return ClickTrackingApplicationService(dependencies)
+    except Exception as e:
+        logger.error("Failed to create click tracking service", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Click tracking service unavailable"
+        ) from e
+
+
 # Type aliases for dependency injection
 SearchServiceDep = Annotated[SearchApplicationService, Depends(get_search_service)]
 UploadServiceDep = Annotated[UploadApplicationService, Depends(get_upload_service)]
 ProfileServiceDep = Annotated[ProfileApplicationService, Depends(get_profile_service)]
+SavedSearchServiceDep = Annotated[SavedSearchApplicationService, Depends(get_saved_search_service)]
+SearchHistoryServiceDep = Annotated[SearchHistoryApplicationService, Depends(get_search_history_service)]
+ClickTrackingServiceDep = Annotated[ClickTrackingApplicationService, Depends(get_click_tracking_service)]
 
 
 # Domain Exception Handlers
@@ -134,8 +194,14 @@ __all__ = [
     "get_search_service",
     "get_upload_service",
     "get_profile_service",
+    "get_saved_search_service",
+    "get_search_history_service",
+    "get_click_tracking_service",
     "SearchServiceDep",
     "UploadServiceDep",
     "ProfileServiceDep",
+    "SavedSearchServiceDep",
+    "SearchHistoryServiceDep",
+    "ClickTrackingServiceDep",
     "map_domain_exception_to_http"
 ]

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from enum import Enum
+from typing import Any, Optional
 from uuid import UUID
 
 
@@ -95,6 +96,45 @@ class MatchId:
 
 
 @dataclass(frozen=True)
+class SavedSearchId:
+    """Aggregate identifier for SavedSearch domain entities."""
+
+    value: UUID
+
+    def __init__(self, value: Any):
+        object.__setattr__(self, "value", _coerce_uuid(value, field_name="saved_search_id"))
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+@dataclass(frozen=True)
+class SearchHistoryId:
+    """Aggregate identifier for SearchHistory domain entities."""
+
+    value: UUID
+
+    def __init__(self, value: Any):
+        object.__setattr__(self, "value", _coerce_uuid(value, field_name="search_history_id"))
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+@dataclass(frozen=True)
+class SearchClickId:
+    """Unique identifier for search click events."""
+
+    value: UUID
+
+    def __init__(self, value: Any):
+        object.__setattr__(self, "value", _coerce_uuid(value, field_name="search_click_id"))
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+@dataclass(frozen=True)
 class EmbeddingVector:
     """Value object representing a vector embedding."""
 
@@ -170,16 +210,57 @@ class PhoneNumber:
         return self.value
 
 
+# Search Suggestions Value Objects
+
+
+class SuggestionSource(Enum):
+    """Source of a search suggestion"""
+    USER_HISTORY = "user_history"
+    TENANT_POPULAR = "tenant_popular"
+    SKILL_DICTIONARY = "skill_dictionary"
+    JOB_TITLE = "job_title"
+    INDUSTRY_TERM = "industry_term"
+
+
+@dataclass(frozen=True)
+class SearchSuggestion:
+    """
+    Individual search suggestion with metadata.
+
+    Represents a single autocomplete suggestion with its metadata.
+    Immutable to ensure consistency in caching and ranking.
+    """
+    text: str
+    source: SuggestionSource
+    score: float
+    frequency: int = 0
+    last_used: Optional[str] = None
+    metadata: Optional[dict] = None
+
+    def __post_init__(self):
+        if not self.text or len(self.text) < 2:
+            raise ValueError("Suggestion text must be at least 2 characters")
+        if not 0.0 <= self.score <= 1.0:
+            raise ValueError("Score must be between 0.0 and 1.0")
+        if self.frequency < 0:
+            raise ValueError("Frequency must be non-negative")
+
+
 __all__ = [
-    "TenantId", 
-    "ProfileId", 
-    "JobId", 
-    "UserId", 
-    "DocumentId", 
+    "TenantId",
+    "ProfileId",
+    "JobId",
+    "UserId",
+    "DocumentId",
     "MatchId",
+    "SavedSearchId",
+    "SearchHistoryId",
+    "SearchClickId",
     "EmbeddingVector",
     "MatchScore",
     "SkillName",
     "EmailAddress",
-    "PhoneNumber"
+    "PhoneNumber",
+    "SuggestionSource",
+    "SearchSuggestion"
 ]

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from app.application.dependencies import ISearchDependencyFactory, SearchDependencies
-from app.infrastructure.persistence.repositories import (
-    PostgresProfileRepository,
-    PostgresTenantRepository,
-    PostgresUserRepository,
-)
 from app.infrastructure.providers.cache_provider import get_cache_service
 from app.infrastructure.providers.event_provider import get_event_publisher
+from app.infrastructure.providers.repository_provider import (
+    get_profile_repository,
+    get_tenant_repository,
+    get_user_repository,
+)
 from app.infrastructure.providers.search_provider import (
     get_hybrid_search_service,
     get_result_reranker_service,
@@ -26,10 +26,10 @@ class SearchDependencyFactory(ISearchDependencyFactory):
     async def create_dependencies(self) -> SearchDependencies:
         """Create and return search dependencies."""
 
-        # Repository implementations
-        profile_repository = PostgresProfileRepository()
-        user_repository = PostgresUserRepository()
-        tenant_repository = PostgresTenantRepository()
+        # Repository implementations (via providers for singleton pattern)
+        profile_repository = await get_profile_repository()
+        user_repository = await get_user_repository()
+        tenant_repository = await get_tenant_repository()
 
         # Service implementations (using existing providers)
         search_service = await get_hybrid_search_service()

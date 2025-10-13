@@ -343,7 +343,8 @@ class SearchApplicationService:
             exclude_entity_ids=exclude_ids or None,
         )
 
-    def _resolve_embedding_fields(self, search_request: SearchRequest) -> list[str] | None:
+    @staticmethod
+    def _resolve_embedding_fields(search_request: SearchRequest) -> list[str] | None:
         """Determine which profile embedding sections should participate in vector search."""
         fields: set[str] = {"overall"}
 
@@ -368,7 +369,8 @@ class SearchApplicationService:
         priority = ["overall", "skills", "experience", "summary"]
         return [name for name in priority if name in fields]
 
-    def _create_search_config(self) -> HybridSearchConfig:
+    @staticmethod
+    def _create_search_config() -> HybridSearchConfig:
         """Create search configuration with optimized parameters.
 
         Returns:
@@ -632,7 +634,7 @@ class SearchApplicationService:
         search_response: SearchResponse,
         current_user: Any,
     ) -> None:
-        """Track search analytics in background.
+        """Track search analytics in the background.
 
         Args:
             search_request: Original search request

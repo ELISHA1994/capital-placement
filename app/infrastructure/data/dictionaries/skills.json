@@ -1,0 +1,152 @@
+{
+  "categories": {
+    "programming": {
+      "terms": [
+        "Python",
+        "Python developer",
+        "Python engineer",
+        "Python backend developer",
+        "Python full-stack developer",
+        "Python machine learning engineer",
+        "JavaScript",
+        "JavaScript developer",
+        "JS developer",
+        "TypeScript",
+        "TypeScript developer",
+        "Java",
+        "Java developer",
+        "Java engineer",
+        "C++",
+        "C++ developer",
+        "Go",
+        "Go developer",
+        "Golang developer",
+        "Rust",
+        "Rust developer",
+        "PHP",
+        "PHP developer",
+        "Ruby",
+        "Ruby developer",
+        "Ruby on Rails developer",
+        "Swift",
+        "Swift developer",
+        "Kotlin",
+        "Kotlin developer",
+        "C#",
+        "C# developer",
+        ".NET developer",
+        "Scala developer"
+      ]
+    },
+    "web": {
+      "terms": [
+        "React",
+        "React developer",
+        "React.js developer",
+        "Angular",
+        "Angular developer",
+        "Vue.js",
+        "Vue developer",
+        "Node.js",
+        "Node.js developer",
+        "Frontend developer",
+        "Backend developer",
+        "Full-stack developer",
+        "Web developer",
+        "HTML",
+        "CSS",
+        "Sass developer",
+        "Next.js developer",
+        "Express.js developer",
+        "Django developer",
+        "Flask developer"
+      ]
+    },
+    "mobile": {
+      "terms": [
+        "iOS developer",
+        "Android developer",
+        "Mobile developer",
+        "React Native developer",
+        "Flutter developer",
+        "Mobile app developer",
+        "Xamarin developer"
+      ]
+    },
+    "data": {
+      "terms": [
+        "Data scientist",
+        "Data analyst",
+        "Data engineer",
+        "Machine learning engineer",
+        "ML engineer",
+        "AI engineer",
+        "Deep learning engineer",
+        "NLP engineer",
+        "Computer vision engineer",
+        "Big data engineer",
+        "Analytics engineer"
+      ]
+    },
+    "cloud": {
+      "terms": [
+        "AWS",
+        "AWS certified",
+        "AWS architect",
+        "AWS engineer",
+        "Azure",
+        "Azure certified",
+        "Azure developer",
+        "Google Cloud",
+        "GCP",
+        "GCP developer",
+        "Cloud architect",
+        "Cloud engineer",
+        "DevOps engineer",
+        "Docker",
+        "Kubernetes",
+        "Kubernetes engineer",
+        "Infrastructure engineer",
+        "Site reliability engineer",
+        "SRE"
+      ]
+    },
+    "database": {
+      "terms": [
+        "SQL",
+        "PostgreSQL",
+        "MySQL",
+        "MongoDB",
+        "Redis",
+        "Database administrator",
+        "DBA",
+        "Elasticsearch",
+        "Cassandra",
+        "Oracle DBA",
+        "SQL Server DBA"
+      ]
+    },
+    "frameworks": {
+      "terms": [
+        "Spring Boot",
+        "Spring developer",
+        "Laravel developer",
+        "FastAPI developer",
+        "Django developer",
+        "Rails developer",
+        "ASP.NET developer"
+      ]
+    },
+    "tools": {
+      "terms": [
+        "Git",
+        "Jenkins",
+        "CI/CD engineer",
+        "Terraform",
+        "Ansible",
+        "GitLab",
+        "GitHub Actions"
+      ]
+    }
+  }
+}

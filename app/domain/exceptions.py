@@ -8,7 +8,12 @@ They should be mapped to appropriate HTTP responses in the API layer.
 
 class DomainException(Exception):
     """Base exception for all domain-level errors."""
-    pass
+
+    def __init__(self, message: str, error_code: str = None):
+        """Initialize domain exception with message and optional error code."""
+        self.message = message
+        self.error_code = error_code or "domain_error"
+        super().__init__(message)
 
 
 class ValidationError(DomainException):

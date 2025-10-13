@@ -5,10 +5,10 @@ from __future__ import annotations
 import structlog
 
 from app.application.dependencies.profile_dependencies import ProfileDependencies
+from app.infrastructure.providers.ai_provider import get_embedding_service
+from app.infrastructure.providers.audit_provider import get_audit_service
 from app.infrastructure.providers.repository_provider import get_profile_repository
 from app.infrastructure.providers.usage_provider import get_usage_service
-from app.infrastructure.providers.audit_provider import get_audit_service
-from app.infrastructure.providers.ai_provider import get_embedding_service
 
 logger = structlog.get_logger(__name__)
 

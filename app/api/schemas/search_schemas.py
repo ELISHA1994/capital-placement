@@ -463,9 +463,38 @@ class SearchResponse(BaseModel):
         return sum(result.match_score.overall_score for result in self.results) / len(self.results)
 
 
-class SavedSearch(BaseModel):
-    """Saved search configuration for repeated use"""
+class SavedSearchCreate(BaseModel):
+    """Request schema for creating a saved search."""
 
+    name: str = Field(..., description="Saved search name", min_length=1, max_length=200)
+    description: Optional[str] = Field(None, description="Optional description")
+    search_request: SearchRequest = Field(..., description="Complete search configuration")
+    is_alert: bool = Field(default=False, description="Enable as alert")
+    alert_frequency: Optional[str] = Field(None, description="Alert frequency (daily, weekly, monthly)")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Senior Python Developers in SF",
+                "description": "Looking for senior Python developers with ML experience",
+                "search_request": {
+                    "query": "Senior Python developer with machine learning",
+                    "search_mode": "hybrid",
+                    "skill_requirements": [
+                        {"name": "Python", "required": True, "min_years": 5}
+                    ]
+                },
+                "is_alert": True,
+                "alert_frequency": "daily"
+            }
+        }
+    )
+
+
+class SavedSearch(BaseModel):
+    """Complete saved search response with metadata."""
+
+    id: Optional[str] = Field(None, description="Saved search ID")
     name: str = Field(..., description="Search name", min_length=1, max_length=200)
     description: Optional[str] = Field(None, description="Search description")
     search_request: SearchRequest = Field(..., description="Saved search configuration")
@@ -473,12 +502,16 @@ class SavedSearch(BaseModel):
 
     # Automation
     is_alert: bool = Field(default=False, description="Whether to run as alert")
-    alert_frequency: Optional[str] = Field(None, description="Alert frequency (daily, weekly, monthly)")
-    last_run: Optional[datetime] = Field(None, description="Last time search was executed")
+    alert_frequency: Optional[str] = Field(None, description="Alert frequency")
+    last_run: Optional[datetime] = Field(None, description="Last execution time")
 
     # Results tracking
     last_result_count: int = Field(default=0, description="Results from last run")
     new_results_since_last_run: int = Field(default=0, description="New results since last check")
+
+    # Metadata
+    created_at: Optional[datetime] = Field(None, description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
 
 
 class SearchHistory(BaseModel):
@@ -497,3 +530,33 @@ class SearchHistory(BaseModel):
     # Performance
     search_duration_ms: int = Field(..., description="Search execution time")
     satisfaction_rating: Optional[int] = Field(None, ge=1, le=5, description="User satisfaction rating")
+
+
+class SearchHistoryItem(BaseModel):
+    """Individual search history item for list responses."""
+
+    search_id: str = Field(..., description="Search history identifier")
+    query: str = Field(..., description="Search query")
+    search_mode: str = Field(..., description="Search mode used")
+    total_results: int = Field(..., description="Total results found")
+    search_outcome: str = Field(..., description="Search outcome")
+    duration_ms: int = Field(..., description="Search duration in milliseconds")
+    engagement_score: float = Field(..., description="User engagement score (0.0-1.0)")
+    results_clicked_count: int = Field(..., description="Number of results clicked")
+    executed_at: datetime = Field(..., description="When search was executed")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "search_id": "12345678-1234-5678-1234-567812345678",
+                "query": "Senior Python developer",
+                "search_mode": "hybrid",
+                "total_results": 45,
+                "search_outcome": "success",
+                "duration_ms": 423,
+                "engagement_score": 0.7,
+                "results_clicked_count": 3,
+                "executed_at": "2025-10-13T10:30:00Z"
+            }
+        }
+    )

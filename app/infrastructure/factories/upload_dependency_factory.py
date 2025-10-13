@@ -9,8 +9,8 @@ from app.infrastructure.providers.ai_provider import (
 from app.infrastructure.providers.audit_provider import get_audit_service
 from app.infrastructure.providers.document_provider import (
     get_content_extractor,
-    get_quality_analyzer,
     get_document_processor_adapter,
+    get_quality_analyzer,
 )
 from app.infrastructure.providers.event_provider import get_event_publisher
 from app.infrastructure.providers.notification_provider import get_notification_service
@@ -22,10 +22,10 @@ from app.infrastructure.providers.repository_provider import (
 )
 from app.infrastructure.providers.resource_provider import get_file_resource_service
 from app.infrastructure.providers.storage_provider import get_file_storage
+from app.infrastructure.providers.task_manager_provider import get_task_manager
 from app.infrastructure.providers.tenant_provider import (
     get_tenant_service as get_tenant_manager,
 )
-from app.infrastructure.providers.task_manager_provider import get_task_manager
 from app.infrastructure.providers.validation_provider import (
     get_file_content_validator,
     get_webhook_validator,
